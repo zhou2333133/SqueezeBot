@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Squeeze Bot 控制台 🚀</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .glass-panel { background: rgba(31, 41, 55, 0.6); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    </style>
+</head>
+<body class="bg-[#0f172a] text-gray-100 min-h-screen pb-10" x-data="botDashboard()">
+
+    <!-- Top Navbar -->
+    <header class="border-b border-gray-800 bg-gray-900/50 py-4 px-8 flex justify-between items-center sticky top-0 z-50 glass-panel">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-emerald-400 flex items-center justify-center text-xl shadow-lg">🤖</div>
+            <h1 class="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-gray-400">Squeeze Bot 自动化做市套利</h1>
+        </div>
+        <div class="flex items-center gap-4">
+            <span class="flex h-3 w-3 relative">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+            </span>
+            <span class="text-sm font-medium text-emerald-400">系统运行中</span>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto mt-8 px-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- 左侧/中间：系统参数配置 -->
+        <div class="lg:col-span-2 space-y-6">
+            <form @submit.prevent="saveConfig" class="glass-panel rounded-2xl p-6 shadow-xl relative">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-xl font-semibold"><i class="fa-solid fa-sliders text-blue-400 mr-2"></i> 策略配置参数</h2>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium transition flex items-center gap-2" :class="{'opacity-50': saving}" :disabled="saving">
+                        <i class="fa-solid fa-floppy-disk"></i> <span x-text="saving ? '保存中...' : '应用设置'"></span>
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Core Switches -->
+                    <div class="space-y-4 bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
+                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">自动交易总控 ⚡</h3>
+                        <label class="flex items-center justify-between cursor-pointer">
+                            <span class="text-gray-200">启用自动开仓 (AUTO_TRADE)</span>
+                            <input type="checkbox" name="AUTO_TRADE_ENABLED" value="true" class="form-checkbox h-5 w-5 text-blue-500 rounded border-gray-600 bg-gray-700" {% if config.AUTO_TRADE_ENABLED %}checked{% endif %}>
+                        </label>
+                        <label class="flex items-center justify-between cursor-pointer">
+                            <span class="text-gray-200">启用 TA 二次确认 (TA_CONFIRM)</span>
+                            <input type="checkbox" name="TA_CONFIRMATION_ENABLED" value="true" class="form-checkbox h-5 w-5 text-emerald-500 rounded border-gray-600 bg-gray-700" {% if config.TA_CONFIRMATION_ENABLED %}checked{% endif %}>
+                        </label>
+                        <label class="flex items-center justify-between cursor-pointer">
+                            <span class="text-gray-200">启用新闻利好过滤</span>
+                            <input type="checkbox" name="ENABLE_NEWS_FILTER" value="true" class="form-checkbox h-5 w-5 text-yellow-500 rounded border-gray-600 bg-gray-700" {% if config.ENABLE_NEWS_FILTER %}checked{% endif %}>
+                        </label>
+                        <label class="flex items-center justify-between cursor-pointer">
+                            <span class="text-gray-200">启用清算热图过滤</span>
+                            <input type="checkbox" name="ENABLE_LIQ_FILTER" value="true" class="form-checkbox h-5 w-5 text-purple-500 rounded border-gray-600 bg-gray-700" {% if config.ENABLE_LIQ_FILTER %}checked{% endif %}>
+                        </label>
+                    </div>
+
+                    <!-- Risk Management -->
+                    <div class="space-y-4 bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
+                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">资金与风控 🛡️</h3>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">每次开仓金额 (USDT)</label>
+                            <input type="number" step="0.1" name="POSITION_SIZE_USDT" value="{{ config.POSITION_SIZE_USDT }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+                        </div>
+                        <div class="flex gap-4">
+                            <div class="flex-1">
+                                <label class="block text-xs text-gray-400 mb-1">止损比例 (%)</label>
+                                <input type="number" step="0.1" name="STOP_LOSS_PERCENT" value="{{ config.STOP_LOSS_PERCENT }}" class="w-full bg-gray-900 border border-red-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
+                            </div>
+                            <div class="flex-1">
+                                <label class="block text-xs text-gray-400 mb-1">止盈比例 (%)</label>
+                                <input type="number" step="0.1" name="TAKE_PROFIT_PERCENT" value="{{ config.TAKE_PROFIT_PERCENT }}" class="w-full bg-gray-900 border border-emerald-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
+                            </div>
+                        </div>
+                        <label class="flex items-center justify-between cursor-pointer mt-3">
+                            <span class="text-sm text-gray-200">启用动态 K 线结构止损 (防插针)</span>
+                            <input type="checkbox" name="USE_DYNAMIC_SL" value="true" class="form-checkbox h-5 w-5 text-red-500 rounded border-gray-600 bg-gray-700" {% if config.USE_DYNAMIC_SL %}checked{% endif %}>
+                        </label>
+                        <label class="flex items-center justify-between cursor-pointer mt-3">
+                            <span class="text-sm text-gray-200">启用追踪止损 (让利润奔跑)</span>
+                            <input type="checkbox" name="USE_TRAILING_STOP" value="true" class="form-checkbox h-5 w-5 text-sky-500 rounded border-gray-600 bg-gray-700" {% if config.USE_TRAILING_STOP %}checked{% endif %}>
+                        </label>
+                        <div class="flex gap-4 mt-2">
+                            <div class="flex-1">
+                                <label class="block text-xs text-gray-400 mb-1">追踪止损激活 (%)</label>
+                                <input type="number" step="0.1" name="TSL_ACTIVATION_PERCENT" value="{{ config.TSL_ACTIVATION_PERCENT }}" class="w-full bg-gray-900 border border-sky-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
+                            </div>
+                            <div class="flex-1">
+                                <label class="block text-xs text-gray-400 mb-1">追踪止损回调 (%)</label>
+                                <input type="number" step="0.1" name="TSL_CALLBACK_PERCENT" value="{{ config.TSL_CALLBACK_PERCENT }}" class="w-full bg-gray-900 border border-sky-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Indicators -->
+                    <div class="space-y-4 bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 md:col-span-2">
+                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">聪明钱资金流信号与指标 📊</h3>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">资金流入占比</label>
+                                <input type="number" step="0.01" name="FLOW_OI_RATIO" value="{{ config.FLOW_OI_RATIO }}" title="建议0.05=5%" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">OI激增倍数</label>
+                                <input type="number" step="0.1" name="OI_SURGE_RATIO" value="{{ config.OI_SURGE_RATIO }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">RSI 入场最高值</label>
+                                <input type="number" step="1" name="RSI_MAX_ENTRY" value="{{ config.RSI_MAX_ENTRY }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">扫描间隔 (分钟)</label>
+                                <input type="number" step="1" name="INTERVAL_MINUTES" value="{{ config.INTERVAL_MINUTES }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">持仓盘子下限 (USDT)</label>
+                                <input type="number" step="100000" name="MIN_OI_USDT" value="{{ config.MIN_OI_USDT }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">持仓盘子上限 (USDT)</label>
+                                <input type="number" step="1000000" name="MAX_OI_USDT" value="{{ config.MAX_OI_USDT }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-emerald-400 mb-1">大户多空比 (必须大于)</label>
+                                <input type="number" step="0.01" name="WHALE_LS_MIN" value="{{ config.WHALE_LS_MIN }}" class="w-full bg-gray-900 border border-emerald-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-red-400 mb-1">散户多空比 (必须小于)</label>
+                                <input type="number" step="0.01" name="RETAIL_LS_MAX" value="{{ config.RETAIL_LS_MAX }}" class="w-full bg-gray-900 border border-red-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- AI Agent -->
+                    <div class="space-y-4 bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 md:col-span-2">
+                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">AI Agent 决策大脑 🧠</h3>
+                        <label class="flex items-center justify-between cursor-pointer">
+                            <span class="text-gray-200">启用 AI Agent 最终决策</span>
+                            <input type="checkbox" name="ENABLE_AI_AGENT" value="true" class="form-checkbox h-5 w-5 text-indigo-500 rounded border-gray-600 bg-gray-700" {% if config.ENABLE_AI_AGENT %}checked{% endif %}>
+                        </label>
+                        <div>
+                            <label class="block text-xs text-gray-400 mb-1">AI 最低开仓评分 (0-100)</label>
+                            <input type="number" step="1" name="AI_AGENT_SCORE_MIN" value="{{ config.AI_AGENT_SCORE_MIN }}" class="w-full bg-gray-900 border border-indigo-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- 右侧：手动交易台 -->
+        <div class="space-y-6">
+            <div class="glass-panel rounded-2xl p-6 shadow-xl">
+                <h2 class="text-xl font-semibold mb-6"><i class="fa-solid fa-hand-pointer text-emerald-400 mr-2"></i> 极速交易台</h2>
+                
+                <form @submit.prevent="manualTrade" class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">交易对 (例如: BTCUSDT)</label>
+                        <input type="text" x-model="trade.symbol" required class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white font-mono uppercase focus:border-emerald-500 focus:outline-none" placeholder="BTCUSDT">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">开/平仓数量 (币数)</label>
+                        <input type="number" step="0.000001" x-model="trade.quantity" required class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none" placeholder="0.01">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3 pt-2">
+                        <button type="submit" @click="trade.side = 'BUY'" class="bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500 text-emerald-400 hover:text-white py-3 rounded-xl font-bold transition">
+                            开多 / 平空 (BUY)
+                        </button>
+                        <button type="submit" @click="trade.side = 'SELL'" class="bg-red-600/20 hover:bg-red-600 border border-red-500 text-red-400 hover:text-white py-3 rounded-xl font-bold transition">
+                            开空 / 平多 (SELL)
+                        </button>
+                    </div>
+                </form>
+
+                <!-- Toast Message -->
+                <div x-show="msg" x-transition.opacity class="mt-4 p-3 rounded-lg text-sm font-medium text-center"
+                     :class="msgType === 'success' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'">
+                    <span x-text="msg"></span>
+                </div>
+            </div>
+
+            <!-- Info Card -->
+            <div class="bg-blue-900/20 border border-blue-800 rounded-2xl p-5 text-sm text-blue-200">
+                <h4 class="font-bold text-blue-400 mb-2"><i class="fa-solid fa-circle-info"></i> 使用提示</h4>
+                <ul class="list-disc list-inside space-y-1 ml-2">
+                    <li>手动交易台会直接向币安发送<strong>市价单</strong>，请谨慎填写币种数量。</li>
+                    <li>止盈止损将在自动交易触发时自动挂入 GTC 触发平仓市价单。</li>
+                    <li>建议 Telegram 报警功能和自动交易配合使用。</li>
+                </ul>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('botDashboard', () => ({
+                saving: false,
+                trade: { symbol: '', quantity: '', side: '' },
+                msg: '',
+                msgType: 'success',
+
+                async saveConfig(e) {
+                    this.saving = true;
+                    const formData = new FormData(e.target);
+                    
+                    // HTML checkbox fallback for un-checked state
+                    if(!formData.has("AUTO_TRADE_ENABLED")) formData.append("AUTO_TRADE_ENABLED", "false");
+                    if(!formData.has("TA_CONFIRMATION_ENABLED")) formData.append("TA_CONFIRMATION_ENABLED", "false");
+                    if(!formData.has("ENABLE_NEWS_FILTER")) formData.append("ENABLE_NEWS_FILTER", "false");
+                    if(!formData.has("ENABLE_LIQ_FILTER")) formData.append("ENABLE_LIQ_FILTER", "false");
+                    if(!formData.has("USE_DYNAMIC_SL")) formData.append("USE_DYNAMIC_SL", "false");
+                    if(!formData.has("USE_TRAILING_STOP")) formData.append("USE_TRAILING_STOP", "false");
+                    if(!formData.has("ENABLE_AI_AGENT")) formData.append("ENABLE_AI_AGENT", "false");
+
+                    try {
+                        const res = await fetch('/api/config', { method: 'POST', body: formData });
+                        const data = await res.json();
+                        this.showMsg(data.message, 'success');
+                    } catch (err) {
+                        this.showMsg('网络错误，配置保存失败！', 'error');
+                    }
+                    this.saving = false;
+                },
+
+                async manualTrade() {
+                    const formData = new FormData();
+                    formData.append('symbol', this.trade.symbol);
+                    formData.append('side', this.trade.side);
+                    formData.append('quantity', this.trade.quantity);
+
+                    try {
+                        const res = await fetch('/api/trade', { method: 'POST', body: formData });
+                        const data = await res.json();
+                        this.showMsg(data.message, res.ok ? 'success' : 'error');
+                    } catch (err) {
+                        this.showMsg('请求失败，请检查连接。', 'error');
+                    }
+                },
+
+                showMsg(text, type) { this.msg = text; this.msgType = type; setTimeout(() => this.msg = '', 4000); }
+            }));
+        });
+    </script>
+</body>
+</html>
