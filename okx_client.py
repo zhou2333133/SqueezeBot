@@ -69,13 +69,15 @@ class OKXOnChainClient:
 
     def _headers(self, path: str) -> dict:
         ts = _ts()
-        return {
-            "OK-ACCESS-KEY":        OKX_API_KEY,
-            "OK-ACCESS-SIGN":       _sign(OKX_SECRET_KEY, ts, "GET", path),
-            "OK-ACCESS-TIMESTAMP":  ts,
-            "OK-ACCESS-PASSPHRASE": OKX_PASSPHRASE,
-            "Content-Type":         "application/json",
+        h = {
+            "OK-ACCESS-KEY":       OKX_API_KEY,
+            "OK-ACCESS-SIGN":      _sign(OKX_SECRET_KEY, ts, "GET", path),
+            "OK-ACCESS-TIMESTAMP": ts,
+            "Content-Type":        "application/json",
         }
+        if OKX_PASSPHRASE:
+            h["OK-ACCESS-PASSPHRASE"] = OKX_PASSPHRASE
+        return h
 
     async def _get(self, path: str, params: dict | None = None) -> dict | None:
         if not self._enabled:

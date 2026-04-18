@@ -25,30 +25,32 @@ CHAIN_NAMES = {
 
 def _headers(path: str) -> dict:
     ts = _ts()
-    return {
-        "OK-ACCESS-KEY":        OKX_API_KEY,
-        "OK-ACCESS-SIGN":       _sign(OKX_SECRET_KEY, ts, "GET", path),
-        "OK-ACCESS-TIMESTAMP":  ts,
-        "OK-ACCESS-PASSPHRASE": OKX_PASSPHRASE,
-        "Content-Type":         "application/json",
+    h = {
+        "OK-ACCESS-KEY":       OKX_API_KEY,
+        "OK-ACCESS-SIGN":      _sign(OKX_SECRET_KEY, ts, "GET", path),
+        "OK-ACCESS-TIMESTAMP": ts,
+        "Content-Type":        "application/json",
     }
+    if OKX_PASSPHRASE:
+        h["OK-ACCESS-PASSPHRASE"] = OKX_PASSPHRASE
+    return h
 
 
 def _headers_post(path: str, body: str = "") -> dict:
-    ts = _ts()
-    sign_input = ts + "POST" + path + body
-    from okx_client import _sign as _s
     import base64, hashlib, hmac
+    ts = _ts()
     sig = base64.b64encode(
-        hmac.new(OKX_SECRET_KEY.encode(), sign_input.encode(), hashlib.sha256).digest()
+        hmac.new(OKX_SECRET_KEY.encode(), (ts + "POST" + path + body).encode(), hashlib.sha256).digest()
     ).decode()
-    return {
-        "OK-ACCESS-KEY":        OKX_API_KEY,
-        "OK-ACCESS-SIGN":       sig,
-        "OK-ACCESS-TIMESTAMP":  ts,
-        "OK-ACCESS-PASSPHRASE": OKX_PASSPHRASE,
-        "Content-Type":         "application/json",
+    h = {
+        "OK-ACCESS-KEY":       OKX_API_KEY,
+        "OK-ACCESS-SIGN":      sig,
+        "OK-ACCESS-TIMESTAMP": ts,
+        "Content-Type":        "application/json",
     }
+    if OKX_PASSPHRASE:
+        h["OK-ACCESS-PASSPHRASE"] = OKX_PASSPHRASE
+    return h
 
 
 def _enabled() -> bool:
