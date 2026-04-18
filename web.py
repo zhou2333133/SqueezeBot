@@ -33,10 +33,11 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "config":  config_manager.settings,
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"config": config_manager.settings},
+    )
 
 
 # ─── 全局配置 API ─────────────────────────────────────────────────────────────
