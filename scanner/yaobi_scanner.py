@@ -73,7 +73,7 @@ class YaobiScanner:
         candidates: dict[str, Candidate] = {}
         square_posts: list[dict] = []
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             # ── 1. 期货符号缓存 ──────────────────────────────────────────────
             await self._refresh_futures(session)
 

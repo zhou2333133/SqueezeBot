@@ -77,7 +77,7 @@ async def manual_trade(request: Request):
         return JSONResponse({"status": "error", "message": "❌ 数量必须大于 0"}, status_code=400)
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             trader   = BinanceTrader(session)
             leverage = config_manager.settings.get("LEVERAGE", 5)
             await trader.set_leverage(symbol, leverage)

@@ -471,7 +471,7 @@ class BinanceSqueezeBot:
 
     async def run(self) -> None:
         logger.info("🚀 币安庄家轧空监控机器人启动！")
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(trust_env=True) as session:
             okx = OKXOnChainClient(session)
             while True:
                 try:

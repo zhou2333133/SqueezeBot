@@ -81,7 +81,7 @@ class BinanceScalpBot:
         self.running = True
         logger.info("⚡ 超短线机器人启动")
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(trust_env=True) as session:
                 self.session = session
                 self.trader  = BinanceTrader(session)
                 await self.refresh_symbols()
