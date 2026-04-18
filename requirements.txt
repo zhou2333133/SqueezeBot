@@ -2,6 +2,5 @@ aiohttp>=3.9.0
 fastapi>=0.110.0
 jinja2>=3.1.3
 pandas>=2.1.0
-pandas-ta>=0.3.14b
 uvicorn[standard]>=0.29.0
 websockets>=12.0

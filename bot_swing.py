@@ -5,7 +5,6 @@ from datetime import datetime
 
 import aiohttp
 import pandas as pd
-import pandas_ta as ta
 
 from config import config_manager, DATA_DIR, MAX_CONCURRENT_REQUESTS, SURF_API_KEY
 from okx_client import OKXOnChainClient
@@ -118,8 +117,12 @@ class BinanceSqueezeBot:
         else:
             consistent_flow = all(d < 0 for d in recent_3["delta"])
 
-        rsi_series = df.ta.rsi(length=cfg["RSI_PERIOD"])
-        latest_rsi = rsi_series.iloc[-1] if rsi_series is not None else None
+        _period = cfg["RSI_PERIOD"]
+        _delta = df["close"].diff()
+        _gain = _delta.clip(lower=0).ewm(alpha=1 / _period, adjust=False).mean()
+        _loss = (-_delta.clip(upper=0)).ewm(alpha=1 / _period, adjust=False).mean()
+        rsi_series = 100 - 100 / (1 + _gain / _loss.replace(0, 1e-10))
+        latest_rsi = rsi_series.iloc[-1] if not rsi_series.empty else None
         if latest_rsi is None or pd.isna(latest_rsi):
             latest_rsi = 50.0
         latest_rsi = float(latest_rsi)
