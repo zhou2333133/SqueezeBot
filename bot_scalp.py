@@ -32,6 +32,7 @@ class ScalpPosition:
     tp2_price:          float
     tp1_hit:            bool       = False
     tp2_hit:            bool       = False
+    paper:              bool       = False
     entry_time:         str        = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     sl_order_id:        int | None = None
     realized_pnl:       float      = 0.0
@@ -55,6 +56,7 @@ class ScalpPosition:
             "tp2_price":          round(self.tp2_price, 8),
             "tp1_hit":            self.tp1_hit,
             "tp2_hit":            self.tp2_hit,
+            "paper":              self.paper,
             "entry_time":         self.entry_time,
             "realized_pnl":       round(self.realized_pnl, 4),
             "unrealized_pct":     round(unreal, 2),
@@ -278,18 +280,47 @@ class BinanceScalpBot:
         }
 
         if not cfg.get("SCALP_AUTO_TRADE", False):
-            add_scalp_signal({**base_signal, "auto_traded": False})
+            add_scalp_signal({**base_signal, "auto_traded": False, "paper": False})
             logger.info("⚡ [%s] 信号发出 (自动交易关闭，未实际开仓)", symbol)
             return
 
         leverage      = cfg.get("SCALP_LEVERAGE",     10)
         position_usdt = cfg.get("SCALP_POSITION_USDT", 50.0)
+        quantity      = position_usdt * leverage / entry_price
+        side          = "BUY"  if direction == "LONG" else "SELL"
+        exit_s        = "SELL" if direction == "LONG" else "BUY"
 
+        # ── 模拟开仓 ──────────────────────────────────────────────────────────
+        if cfg.get("SCALP_PAPER_TRADE", False):
+            pos = ScalpPosition(
+                symbol             = symbol,
+                direction          = direction,
+                entry_price        = entry_price,
+                quantity           = quantity,
+                quantity_remaining = quantity,
+                sl_price           = sl_price,
+                tp1_price          = tp1_price,
+                tp2_price          = tp2_price,
+                current_price      = entry_price,
+                paper              = True,
+            )
+            self.open_positions[symbol] = pos
+            set_scalp_position(symbol, pos.to_dict())
+            add_scalp_signal({
+                **base_signal,
+                "auto_traded": True,
+                "paper":       True,
+                "quantity":    round(quantity, 6),
+                "leverage":    leverage,
+            })
+            logger.info(
+                "⚡ [%s] 📋 模拟开仓 %s ×%.6f @ %.6f | SL %.6f | TP1 %.6f | TP2 %.6f",
+                symbol, direction, quantity, entry_price, sl_price, tp1_price, tp2_price,
+            )
+            return
+
+        # ── 真实开仓 ──────────────────────────────────────────────────────────
         await self.trader.set_leverage(symbol, leverage)
-        quantity = position_usdt * leverage / entry_price
-        side     = "BUY"  if direction == "LONG" else "SELL"
-        exit_s   = "SELL" if direction == "LONG" else "BUY"
-
         trade_resp = await self.trader.place_market_order(symbol, side, quantity)
         if not trade_resp:
             logger.error("⚡ [%s] 市价开仓失败", symbol)
@@ -313,6 +344,7 @@ class BinanceScalpBot:
             tp2_price          = tp2_price,
             sl_order_id        = sl_order_id,
             current_price      = entry_price,
+            paper              = False,
         )
         self.open_positions[symbol] = pos
         set_scalp_position(symbol, pos.to_dict())
@@ -320,6 +352,7 @@ class BinanceScalpBot:
         add_scalp_signal({
             **base_signal,
             "auto_traded": True,
+            "paper":       False,
             "quantity":    round(quantity, 6),
             "leverage":    leverage,
             "order_id":    trade_resp.get("orderId"),
@@ -342,6 +375,8 @@ class BinanceScalpBot:
         trail_pct = cfg.get("SCALP_TP3_TRAIL_PCT", 1.0)
         exit_s    = "SELL" if pos.direction == "LONG" else "BUY"
         auto      = cfg.get("SCALP_AUTO_TRADE", False)
+        is_paper  = pos.paper
+        tag       = "📋 " if is_paper else ""
 
         def _tp_hit(tp_price: float) -> bool:
             return (pos.direction == "LONG"  and price >= tp_price) or \
@@ -349,19 +384,26 @@ class BinanceScalpBot:
 
         if not pos.tp1_hit and _tp_hit(pos.tp1_price):
             pos.tp1_hit = True
-            if auto:
-                qty = pos.quantity * tp1_ratio
+            qty = pos.quantity * tp1_ratio
+            if is_paper:
+                pos.quantity_remaining -= qty
+                pos.realized_pnl += qty * abs(price - pos.entry_price)
+            elif auto:
                 await self.trader.place_market_order(symbol, exit_s, qty)
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += qty * abs(price - pos.entry_price)
             pct = abs(price - pos.entry_price) / pos.entry_price * 100
-            logger.info("⚡ [%s] TP1 命中 @ %.6f (+%.2f%%) | 平 %.0f%%", symbol, price, pct, tp1_ratio * 100)
+            logger.info("⚡ [%s] %sTP1 命中 @ %.6f (+%.2f%%) | 平 %.0f%%",
+                        symbol, tag, price, pct, tp1_ratio * 100)
             set_scalp_position(symbol, pos.to_dict())
 
         elif pos.tp1_hit and not pos.tp2_hit and _tp_hit(pos.tp2_price):
             pos.tp2_hit = True
-            if auto:
-                qty = pos.quantity * tp2_ratio
+            qty = pos.quantity * tp2_ratio
+            if is_paper:
+                pos.quantity_remaining -= qty
+                pos.realized_pnl += qty * abs(price - pos.entry_price)
+            elif auto:
                 await self.trader.place_market_order(symbol, exit_s, qty)
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += qty * abs(price - pos.entry_price)
@@ -372,16 +414,16 @@ class BinanceScalpBot:
                         symbol, exit_s, activ, trail_pct, pos.quantity_remaining,
                     )
             pct = abs(price - pos.entry_price) / pos.entry_price * 100
-            logger.info("⚡ [%s] TP2 命中 @ %.6f (+%.2f%%) | 余仓追踪止损", symbol, price, pct)
+            logger.info("⚡ [%s] %sTP2 命中 @ %.6f (+%.2f%%) | 余仓追踪止损",
+                        symbol, tag, price, pct)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
             return
 
-        # 止损触发检测（交易所已执行 STOP_MARKET，本地同步清除）
         sl_crossed = (pos.direction == "LONG"  and price <= pos.sl_price * 0.999) or \
                      (pos.direction == "SHORT" and price >= pos.sl_price * 1.001)
         if sl_crossed and symbol in self.open_positions:
-            logger.info("⚡ [%s] SL 触发 @ %.6f", symbol, price)
+            logger.info("⚡ [%s] %sSL 触发 @ %.6f", symbol, tag, price)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
 
@@ -393,6 +435,8 @@ class BinanceScalpBot:
             if not self.open_positions or not self.trader:
                 continue
             for symbol in list(self.open_positions.keys()):
+                if self.open_positions[symbol].paper:
+                    continue
                 try:
                     pos_data = await self.trader.get_position(symbol)
                     if pos_data is None:

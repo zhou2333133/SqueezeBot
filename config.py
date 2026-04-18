@@ -118,6 +118,7 @@ class ConfigManager:
             "SCALP_TP2_RATIO":         0.4,
             "SCALP_TP3_TRAIL_PCT":     1.0,
             "SCALP_WATCHLIST":         "",
+            "SCALP_PAPER_TRADE":       False,
         }
         self.settings: dict = self.load()
 

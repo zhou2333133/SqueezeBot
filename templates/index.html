@@ -476,13 +476,13 @@
     <!-- Right: Positions + Signals -->
     <div class="col-span-12 lg:col-span-7 space-y-4">
 
-      <!-- Open Positions -->
-      <div class="card" x-show="Object.keys(scalpPositions).length>0">
+      <!-- Real Open Positions -->
+      <div class="card" x-show="Object.values(scalpPositions).some(p=>!p.paper)">
         <div class="px-5 py-4 border-b border-[#1c1c38]">
-          <span class="text-sm font-semibold text-orange-400">📌 活跃仓位</span>
+          <span class="text-sm font-semibold text-orange-400">📌 真实活跃仓位</span>
         </div>
         <div class="p-4 space-y-3">
-          <template x-for="[sym,pos] in Object.entries(scalpPositions)" :key="sym">
+          <template x-for="[sym,pos] in Object.entries(scalpPositions).filter(([,p])=>!p.paper)" :key="sym">
             <div class="rounded-xl border border-orange-500/20 bg-[#0e0a05] p-4">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
@@ -500,7 +500,6 @@
                 <span>TP2 <span :class="pos.tp2_hit?'text-green-400':'text-gray-400'" x-text="pos.tp2_price+(pos.tp2_hit?' ✓':'')"></span></span>
                 <span>已实现 <span class="text-violet-400" x-text="'$'+pos.realized_pnl"></span></span>
               </div>
-              <!-- Progress bars TP1 / TP2 -->
               <div class="mt-3 flex gap-1.5 h-1.5">
                 <div class="flex-1 rounded-full overflow-hidden bg-[#1a1a30]">
                   <div class="h-full bg-orange-500 rounded-full score-fill"
@@ -508,6 +507,56 @@
                 </div>
                 <div class="flex-1 rounded-full overflow-hidden bg-[#1a1a30]">
                   <div class="h-full bg-orange-400/60 rounded-full score-fill"
+                    :style="pos.tp1_hit?'width:'+clamp(pos.direction==='LONG'?(pos.current_price-pos.tp1_price)/(pos.tp2_price-pos.tp1_price)*100:(pos.tp1_price-pos.current_price)/(pos.tp1_price-pos.tp2_price)*100)+'%':'width:0%'"></div>
+                </div>
+              </div>
+              <div class="flex justify-between text-xs text-gray-700 mt-0.5 px-0.5">
+                <span>入场</span><span>TP1</span><span>TP2</span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Paper Positions -->
+      <div class="card" style="border-color:rgba(234,179,8,.2)" x-show="Object.values(scalpPositions).some(p=>p.paper)">
+        <div class="px-5 py-4 border-b border-yellow-900/40 flex items-center justify-between">
+          <span class="text-sm font-semibold text-yellow-400">📋 模拟仓位</span>
+          <div class="flex items-center gap-3">
+            <span class="text-xs text-yellow-700">累计模拟盈亏:
+              <span class="text-yellow-300 font-mono font-bold"
+                x-text="'$'+Object.values(scalpPositions).filter(p=>p.paper).reduce((s,p)=>s+p.realized_pnl,0).toFixed(4)"></span>
+            </span>
+            <button @click="clearPaperPositions()" class="text-xs px-3 py-1 rounded-lg bg-yellow-900/40 hover:bg-yellow-800/50 text-yellow-400 transition-colors">🗑 清除</button>
+          </div>
+        </div>
+        <div class="p-4 space-y-3">
+          <template x-for="[sym,pos] in Object.entries(scalpPositions).filter(([,p])=>p.paper)" :key="sym">
+            <div class="rounded-xl border border-yellow-500/20 bg-[#0f0e00] p-4">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900/50 text-yellow-500 font-bold">模拟</span>
+                  <span class="font-bold text-white" x-text="pos.symbol"></span>
+                  <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="pos.direction==='LONG'?'badge-long':'badge-short'" x-text="pos.direction"></span>
+                </div>
+                <div class="font-bold text-xl" :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'"
+                  x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
+              </div>
+              <div class="mt-3 grid grid-cols-3 gap-x-4 text-xs text-gray-500">
+                <span>入场 <span class="text-gray-300 font-mono" x-text="pos.entry_price"></span></span>
+                <span>现价 <span class="text-yellow-300 font-mono" x-text="pos.current_price"></span></span>
+                <span>止损 <span class="text-red-400 font-mono" x-text="pos.sl_price"></span></span>
+                <span>TP1 <span :class="pos.tp1_hit?'text-green-400':'text-gray-400'" x-text="pos.tp1_price+(pos.tp1_hit?' ✓':'')"></span></span>
+                <span>TP2 <span :class="pos.tp2_hit?'text-green-400':'text-gray-400'" x-text="pos.tp2_price+(pos.tp2_hit?' ✓':'')"></span></span>
+                <span>已实现 <span class="text-violet-400" x-text="'$'+pos.realized_pnl"></span></span>
+              </div>
+              <div class="mt-3 flex gap-1.5 h-1.5">
+                <div class="flex-1 rounded-full overflow-hidden bg-[#1a1800]">
+                  <div class="h-full bg-yellow-500 rounded-full score-fill"
+                    :style="'width:'+clamp(pos.direction==='LONG'?(pos.current_price-pos.entry_price)/(pos.tp1_price-pos.entry_price)*100:(pos.entry_price-pos.current_price)/(pos.entry_price-pos.tp1_price)*100)+'%'"></div>
+                </div>
+                <div class="flex-1 rounded-full overflow-hidden bg-[#1a1800]">
+                  <div class="h-full bg-yellow-400/60 rounded-full score-fill"
                     :style="pos.tp1_hit?'width:'+clamp(pos.direction==='LONG'?(pos.current_price-pos.tp1_price)/(pos.tp2_price-pos.tp1_price)*100:(pos.tp1_price-pos.current_price)/(pos.tp1_price-pos.tp2_price)*100)+'%':'width:0%'"></div>
                 </div>
               </div>
@@ -946,6 +995,7 @@ function app() {
       { key:'SCALP_ENABLE_LONG',  label:'做多',   color:'text-green-400'  },
       { key:'SCALP_ENABLE_SHORT', label:'做空',   color:'text-red-400'    },
       { key:'SCALP_AUTO_TRADE',   label:'自动下单', color:'text-orange-400' },
+      { key:'SCALP_PAPER_TRADE',  label:'模拟开仓', color:'text-yellow-400' },
     ],
 
     get swingStats() {
@@ -1047,7 +1097,7 @@ function app() {
 
     async saveScalpConfig() {
       const fd = new FormData(document.getElementById('scalpForm'))
-      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT']
+      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
@@ -1074,6 +1124,13 @@ function app() {
     async loadScalpPositions() {
       if (!this.scalpRunning) return
       try { const d=await(await fetch('/api/scalp/positions')).json(); this.scalpPositions=d.positions||{} } catch{}
+    },
+    async clearPaperPositions() {
+      try {
+        const d=await(await fetch('/api/scalp/paper/positions',{method:'DELETE'})).json()
+        this.showToast(d.message, d.status==='success'?'success':'error')
+        await this.loadScalpPositions()
+      } catch(e){ this.showToast('❌ 清除失败: '+e,'error') }
     },
     async startScalp() {
       try {

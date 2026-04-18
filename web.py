@@ -219,6 +219,24 @@ async def clear_scalp_signals():
     return JSONResponse({"status": "success", "message": "✅ 超短线信号已清空"})
 
 
+@app.get("/api/scalp/paper/positions")
+async def get_scalp_paper_positions():
+    paper = {k: v for k, v in scalp_positions.items() if v.get("paper")}
+    total_pnl = sum(v.get("realized_pnl", 0) for v in paper.values())
+    return JSONResponse({"positions": paper, "count": len(paper), "total_realized_pnl": round(total_pnl, 4)})
+
+
+@app.delete("/api/scalp/paper/positions")
+async def clear_scalp_paper_positions():
+    paper_keys = [k for k, v in scalp_positions.items() if v.get("paper")]
+    for k in paper_keys:
+        scalp_positions.pop(k, None)
+        if bot_state.scalp_bot:
+            bot_state.scalp_bot.open_positions.pop(k, None)
+    logger.info("📋 模拟仓位已全部清除 (%d 个)", len(paper_keys))
+    return JSONResponse({"status": "success", "message": f"✅ 已清除 {len(paper_keys)} 个模拟仓位"})
+
+
 @app.get("/api/scalp/symbols")
 async def get_scalp_symbols():
     syms = bot_state.scalp_bot.monitored_symbols if bot_state.scalp_bot else []
