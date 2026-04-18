@@ -1,24 +1,71 @@
+"""
+日志路由系统
+- 控制台输出
+- 主内存队列 (全部日志)
+- 模式专属队列: swing_log_queue / scalp_log_queue
+- 按天轮转文件日志 (7 天保留)
+"""
 import logging
-import asyncio
-from logging.handlers import QueueHandler, QueueListener
+import logging.handlers
+import os
+import queue
 
-# 创建一个全局的异步队列来存储日志记录
-log_queue = asyncio.Queue()
+log_queue:       queue.Queue = queue.Queue(maxsize=1000)
+swing_log_queue: queue.Queue = queue.Queue(maxsize=500)
+scalp_log_queue: queue.Queue = queue.Queue(maxsize=500)
 
-def setup_logging():
-    """
-    配置日志系统，将日志输出到队列中。
-    """
-    # 获取根 logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+_LOG_FORMAT      = "[%(asctime)s] [%(levelname)-8s] %(message)s"
+_FILE_LOG_FORMAT = "[%(asctime)s] [%(levelname)-8s] [%(name)s] %(message)s"
+_DATE_FORMAT     = "%H:%M:%S"
 
-    # 移除所有现有的 handlers，以避免重复输出
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
 
-    # 创建一个 handler，将日志记录放入我们的异步队列
-    queue_handler = QueueHandler(log_queue)
-    
-    # 将 handler 添加到根 logger
-    root_logger.addHandler(queue_handler)
+def _put(q: queue.Queue, msg: str) -> None:
+    if q.full():
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            pass
+    try:
+        q.put_nowait(msg)
+    except queue.Full:
+        pass
+
+
+class _RoutingQueueHandler(logging.Handler):
+    """路由日志 → 主队列 + 模式专属队列"""
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            _put(log_queue, msg)
+            if "scalp" in record.name.lower():
+                _put(scalp_log_queue, msg)
+            else:
+                _put(swing_log_queue, msg)
+        except Exception:
+            self.handleError(record)
+
+
+def setup_logging(level: int = logging.INFO, log_dir: str | None = None) -> None:
+    root = logging.getLogger()
+    root.setLevel(level)
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+
+    fmt = logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
+
+    console = logging.StreamHandler()
+    console.setFormatter(fmt)
+    root.addHandler(console)
+
+    mem = _RoutingQueueHandler()
+    mem.setFormatter(fmt)
+    root.addHandler(mem)
+
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+        fh = logging.handlers.TimedRotatingFileHandler(
+            os.path.join(log_dir, "squeeze_bot.log"),
+            when="midnight", backupCount=7, encoding="utf-8",
+        )
+        fh.setFormatter(logging.Formatter(_FILE_LOG_FORMAT))
+        root.addHandler(fh)

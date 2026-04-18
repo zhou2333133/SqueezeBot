@@ -7,5 +7,6 @@ env/
 
 # 数据与日志
 data/
+logs/
 *.log
 *.csv

@@ -1,253 +1,1185 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Squeeze Bot 控制台 🚀</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-        .glass-panel { background: rgba(31, 41, 55, 0.6); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.08); }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SqueezeBot</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<style>
+  :root { --c-bg: #06060f; --c-card: #0c0c1e; --c-border: #1c1c38; }
+  * { box-sizing: border-box; }
+  body { background: var(--c-bg); font-family: system-ui, -apple-system, sans-serif; color: #e2e8f0; }
+  [x-cloak] { display: none !important; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a2a50; border-radius: 4px; }
+  .terminal { font-family: 'Consolas','Courier New',monospace; font-size: 11.5px; line-height: 1.65; }
+  .card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: 14px; }
+  .glow-blue  { box-shadow: 0 0 28px rgba(59,130,246,.1); }
+  .glow-orange{ box-shadow: 0 0 28px rgba(249,115,22,.1); }
+  .score-fill { transition: width .5s cubic-bezier(.4,0,.2,1); }
+  @keyframes slide-in { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+  .slide-in { animation: slide-in .18s ease; }
+  .badge-long  { background:rgba(34,197,94,.15);  color:#4ade80; border:1px solid rgba(34,197,94,.25); }
+  .badge-short { background:rgba(239,68,68,.15);   color:#f87171; border:1px solid rgba(239,68,68,.25); }
+  .fbadge-ok   { background:rgba(59,130,246,.15);  color:#93c5fd; }
+  .fbadge-fail { background:rgba(80,80,100,.12);   color:#52525b; text-decoration:line-through; }
+  .inp { background:#08081c; border:1px solid #1c1c38; border-radius:8px; color:#e2e8f0; padding:6px 10px; width:100%; font-size:13px; outline:none; transition:border-color .2s; }
+  .inp:focus  { border-color:#3b82f6; }
+  .inp-o:focus{ border-color:#f97316; }
+  .toggle { position:relative; display:inline-block; width:40px; height:22px; flex-shrink:0; }
+  .toggle input { opacity:0; width:0; height:0; position:absolute; }
+  .ttrack { position:absolute; inset:0; background:#1e1e3a; border-radius:22px; transition:.25s; cursor:pointer; }
+  .toggle input:checked ~ .ttrack { background:#3b82f6; }
+  .ttrack::before { content:''; position:absolute; width:16px; height:16px; background:#fff; border-radius:50%; left:3px; top:3px; transition:.25s; }
+  .toggle input:checked ~ .ttrack::before { transform:translateX(18px); }
+  .to-toggle input:checked ~ .ttrack { background:#f97316; }
+  .tab-sw-on   { background:#1a2f52; color:#60a5fa; box-shadow:0 0 18px rgba(59,130,246,.2); }
+  .tab-sc-on   { background:#3a1f0a; color:#fb923c; box-shadow:0 0 18px rgba(249,115,22,.2); }
+  .tab-yb-on   { background:#0f2a1a; color:#4ade80; box-shadow:0 0 18px rgba(74,222,128,.2); }
+  .tab-off     { color:#4b5563; }
+  .tab-off:hover { color:#9ca3af; background:#10102a; }
+  .score-bar-bg { background:#0e1a14; border-radius:6px; overflow:hidden; height:6px; }
+  .score-bar-fill { height:100%; border-radius:6px; transition:width .6s cubic-bezier(.4,0,.2,1); }
+  .source-chip { display:inline-block; padding:1px 7px; border-radius:10px; font-size:10px; margin:1px; }
+  .sc-gecko   { background:rgba(139,92,246,.2); color:#a78bfa; }
+  .sc-dex     { background:rgba(20,184,166,.2); color:#2dd4bf; }
+  .sc-square  { background:rgba(234,179,8,.2); color:#fbbf24; }
+  .sc-okx     { background:rgba(59,130,246,.2); color:#93c5fd; }
+</style>
 </head>
-<body class="bg-[#0f172a] text-gray-100 min-h-screen pb-10" x-data="botDashboard()">
+<body x-data="app()" x-cloak>
 
-    <!-- Top Navbar -->
-    <header class="border-b border-gray-800 bg-gray-900/50 py-4 px-8 flex justify-between items-center sticky top-0 z-50 glass-panel">
-        <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-500 to-emerald-400 flex items-center justify-center text-xl shadow-lg">🤖</div>
-            <h1 class="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-gray-100 to-gray-400">Squeeze Bot 自动化做市套利</h1>
+<!-- NAV -->
+<nav class="sticky top-0 z-50 border-b border-[#1c1c38] bg-[#07071a]/95 backdrop-blur-md">
+  <div class="max-w-screen-2xl mx-auto px-5 h-14 flex items-center gap-4">
+    <span class="text-base font-black bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent mr-2">⚡ SqueezeBot</span>
+
+    <!-- Mode Tabs -->
+    <div class="flex items-center gap-1 bg-[#0c0c1e] border border-[#1c1c38] rounded-xl p-1">
+      <button @click="mode='swing'" :class="mode==='swing'?'tab-sw-on':'tab-off'"
+        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
+        📊 中线策略
+      </button>
+      <button @click="mode='scalp'" :class="mode==='scalp'?'tab-sc-on':'tab-off'"
+        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
+        ⚡ 超短线
+      </button>
+      <button @click="mode='yaobi'" :class="mode==='yaobi'?'tab-yb-on':'tab-off'"
+        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
+        🔍 妖币扫描
+      </button>
+    </div>
+
+    <div class="flex-1"></div>
+
+    <!-- WS indicators -->
+    <div class="hidden sm:flex items-center gap-3 text-xs">
+      <template x-for="[k,lb] in [['swingLog','中线日志'],['scalpLog','超短线日志'],['swingSig','中线信号'],['scalpSig','超短线信号'],['yaobiCand','妖币扫描']]" :key="k">
+        <div class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full flex-shrink-0" :class="wsStatus[k]==='open'?'bg-green-500 shadow-[0_0_5px_#22c55e]':'bg-gray-700'"></span>
+          <span class="text-gray-600" x-text="lb"></span>
         </div>
-        <div class="flex items-center gap-4">
-            <span class="flex h-3 w-3 relative">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-            </span>
-            <span class="text-sm font-medium text-emerald-400">系统运行中</span>
-        </div>
-    </header>
+      </template>
+    </div>
+    <span class="text-xs text-gray-700 font-mono ml-3" x-text="clock"></span>
+  </div>
+</nav>
 
-    <main class="max-w-7xl mx-auto mt-8 px-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        <!-- 左侧/中间：系统参数配置 -->
-        <div class="lg:col-span-2 space-y-6">
-            <form @submit.prevent="saveConfig" class="glass-panel rounded-2xl p-6 shadow-xl relative">
-                <div class="flex items-center justify-between mb-6">
-                    <h2 class="text-xl font-semibold"><i class="fa-solid fa-sliders text-blue-400 mr-2"></i> 策略配置参数</h2>
-                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium transition flex items-center gap-2" :class="{'opacity-50': saving}" :disabled="saving">
-                        <i class="fa-solid fa-floppy-disk"></i> <span x-text="saving ? '保存中...' : '应用设置'"></span>
-                    </button>
-                </div>
+<main class="max-w-screen-2xl mx-auto px-4 py-5 space-y-5">
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- Core Switches -->
-                    <div class="space-y-4 bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
-                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">自动交易总控 ⚡</h3>
-                        <label class="flex items-center justify-between cursor-pointer">
-                            <span class="text-gray-200">启用自动开仓 (AUTO_TRADE)</span>
-                            <input type="checkbox" name="AUTO_TRADE_ENABLED" value="true" class="form-checkbox h-5 w-5 text-blue-500 rounded border-gray-600 bg-gray-700" {% if config.AUTO_TRADE_ENABLED %}checked{% endif %}>
-                        </label>
-                        <label class="flex items-center justify-between cursor-pointer">
-                            <span class="text-gray-200">启用 TA 二次确认 (TA_CONFIRM)</span>
-                            <input type="checkbox" name="TA_CONFIRMATION_ENABLED" value="true" class="form-checkbox h-5 w-5 text-emerald-500 rounded border-gray-600 bg-gray-700" {% if config.TA_CONFIRMATION_ENABLED %}checked{% endif %}>
-                        </label>
-                        <label class="flex items-center justify-between cursor-pointer">
-                            <span class="text-gray-200">启用新闻利好过滤</span>
-                            <input type="checkbox" name="ENABLE_NEWS_FILTER" value="true" class="form-checkbox h-5 w-5 text-yellow-500 rounded border-gray-600 bg-gray-700" {% if config.ENABLE_NEWS_FILTER %}checked{% endif %}>
-                        </label>
-                        <label class="flex items-center justify-between cursor-pointer">
-                            <span class="text-gray-200">启用清算热图过滤</span>
-                            <input type="checkbox" name="ENABLE_LIQ_FILTER" value="true" class="form-checkbox h-5 w-5 text-purple-500 rounded border-gray-600 bg-gray-700" {% if config.ENABLE_LIQ_FILTER %}checked{% endif %}>
-                        </label>
-                    </div>
+<!-- ═══════════ SWING TAB ════════════════════════════════════════════════════ -->
+<div x-show="mode==='swing'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
 
-                    <!-- Risk Management -->
-                    <div class="space-y-4 bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
-                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">资金与风控 🛡️</h3>
-                        <div>
-                            <label class="block text-xs text-gray-400 mb-1">每次开仓金额 (USDT)</label>
-                            <input type="number" step="0.1" name="POSITION_SIZE_USDT" value="{{ config.POSITION_SIZE_USDT }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
-                        </div>
-                        <div class="flex gap-4">
-                            <div class="flex-1">
-                                <label class="block text-xs text-gray-400 mb-1">止损比例 (%)</label>
-                                <input type="number" step="0.1" name="STOP_LOSS_PERCENT" value="{{ config.STOP_LOSS_PERCENT }}" class="w-full bg-gray-900 border border-red-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
-                            </div>
-                            <div class="flex-1">
-                                <label class="block text-xs text-gray-400 mb-1">止盈比例 (%)</label>
-                                <input type="number" step="0.1" name="TAKE_PROFIT_PERCENT" value="{{ config.TAKE_PROFIT_PERCENT }}" class="w-full bg-gray-900 border border-emerald-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
-                            </div>
-                        </div>
-                        <label class="flex items-center justify-between cursor-pointer mt-3">
-                            <span class="text-sm text-gray-200">启用动态 K 线结构止损 (防插针)</span>
-                            <input type="checkbox" name="USE_DYNAMIC_SL" value="true" class="form-checkbox h-5 w-5 text-red-500 rounded border-gray-600 bg-gray-700" {% if config.USE_DYNAMIC_SL %}checked{% endif %}>
-                        </label>
-                        <label class="flex items-center justify-between cursor-pointer mt-3">
-                            <span class="text-sm text-gray-200">启用追踪止损 (让利润奔跑)</span>
-                            <input type="checkbox" name="USE_TRAILING_STOP" value="true" class="form-checkbox h-5 w-5 text-sky-500 rounded border-gray-600 bg-gray-700" {% if config.USE_TRAILING_STOP %}checked{% endif %}>
-                        </label>
-                        <div class="flex gap-4 mt-2">
-                            <div class="flex-1">
-                                <label class="block text-xs text-gray-400 mb-1">追踪止损激活 (%)</label>
-                                <input type="number" step="0.1" name="TSL_ACTIVATION_PERCENT" value="{{ config.TSL_ACTIVATION_PERCENT }}" class="w-full bg-gray-900 border border-sky-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
-                            </div>
-                            <div class="flex-1">
-                                <label class="block text-xs text-gray-400 mb-1">追踪止损回调 (%)</label>
-                                <input type="number" step="0.1" name="TSL_CALLBACK_PERCENT" value="{{ config.TSL_CALLBACK_PERCENT }}" class="w-full bg-gray-900 border border-sky-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
-                            </div>
-                        </div>
-                    </div>
+  <!-- Stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
+    <template x-for="s in swingStats" :key="s.label">
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1" x-text="s.label"></div>
+        <div class="text-2xl font-bold" :class="s.color" x-text="s.value"></div>
+        <div class="text-xs text-gray-600 mt-0.5" x-show="s.sub" x-text="s.sub"></div>
+      </div>
+    </template>
+  </div>
 
-                    <!-- Indicators -->
-                    <div class="space-y-4 bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 md:col-span-2">
-                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">聪明钱资金流信号与指标 📊</h3>
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">资金流入占比</label>
-                                <input type="number" step="0.01" name="FLOW_OI_RATIO" value="{{ config.FLOW_OI_RATIO }}" title="建议0.05=5%" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">OI激增倍数</label>
-                                <input type="number" step="0.1" name="OI_SURGE_RATIO" value="{{ config.OI_SURGE_RATIO }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">RSI 入场最高值</label>
-                                <input type="number" step="1" name="RSI_MAX_ENTRY" value="{{ config.RSI_MAX_ENTRY }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">扫描间隔 (分钟)</label>
-                                <input type="number" step="1" name="INTERVAL_MINUTES" value="{{ config.INTERVAL_MINUTES }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">持仓盘子下限 (USDT)</label>
-                                <input type="number" step="100000" name="MIN_OI_USDT" value="{{ config.MIN_OI_USDT }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-gray-400 mb-1">持仓盘子上限 (USDT)</label>
-                                <input type="number" step="1000000" name="MAX_OI_USDT" value="{{ config.MAX_OI_USDT }}" class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-emerald-400 mb-1">大户多空比 (必须大于)</label>
-                                <input type="number" step="0.01" name="WHALE_LS_MIN" value="{{ config.WHALE_LS_MIN }}" class="w-full bg-gray-900 border border-emerald-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-xs text-red-400 mb-1">散户多空比 (必须小于)</label>
-                                <input type="number" step="0.01" name="RETAIL_LS_MAX" value="{{ config.RETAIL_LS_MAX }}" class="w-full bg-gray-900 border border-red-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                        </div>
-                    </div>
+  <div class="grid grid-cols-12 gap-5">
 
-                    <!-- AI Agent -->
-                    <div class="space-y-4 bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 md:col-span-2">
-                        <h3 class="text-sm font-bold text-gray-400 uppercase tracking-wider">AI Agent 决策大脑 🧠</h3>
-                        <label class="flex items-center justify-between cursor-pointer">
-                            <span class="text-gray-200">启用 AI Agent 最终决策</span>
-                            <input type="checkbox" name="ENABLE_AI_AGENT" value="true" class="form-checkbox h-5 w-5 text-indigo-500 rounded border-gray-600 bg-gray-700" {% if config.ENABLE_AI_AGENT %}checked{% endif %}>
-                        </label>
-                        <div>
-                            <label class="block text-xs text-gray-400 mb-1">AI 最低开仓评分 (0-100)</label>
-                            <input type="number" step="1" name="AI_AGENT_SCORE_MIN" value="{{ config.AI_AGENT_SCORE_MIN }}" class="w-full bg-gray-900 border border-indigo-500/50 rounded-lg px-3 py-2 text-white focus:outline-none">
-                        </div>
-                    </div>
-                </div>
-            </form>
-        </div>
+    <!-- Settings col -->
+    <div class="col-span-12 lg:col-span-4 space-y-4">
 
-        <!-- 右侧：手动交易台 -->
-        <div class="space-y-6">
-            <div class="glass-panel rounded-2xl p-6 shadow-xl">
-                <h2 class="text-xl font-semibold mb-6"><i class="fa-solid fa-hand-pointer text-emerald-400 mr-2"></i> 极速交易台</h2>
-                
-                <form @submit.prevent="manualTrade" class="space-y-4">
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">交易对 (例如: BTCUSDT)</label>
-                        <input type="text" x-model="trade.symbol" required class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white font-mono uppercase focus:border-emerald-500 focus:outline-none" placeholder="BTCUSDT">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">开/平仓数量 (币数)</label>
-                        <input type="number" step="0.000001" x-model="trade.quantity" required class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none" placeholder="0.01">
-                    </div>
-                    
-                    <div class="grid grid-cols-2 gap-3 pt-2">
-                        <button type="submit" @click="trade.side = 'BUY'" class="bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500 text-emerald-400 hover:text-white py-3 rounded-xl font-bold transition">
-                            开多 / 平空 (BUY)
-                        </button>
-                        <button type="submit" @click="trade.side = 'SELL'" class="bg-red-600/20 hover:bg-red-600 border border-red-500 text-red-400 hover:text-white py-3 rounded-xl font-bold transition">
-                            开空 / 平多 (SELL)
-                        </button>
-                    </div>
-                </form>
+      <div class="card glow-blue">
+        <button @click="swingOpen=!swingOpen" class="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-blue-400">
+          <span>⚙️ 中线策略参数</span>
+          <span class="text-gray-600 text-xs" x-text="swingOpen?'▲':'▼'"></span>
+        </button>
+        <div x-show="swingOpen" class="px-5 pb-5 space-y-4">
+          <form @submit.prevent="saveSwingConfig()" id="swingForm">
 
-                <!-- Toast Message -->
-                <div x-show="msg" x-transition.opacity class="mt-4 p-3 rounded-lg text-sm font-medium text-center"
-                     :class="msgType === 'success' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'">
-                    <span x-text="msg"></span>
-                </div>
+            <p class="text-xs text-gray-600 uppercase tracking-widest pt-1">基础设置</p>
+            <div class="grid grid-cols-2 gap-3 mt-2">
+              <div><label class="text-xs text-gray-500">扫描间隔 (min)</label>
+                <input class="inp mt-1" type="number" name="INTERVAL_MINUTES" :value="cfg.INTERVAL_MINUTES"></div>
+              <div><label class="text-xs text-gray-500">RSI 周期</label>
+                <input class="inp mt-1" type="number" name="RSI_PERIOD" :value="cfg.RSI_PERIOD"></div>
+              <div><label class="text-xs text-gray-500">RSI 超买上限</label>
+                <input class="inp mt-1" type="number" name="RSI_MAX_ENTRY" :value="cfg.RSI_MAX_ENTRY"></div>
+              <div><label class="text-xs text-gray-500">OI 激增倍数</label>
+                <input class="inp mt-1" type="number" step="0.1" name="OI_SURGE_RATIO" :value="cfg.OI_SURGE_RATIO"></div>
             </div>
 
-            <!-- Info Card -->
-            <div class="bg-blue-900/20 border border-blue-800 rounded-2xl p-5 text-sm text-blue-200">
-                <h4 class="font-bold text-blue-400 mb-2"><i class="fa-solid fa-circle-info"></i> 使用提示</h4>
-                <ul class="list-disc list-inside space-y-1 ml-2">
-                    <li>手动交易台会直接向币安发送<strong>市价单</strong>，请谨慎填写币种数量。</li>
-                    <li>止盈止损将在自动交易触发时自动挂入 GTC 触发平仓市价单。</li>
-                    <li>建议 Telegram 报警功能和自动交易配合使用。</li>
-                </ul>
+            <p class="text-xs text-gray-600 uppercase tracking-widest mt-4 pt-1">交易参数</p>
+            <div class="grid grid-cols-2 gap-3 mt-2">
+              <div><label class="text-xs text-gray-500">杠杆</label>
+                <input class="inp mt-1" type="number" name="LEVERAGE" :value="cfg.LEVERAGE"></div>
+              <div><label class="text-xs text-gray-500">仓位 USDT</label>
+                <input class="inp mt-1" type="number" name="POSITION_SIZE_USDT" :value="cfg.POSITION_SIZE_USDT"></div>
+              <div><label class="text-xs text-gray-500">止损 %</label>
+                <input class="inp mt-1" type="number" step="0.1" name="STOP_LOSS_PERCENT" :value="cfg.STOP_LOSS_PERCENT"></div>
+              <div><label class="text-xs text-gray-500">止盈 %</label>
+                <input class="inp mt-1" type="number" step="0.1" name="TAKE_PROFIT_PERCENT" :value="cfg.TAKE_PROFIT_PERCENT"></div>
+              <div><label class="text-xs text-gray-500">TSL 激活 %</label>
+                <input class="inp mt-1" type="number" step="0.1" name="TSL_ACTIVATION_PERCENT" :value="cfg.TSL_ACTIVATION_PERCENT"></div>
+              <div><label class="text-xs text-gray-500">TSL 回调 %</label>
+                <input class="inp mt-1" type="number" step="0.1" name="TSL_CALLBACK_PERCENT" :value="cfg.TSL_CALLBACK_PERCENT"></div>
+              <div><label class="text-xs text-gray-500">AI 最低分</label>
+                <input class="inp mt-1" type="number" name="AI_AGENT_SCORE_MIN" :value="cfg.AI_AGENT_SCORE_MIN"></div>
+              <div><label class="text-xs text-gray-500">OI 下限 (USDT)</label>
+                <input class="inp mt-1" type="number" name="MIN_OI_USDT" :value="cfg.MIN_OI_USDT"></div>
             </div>
+
+            <p class="text-xs text-gray-600 uppercase tracking-widest mt-4 pt-1">过滤器</p>
+            <div class="grid grid-cols-2 gap-y-3 mt-2">
+              <template x-for="f in swingFilters" :key="f.key">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle">
+                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$event.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <span class="text-sm text-gray-300" x-text="f.label"></span>
+                </label>
+              </template>
+            </div>
+
+            <p class="text-xs text-gray-600 uppercase tracking-widest mt-4 pt-1">交易方向 & 控制</p>
+            <div class="grid grid-cols-3 gap-y-3 mt-2">
+              <template x-for="f in swingToggles" :key="f.key">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle">
+                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$event.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <span class="text-sm" :class="f.color" x-text="f.label"></span>
+                </label>
+              </template>
+            </div>
+
+            <button type="submit" class="mt-5 w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
+              💾 保存中线参数
+            </button>
+          </form>
         </div>
-    </main>
+      </div>
 
-    <script>
-        document.addEventListener('alpine:init', () => {
-            Alpine.data('botDashboard', () => ({
-                saving: false,
-                trade: { symbol: '', quantity: '', side: '' },
-                msg: '',
-                msgType: 'success',
+      <!-- Manual Trade -->
+      <div class="card">
+        <button @click="manualOpen=!manualOpen" class="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-gray-400">
+          <span>🖱️ 手动下单</span>
+          <span class="text-xs text-gray-600" x-text="manualOpen?'▲':'▼'"></span>
+        </button>
+        <div x-show="manualOpen" class="px-5 pb-5 space-y-3">
+          <input class="inp" x-model="manual.symbol" placeholder="合约代码 (BTCUSDT)">
+          <div class="grid grid-cols-2 gap-3">
+            <select class="inp" x-model="manual.side">
+              <option value="BUY">BUY 做多</option>
+              <option value="SELL">SELL 做空</option>
+            </select>
+            <input class="inp" type="number" x-model="manual.quantity" placeholder="数量">
+          </div>
+          <button @click="submitManual()" class="w-full py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
+            📤 提交订单
+          </button>
+        </div>
+      </div>
 
-                async saveConfig(e) {
-                    this.saving = true;
-                    const formData = new FormData(e.target);
-                    
-                    // HTML checkbox fallback for un-checked state
-                    if(!formData.has("AUTO_TRADE_ENABLED")) formData.append("AUTO_TRADE_ENABLED", "false");
-                    if(!formData.has("TA_CONFIRMATION_ENABLED")) formData.append("TA_CONFIRMATION_ENABLED", "false");
-                    if(!formData.has("ENABLE_NEWS_FILTER")) formData.append("ENABLE_NEWS_FILTER", "false");
-                    if(!formData.has("ENABLE_LIQ_FILTER")) formData.append("ENABLE_LIQ_FILTER", "false");
-                    if(!formData.has("USE_DYNAMIC_SL")) formData.append("USE_DYNAMIC_SL", "false");
-                    if(!formData.has("USE_TRAILING_STOP")) formData.append("USE_TRAILING_STOP", "false");
-                    if(!formData.has("ENABLE_AI_AGENT")) formData.append("ENABLE_AI_AGENT", "false");
+    </div><!-- end left col -->
 
-                    try {
-                        const res = await fetch('/api/config', { method: 'POST', body: formData });
-                        const data = await res.json();
-                        this.showMsg(data.message, 'success');
-                    } catch (err) {
-                        this.showMsg('网络错误，配置保存失败！', 'error');
-                    }
-                    this.saving = false;
-                },
+    <!-- Right: Signals -->
+    <div class="col-span-12 lg:col-span-8">
+      <div class="card h-full">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-blue-400">🚨 中线信号历史</span>
+            <span class="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full" x-text="swingSignals.length + ' 条'"></span>
+          </div>
+          <button @click="clearSwingSignals()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+        </div>
+        <div class="p-4 space-y-3 overflow-y-auto" style="max-height:600px">
+          <div x-show="swingSignals.length===0" class="text-center text-gray-600 py-16 text-sm">暂无中线信号，等待扫描...</div>
+          <template x-for="(sig,i) in swingSignals" :key="i">
+            <div class="rounded-xl border border-[#1c1c38] bg-[#090918] p-4 hover:border-blue-500/20 transition-all slide-in">
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-bold text-white text-sm" x-text="sig.symbol"></span>
+                  <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="sig.direction==='LONG'?'badge-long':'badge-short'"
+                    x-text="sig.direction==='LONG'?'做多 ▲':'做空 ▼'"></span>
+                  <span class="text-xs text-gray-500 font-mono" x-text="'$'+(sig.mark_price>1?Number(sig.mark_price).toFixed(2):Number(sig.mark_price).toFixed(6))"></span>
+                </div>
+                <div class="text-right flex-shrink-0">
+                  <div class="text-xs text-gray-600" x-text="(sig.timestamp||'').slice(11,19)"></div>
+                  <div class="text-sm font-bold mt-0.5"
+                    :class="(sig.ai_score||0)>=80?'text-green-400':(sig.ai_score||0)>=60?'text-yellow-400':'text-gray-500'"
+                    x-text="'AI '+(sig.ai_score??'—')"></div>
+                </div>
+              </div>
+              <!-- Score bar -->
+              <div class="mt-3 h-1 bg-[#18183a] rounded-full overflow-hidden">
+                <div class="h-full rounded-full score-fill"
+                  :class="(sig.ai_score||0)>=80?'bg-green-500':(sig.ai_score||0)>=60?'bg-yellow-500':'bg-gray-600'"
+                  :style="'width:'+(sig.ai_score||0)+'%'"></div>
+              </div>
+              <!-- Metrics -->
+              <div class="mt-3 grid grid-cols-3 gap-x-4 gap-y-1 text-xs text-gray-500">
+                <span>资金费 <span class="text-gray-300" x-text="sig.funding_rate+'%'"></span></span>
+                <span>OI <span class="text-gray-300" x-text="sig.oi_usdt+'M'"></span></span>
+                <span>OI倍 <span class="text-gray-300" x-text="sig.oi_surge_ratio+'x'"></span></span>
+                <span>RSI <span class="text-gray-300" x-text="sig.rsi"></span></span>
+                <span>大户 <span class="text-gray-300" x-text="sig.whale_ls"></span></span>
+                <span>散户 <span class="text-gray-300" x-text="sig.retail_ls"></span></span>
+              </div>
+              <!-- Filter badges -->
+              <div class="mt-3 flex flex-wrap gap-1.5" x-show="sig.filters">
+                <template x-for="[k,lb] in [['ta','TA'],['news','新闻'],['liq','清算'],['mtf','MTF'],['okx','OKX链上']]" :key="k">
+                  <span class="px-2 py-0.5 rounded text-xs" :class="sig.filters&&sig.filters[k]?'fbadge-ok':'fbadge-fail'"
+                    x-text="(sig.filters&&sig.filters[k]?'✓ ':'✗ ')+lb"></span>
+                </template>
+                <span x-show="sig.trade&&sig.trade.order_id" class="px-2 py-0.5 rounded text-xs bg-violet-500/20 text-violet-400">已自动开仓</span>
+              </div>
+              <!-- Expandable details -->
+              <div x-show="sig.details||(sig.trade&&sig.trade.order_id)">
+                <button @click="sig._open=!sig._open" class="mt-2 text-xs text-gray-600 hover:text-gray-400 transition-colors"
+                  x-text="sig._open?'▲ 收起':'▼ 详情'"></button>
+                <div x-show="sig._open" class="mt-2 space-y-1 text-xs text-gray-500">
+                  <div x-show="sig.details&&sig.details.news"><span class="text-gray-600">新闻: </span><span class="text-gray-400" x-text="sig.details?.news"></span></div>
+                  <div x-show="sig.details&&sig.details.liq"><span class="text-gray-600">清算: </span><span class="text-gray-400" x-text="sig.details?.liq"></span></div>
+                  <div x-show="sig.details&&sig.details.mtf"><span class="text-gray-600">MTF: </span><span class="text-gray-400" x-text="sig.details?.mtf"></span></div>
+                  <div x-show="sig.details&&sig.details.okx"><span class="text-gray-600">OKX: </span><span class="text-gray-400" x-text="sig.details?.okx"></span></div>
+                  <div x-show="sig.trade&&sig.trade.order_id" class="pt-2 border-t border-[#1c1c38] grid grid-cols-2 gap-x-4 gap-y-1">
+                    <span>杠杆 <span class="text-violet-400" x-text="sig.trade?.leverage+'x'"></span></span>
+                    <span>仓位 <span class="text-violet-400" x-text="'$'+sig.trade?.margin_usdt"></span></span>
+                    <span>止损 <span class="text-red-400" x-text="sig.trade?.sl_price"></span></span>
+                    <span>止盈 <span class="text-green-400" x-text="sig.trade?.tp_price||sig.trade?.tp_strategy"></span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div><!-- end grid -->
 
-                async manualTrade() {
-                    const formData = new FormData();
-                    formData.append('symbol', this.trade.symbol);
-                    formData.append('side', this.trade.side);
-                    formData.append('quantity', this.trade.quantity);
+  <!-- CSV Viewer -->
+  <div class="card">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
+      <span class="text-sm font-semibold text-gray-300">📊 历史数据查看器</span>
+      <div class="flex items-center gap-2">
+        <select class="inp text-xs py-1 px-2 w-44" x-model="csvSymbol" @change="loadCsvData()">
+          <option value="">— 选择币种 —</option>
+          <template x-for="s in csvSymbols" :key="s"><option :value="s" x-text="s"></option></template>
+        </select>
+        <button @click="loadCsvData()" class="text-xs text-blue-400 hover:text-blue-300 px-2 transition-colors">↻</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead><tr class="border-b border-[#1c1c38] text-gray-500 text-left">
+          <th class="py-2 px-4 font-medium">时间</th>
+          <th class="py-2 px-4 font-medium text-right">标记价</th>
+          <th class="py-2 px-4 font-medium text-right">OI</th>
+          <th class="py-2 px-4 font-medium text-right">资金费</th>
+          <th class="py-2 px-4 font-medium text-right">涨跌%</th>
+          <th class="py-2 px-4 font-medium text-right">大户L/S</th>
+          <th class="py-2 px-4 font-medium text-right">散户L/S</th>
+        </tr></thead>
+        <tbody>
+          <tr x-show="csvData.length===0"><td colspan="7" class="text-center py-8 text-gray-600">选择币种后加载</td></tr>
+          <template x-for="(r,i) in csvData" :key="i">
+            <tr class="border-b border-[#0e0e20] hover:bg-[#0d0d20] transition-colors">
+              <td class="py-2 px-4 text-gray-400 font-mono" x-text="(r.timestamp||'').slice(5)"></td>
+              <td class="py-2 px-4 text-right text-white font-mono" x-text="Number(r.mark_price).toFixed(4)"></td>
+              <td class="py-2 px-4 text-right text-gray-300" x-text="r.oi?'$'+(Number(r.oi)/1e6).toFixed(1)+'M':'—'"></td>
+              <td class="py-2 px-4 text-right font-mono" :class="Number(r.last_funding_rate)>0?'text-red-400':'text-green-400'"
+                x-text="r.last_funding_rate?(Number(r.last_funding_rate)*100).toFixed(4)+'%':'—'"></td>
+              <td class="py-2 px-4 text-right font-mono" :class="Number(r.price_change_percent)>0?'text-green-400':'text-red-400'"
+                x-text="r.price_change_percent?Number(r.price_change_percent).toFixed(2)+'%':'—'"></td>
+              <td class="py-2 px-4 text-right text-gray-300" x-text="r.top_trader_position_ls_ratio||'—'"></td>
+              <td class="py-2 px-4 text-right text-gray-300" x-text="r.long_short_account_ratio||'—'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-                    try {
-                        const res = await fetch('/api/trade', { method: 'POST', body: formData });
-                        const data = await res.json();
-                        this.showMsg(data.message, res.ok ? 'success' : 'error');
-                    } catch (err) {
-                        this.showMsg('请求失败，请检查连接。', 'error');
-                    }
-                },
+  <!-- Swing Log -->
+  <div class="card">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-[#1c1c38]">
+      <span class="text-sm font-semibold text-gray-400">📋 中线日志</span>
+      <button @click="swingLogs=[]" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+    </div>
+    <div id="swingLog" class="terminal p-4 h-56 overflow-y-auto bg-[#040410] rounded-b-xl">
+      <div x-show="swingLogs.length===0" class="text-gray-700">等待日志...</div>
+      <template x-for="(ln,i) in swingLogs" :key="i">
+        <div :class="logColor(ln)" x-text="ln"></div>
+      </template>
+    </div>
+  </div>
 
-                showMsg(text, type) { this.msg = text; this.msgType = type; setTimeout(() => this.msg = '', 4000); }
-            }));
-        });
-    </script>
+</div><!-- /swing -->
+
+
+<!-- ═══════════ SCALP TAB ═════════════════════════════════════════════════════ -->
+<div x-show="mode==='scalp'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
+
+  <!-- Control Bar -->
+  <div class="card glow-orange px-5 py-4 flex flex-wrap items-center gap-4">
+    <div class="flex items-center gap-3">
+      <span class="w-2.5 h-2.5 rounded-full" :class="scalpRunning?'bg-orange-400 shadow-[0_0_8px_#fb923c] animate-pulse':'bg-gray-600'"></span>
+      <span class="font-semibold" :class="scalpRunning?'text-orange-300':'text-gray-500'"
+        x-text="scalpRunning?'⚡ 运行中':'● 已停止'"></span>
+      <span x-show="scalpRunning" class="text-xs text-gray-500" x-text="'监控 '+scalpSymbolCount+' 个币种'"></span>
+      <span x-show="Object.keys(scalpPositions).length>0"
+        class="px-2.5 py-0.5 rounded-lg bg-orange-500/25 text-orange-300 text-xs font-bold"
+        x-text="Object.keys(scalpPositions).length+' 个持仓'"></span>
+    </div>
+    <div class="flex items-center gap-2 ml-auto">
+      <button @click="refreshScalpSymbols()" x-show="scalpRunning"
+        class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs font-medium transition-colors">
+        ↻ 刷新列表
+      </button>
+      <button @click="scalpRunning?stopScalp():startScalp()"
+        :class="scalpRunning?'bg-red-700 hover:bg-red-600':'bg-orange-600 hover:bg-orange-500'"
+        class="px-6 py-2 rounded-xl text-white text-sm font-bold transition-colors">
+        <span x-text="scalpRunning?'■ 停止机器人':'▶ 启动机器人'"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">当前持仓</div>
+      <div class="text-2xl font-bold text-orange-400" x-text="Object.keys(scalpPositions).length"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="'最大 '+cfg.SCALP_MAX_POSITIONS+' 个'"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">今日信号</div>
+      <div class="text-2xl font-bold text-white" x-text="scalpSignals.length"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">触发阈值</div>
+      <div class="text-2xl font-bold text-orange-300" x-text="cfg.SCALP_TRIGGER_PCT+'%'"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="cfg.SCALP_WINDOW_MINUTES+'分钟窗口'"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">监控币种</div>
+      <div class="text-2xl font-bold text-white" x-text="scalpSymbolCount||'—'"></div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-12 gap-5">
+
+    <!-- Left: Scalp Settings -->
+    <div class="col-span-12 lg:col-span-5">
+      <div class="card glow-orange">
+        <button @click="scalpOpen=!scalpOpen" class="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-orange-400">
+          <span>⚙️ 超短线参数</span>
+          <span class="text-gray-600 text-xs" x-text="scalpOpen?'▲':'▼'"></span>
+        </button>
+        <div x-show="scalpOpen" class="px-5 pb-5 space-y-4">
+          <form @submit.prevent="saveScalpConfig()" id="scalpForm">
+
+            <p class="text-xs text-orange-800 uppercase tracking-widest pt-1">触发参数</p>
+            <div class="grid grid-cols-3 gap-3 mt-2">
+              <div><label class="text-xs text-gray-500">触发涨跌 %</label>
+                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_TRIGGER_PCT" :value="cfg.SCALP_TRIGGER_PCT"></div>
+              <div><label class="text-xs text-gray-500">窗口(分钟)</label>
+                <input class="inp inp-o mt-1" type="number" name="SCALP_WINDOW_MINUTES" :value="cfg.SCALP_WINDOW_MINUTES"></div>
+              <div><label class="text-xs text-gray-500">量能倍数 x</label>
+                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_VOLUME_MULTIPLIER" :value="cfg.SCALP_VOLUME_MULTIPLIER"></div>
+            </div>
+
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">交易方向 & 控制</p>
+            <div class="flex flex-wrap gap-4 mt-2">
+              <template x-for="f in scalpToggles" :key="f.key">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle to-toggle">
+                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$event.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <span class="text-sm" :class="f.color" x-text="f.label"></span>
+                </label>
+              </template>
+            </div>
+
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">风控参数</p>
+            <div class="grid grid-cols-4 gap-3 mt-2">
+              <div><label class="text-xs text-gray-500">最大仓位</label>
+                <input class="inp inp-o mt-1" type="number" name="SCALP_MAX_POSITIONS" :value="cfg.SCALP_MAX_POSITIONS"></div>
+              <div><label class="text-xs text-gray-500">单笔USDT</label>
+                <input class="inp inp-o mt-1" type="number" name="SCALP_POSITION_USDT" :value="cfg.SCALP_POSITION_USDT"></div>
+              <div><label class="text-xs text-gray-500">杠杆 x</label>
+                <input class="inp inp-o mt-1" type="number" name="SCALP_LEVERAGE" :value="cfg.SCALP_LEVERAGE"></div>
+              <div><label class="text-xs text-gray-500">止损 %</label>
+                <input class="inp inp-o mt-1" type="number" step="0.1" name="SCALP_STOP_LOSS_PCT" :value="cfg.SCALP_STOP_LOSS_PCT"></div>
+            </div>
+
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">止盈设置 (三档分批)</p>
+            <div class="grid grid-cols-4 gap-3 mt-2">
+              <div><label class="text-xs text-gray-500">TP1 %</label>
+                <input class="inp inp-o mt-1" type="number" step="0.1" name="SCALP_TP1_PCT" :value="cfg.SCALP_TP1_PCT"></div>
+              <div><label class="text-xs text-gray-500">TP1 比例</label>
+                <input class="inp inp-o mt-1" type="number" step="0.05" name="SCALP_TP1_RATIO" :value="cfg.SCALP_TP1_RATIO"></div>
+              <div><label class="text-xs text-gray-500">TP2 %</label>
+                <input class="inp inp-o mt-1" type="number" step="0.1" name="SCALP_TP2_PCT" :value="cfg.SCALP_TP2_PCT"></div>
+              <div><label class="text-xs text-gray-500">TP2 比例</label>
+                <input class="inp inp-o mt-1" type="number" step="0.05" name="SCALP_TP2_RATIO" :value="cfg.SCALP_TP2_RATIO"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              <div><label class="text-xs text-gray-500">追踪止损 % (TP3剩余)</label>
+                <input class="inp inp-o mt-1" type="number" step="0.1" name="SCALP_TP3_TRAIL_PCT" :value="cfg.SCALP_TP3_TRAIL_PCT"></div>
+            </div>
+
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">监控列表</p>
+            <div class="mt-2">
+              <label class="text-xs text-gray-500">自定义币种 (逗号分隔；留空 = 全部USDT永续合约)</label>
+              <textarea class="inp inp-o mt-1 h-20 resize-none text-xs" name="SCALP_WATCHLIST"
+                :value="cfg.SCALP_WATCHLIST" placeholder="BTCUSDT,ETHUSDT,SOLUSDT,..."></textarea>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer select-none mt-3">
+              <label class="toggle to-toggle">
+                <input type="checkbox" name="SCALP_ENABLED" :checked="cfg.SCALP_ENABLED" @change="cfg.SCALP_ENABLED=$event.target.checked">
+                <span class="ttrack"></span>
+              </label>
+              <span class="text-sm text-gray-400">启动时自动开启超短线</span>
+            </label>
+
+            <button type="submit" class="mt-5 w-full py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-sm font-bold transition-colors">
+              💾 保存超短线参数
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Positions + Signals -->
+    <div class="col-span-12 lg:col-span-7 space-y-4">
+
+      <!-- Open Positions -->
+      <div class="card" x-show="Object.keys(scalpPositions).length>0">
+        <div class="px-5 py-4 border-b border-[#1c1c38]">
+          <span class="text-sm font-semibold text-orange-400">📌 活跃仓位</span>
+        </div>
+        <div class="p-4 space-y-3">
+          <template x-for="[sym,pos] in Object.entries(scalpPositions)" :key="sym">
+            <div class="rounded-xl border border-orange-500/20 bg-[#0e0a05] p-4">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-white" x-text="pos.symbol"></span>
+                  <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="pos.direction==='LONG'?'badge-long':'badge-short'" x-text="pos.direction"></span>
+                </div>
+                <div class="font-bold text-xl" :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'"
+                  x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
+              </div>
+              <div class="mt-3 grid grid-cols-3 gap-x-4 text-xs text-gray-500">
+                <span>入场 <span class="text-gray-300 font-mono" x-text="pos.entry_price"></span></span>
+                <span>现价 <span class="text-orange-300 font-mono" x-text="pos.current_price"></span></span>
+                <span>止损 <span class="text-red-400 font-mono" x-text="pos.sl_price"></span></span>
+                <span>TP1 <span :class="pos.tp1_hit?'text-green-400':'text-gray-400'" x-text="pos.tp1_price+(pos.tp1_hit?' ✓':'')"></span></span>
+                <span>TP2 <span :class="pos.tp2_hit?'text-green-400':'text-gray-400'" x-text="pos.tp2_price+(pos.tp2_hit?' ✓':'')"></span></span>
+                <span>已实现 <span class="text-violet-400" x-text="'$'+pos.realized_pnl"></span></span>
+              </div>
+              <!-- Progress bars TP1 / TP2 -->
+              <div class="mt-3 flex gap-1.5 h-1.5">
+                <div class="flex-1 rounded-full overflow-hidden bg-[#1a1a30]">
+                  <div class="h-full bg-orange-500 rounded-full score-fill"
+                    :style="'width:'+clamp(pos.direction==='LONG'?(pos.current_price-pos.entry_price)/(pos.tp1_price-pos.entry_price)*100:(pos.entry_price-pos.current_price)/(pos.entry_price-pos.tp1_price)*100)+'%'"></div>
+                </div>
+                <div class="flex-1 rounded-full overflow-hidden bg-[#1a1a30]">
+                  <div class="h-full bg-orange-400/60 rounded-full score-fill"
+                    :style="pos.tp1_hit?'width:'+clamp(pos.direction==='LONG'?(pos.current_price-pos.tp1_price)/(pos.tp2_price-pos.tp1_price)*100:(pos.tp1_price-pos.current_price)/(pos.tp1_price-pos.tp2_price)*100)+'%':'width:0%'"></div>
+                </div>
+              </div>
+              <div class="flex justify-between text-xs text-gray-700 mt-0.5 px-0.5">
+                <span>入场</span><span>TP1</span><span>TP2</span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Scalp Signals -->
+      <div class="card">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold text-orange-400">⚡ 超短线信号</span>
+            <span class="text-xs bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded-full" x-text="scalpSignals.length+'条'"></span>
+          </div>
+          <button @click="clearScalpSignals()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+        </div>
+        <div class="p-4 space-y-2 overflow-y-auto" style="max-height:420px">
+          <div x-show="scalpSignals.length===0" class="text-center text-gray-600 py-10 text-sm">暂无超短线信号...</div>
+          <template x-for="(sig,i) in scalpSignals" :key="i">
+            <div class="rounded-xl border border-[#1c1c38] bg-[#0a0a1c] p-3 hover:border-orange-500/20 transition-all slide-in">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-sm text-white" x-text="sig.symbol"></span>
+                  <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="sig.direction==='LONG'?'badge-long':'badge-short'" x-text="sig.direction"></span>
+                  <span class="text-xs font-bold" :class="sig.trigger_pct>=0?'text-green-400':'text-red-400'"
+                    x-text="(sig.trigger_pct>0?'+':'')+sig.trigger_pct+'%'"></span>
+                </div>
+                <div class="text-right">
+                  <div class="text-xs text-gray-600" x-text="(sig.timestamp||'').slice(11,19)"></div>
+                  <div x-show="sig.auto_traded" class="text-xs text-orange-400 font-semibold">已开仓</div>
+                </div>
+              </div>
+              <div class="mt-2 grid grid-cols-4 gap-x-3 text-xs text-gray-500">
+                <span>入 <span class="text-gray-300 font-mono" x-text="sig.entry_price"></span></span>
+                <span>SL <span class="text-red-400 font-mono" x-text="sig.sl_price"></span></span>
+                <span>TP1 <span class="text-yellow-400 font-mono" x-text="sig.tp1_price"></span></span>
+                <span>TP2 <span class="text-green-400 font-mono" x-text="sig.tp2_price"></span></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- end grid -->
+
+  <!-- Scalp Log -->
+  <div class="card">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-[#1c1c38]">
+      <span class="text-sm font-semibold text-gray-400">⚡ 超短线日志</span>
+      <button @click="scalpLogs=[]" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+    </div>
+    <div id="scalpLog" class="terminal p-4 h-56 overflow-y-auto bg-[#040410] rounded-b-xl">
+      <div x-show="scalpLogs.length===0" class="text-gray-700">等待日志...</div>
+      <template x-for="(ln,i) in scalpLogs" :key="i">
+        <div :class="logColor(ln)" x-text="ln"></div>
+      </template>
+    </div>
+  </div>
+
+</div><!-- /scalp -->
+
+
+<!-- ═══════════ YAOBI TAB ═════════════════════════════════════════════════════ -->
+<div x-show="mode==='yaobi'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
+
+  <!-- Control Bar -->
+  <div class="card px-5 py-4 flex flex-wrap items-center gap-4" style="border-color:rgba(74,222,128,.25)">
+    <div class="flex items-center gap-3">
+      <span class="w-2.5 h-2.5 rounded-full" :class="yaobiRunning?'bg-green-400 shadow-[0_0_8px_#4ade80] animate-pulse':'bg-gray-600'"></span>
+      <span class="font-semibold" :class="yaobiRunning?'text-green-300':'text-gray-500'"
+        x-text="yaobiStatus.scanning?'⏳ 扫描中...':(yaobiRunning?'🔍 运行中':'● 已停止')"></span>
+      <span x-show="yaobiStatus.last_scan" class="text-xs text-gray-600"
+        x-text="'最后扫描: '+(yaobiStatus.last_scan||'—').slice(11,16)"></span>
+      <span x-show="yaobiStatus.scored>0"
+        class="px-2.5 py-0.5 rounded-lg text-xs font-bold"
+        style="background:rgba(74,222,128,.15);color:#4ade80"
+        x-text="yaobiStatus.scored+' 个达标'"></span>
+    </div>
+    <div class="flex items-center gap-2 ml-auto">
+      <button @click="yaobiScanNow()" :disabled="yaobiStatus.scanning"
+        class="px-3 py-1.5 rounded-xl bg-[#0f2a1a] hover:bg-[#163d26] text-green-400 text-xs font-medium transition-colors disabled:opacity-40">
+        ↻ 立即扫描
+      </button>
+      <button @click="yaobiRunning?stopYaobi():startYaobi()"
+        :class="yaobiRunning?'bg-red-700 hover:bg-red-600':'bg-green-700 hover:bg-green-600'"
+        class="px-6 py-2 rounded-xl text-white text-sm font-bold transition-colors">
+        <span x-text="yaobiRunning?'■ 停止扫描':'▶ 启动扫描'"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats Row -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">候选总数</div>
+      <div class="text-2xl font-bold text-green-400" x-text="yaobiCandidates.length"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="'已扫描 '+(yaobiStatus.total_scanned||0)+' 个'"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">高分候选 (≥70)</div>
+      <div class="text-2xl font-bold text-yellow-400" x-text="yaobiCandidates.filter(c=>c.score>=70).length"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">有合约标的</div>
+      <div class="text-2xl font-bold text-blue-400" x-text="yaobiCandidates.filter(c=>c.has_futures).length"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">最低评分</div>
+      <div class="text-2xl font-bold text-white" x-text="cfg.YAOBI_MIN_SCORE??30"></div>
+      <div class="text-xs text-gray-600 mt-0.5">过滤阈值</div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-12 gap-5">
+
+    <!-- Left: Settings + Source Status -->
+    <div class="col-span-12 lg:col-span-4 space-y-4">
+
+      <!-- Scanner Settings -->
+      <div class="card" style="border-color:rgba(74,222,128,.2)">
+        <button @click="yaobiOpen=!yaobiOpen" class="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-green-400">
+          <span>⚙️ 扫描器参数</span>
+          <span class="text-gray-600 text-xs" x-text="yaobiOpen?'▲':'▼'"></span>
+        </button>
+        <div x-show="yaobiOpen" class="px-5 pb-5 space-y-4">
+          <form @submit.prevent="saveYaobiConfig()" id="yaobiForm">
+            <p class="text-xs text-green-900 uppercase tracking-widest pt-1">基本设置</p>
+            <div class="grid grid-cols-2 gap-3 mt-2">
+              <div><label class="text-xs text-gray-500">扫描间隔 (min)</label>
+                <input class="inp mt-1" type="number" name="YAOBI_SCAN_INTERVAL" :value="cfg.YAOBI_SCAN_INTERVAL" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'"></div>
+              <div><label class="text-xs text-gray-500">最低评分 (0-100)</label>
+                <input class="inp mt-1" type="number" name="YAOBI_MIN_SCORE" :value="cfg.YAOBI_MIN_SCORE" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'"></div>
+            </div>
+            <div class="mt-3">
+              <label class="text-xs text-gray-500">监控链 (逗号分隔)</label>
+              <input class="inp mt-1" type="text" name="YAOBI_CHAINS" :value="cfg.YAOBI_CHAINS" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'">
+            </div>
+            <div class="mt-3">
+              <label class="text-xs text-gray-500">Obsidian Vault 路径</label>
+              <input class="inp mt-1" type="text" name="OBSIDIAN_VAULT_PATH" :value="cfg.OBSIDIAN_VAULT_PATH" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'">
+            </div>
+
+            <p class="text-xs text-green-900 uppercase tracking-widest mt-4 pt-1">API 密钥</p>
+            <div class="mt-2 space-y-2">
+              <div><label class="text-xs text-gray-500">OKX API Key</label>
+                <input class="inp mt-1 text-xs" type="password" placeholder="留空则不使用 OKX 补全" :value="cfg.OKX_API_KEY||''" disabled title="在启动参数或环境变量中设置"></div>
+              <div><label class="text-xs text-gray-500">Coinglass API Key (可选)</label>
+                <input class="inp mt-1 text-xs" type="text" name="COINGLASS_API_KEY" :value="cfg.COINGLASS_API_KEY||''" placeholder="留空则跳过" style="border-color:#1a3a2a"></div>
+            </div>
+
+            <label class="flex items-center gap-2 cursor-pointer select-none mt-4">
+              <label class="toggle" style="--t:#4ade80">
+                <input type="checkbox" name="YAOBI_ENABLED" :checked="cfg.YAOBI_ENABLED" @change="cfg.YAOBI_ENABLED=$event.target.checked">
+                <span class="ttrack" style=""></span>
+              </label>
+              <span class="text-sm text-gray-400">启动时自动开启扫描</span>
+            </label>
+
+            <button type="submit" class="mt-5 w-full py-2.5 rounded-xl text-white text-sm font-bold transition-colors"
+              style="background:#166534" onmouseover="this.style.background='#15803d'" onmouseout="this.style.background='#166534'">
+              💾 保存扫描器参数
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Source Status -->
+      <div class="card p-4" style="border-color:rgba(74,222,128,.15)">
+        <div class="text-xs font-semibold text-green-400 mb-3 uppercase tracking-wider">📡 数据源状态</div>
+        <div class="space-y-2">
+          <template x-for="[name,info] in Object.entries(yaobiStatus.sources||{})" :key="name">
+            <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-2">
+                <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                <span class="text-gray-400" x-text="name"></span>
+              </div>
+              <span class="text-gray-600" x-text="(info.count||0)+'条 '+info.last_run"></span>
+            </div>
+          </template>
+          <div x-show="!Object.keys(yaobiStatus.sources||{}).length" class="text-gray-700 text-xs text-center py-2">等待首次扫描...</div>
+        </div>
+      </div>
+
+      <!-- Obsidian Status -->
+      <div class="card p-4" style="border-color:rgba(74,222,128,.15)">
+        <div class="text-xs font-semibold text-green-400 mb-3 uppercase tracking-wider">📝 Obsidian Vault</div>
+        <div class="text-xs space-y-1.5">
+          <div class="flex justify-between">
+            <span class="text-gray-600">路径</span>
+            <span class="text-gray-400 font-mono text-[10px]" x-text="(obsidianStatus.vault_path||'—').slice(-20)"></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">状态</span>
+            <span :class="obsidianStatus.exists?'text-green-400':'text-red-400'"
+              x-text="obsidianStatus.exists?'✓ 已挂载':'✗ 未找到'"></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">文件数</span>
+            <span class="text-gray-300" x-text="obsidianStatus.file_count||0"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter Panel -->
+      <div class="card p-4" style="border-color:rgba(74,222,128,.15)">
+        <div class="text-xs font-semibold text-green-400 mb-3 uppercase tracking-wider">🔽 筛选</div>
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs text-gray-500">最低分</label>
+            <input type="range" min="0" max="100" step="5" x-model.number="yaobiFilter.minScore"
+              class="w-full mt-1 accent-green-500">
+            <div class="flex justify-between text-xs text-gray-600 mt-0.5">
+              <span>0</span><span class="text-green-400 font-bold" x-text="yaobiFilter.minScore"></span><span>100</span>
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">链</label>
+            <select x-model="yaobiFilter.chain" class="inp mt-1 text-xs" style="border-color:#1a3a2a">
+              <option value="">全部</option>
+              <option value="eth">ETH</option>
+              <option value="bsc">BSC</option>
+              <option value="solana">SOL</option>
+              <option value="base">BASE</option>
+              <option value="arbitrum">ARB</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">数据源</label>
+            <select x-model="yaobiFilter.source" class="inp mt-1 text-xs" style="border-color:#1a3a2a">
+              <option value="">全部</option>
+              <option value="gecko_trending">GeckoTerminal 趋势</option>
+              <option value="gecko_new">GeckoTerminal 新盘</option>
+              <option value="dex_boost">DEX Screener Boost</option>
+              <option value="binance_square">币安广场</option>
+            </select>
+          </div>
+          <div class="flex gap-2">
+            <button @click="loadYaobiCandidates()"
+              class="flex-1 py-2 rounded-xl text-xs font-semibold text-green-400 transition-colors"
+              style="background:#0f2a1a" onmouseover="this.style.background='#163d26'" onmouseout="this.style.background='#0f2a1a'">
+              应用筛选
+            </button>
+            <button @click="clearYaobiCandidates()" class="flex-1 py-2 rounded-xl bg-[#1a1a30] text-xs text-gray-500 hover:text-red-400 transition-colors">
+              清空
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right: Candidate Cards -->
+    <div class="col-span-12 lg:col-span-8 space-y-3">
+
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-gray-500" x-text="filteredCandidates.length+' 个候选'"></span>
+        <div class="flex-1 h-px bg-[#1c1c38]"></div>
+        <select x-model="yaobiSort" @change="sortCandidates()" class="text-xs bg-[#0c0c1e] border border-[#1c1c38] rounded-lg px-3 py-1.5 text-gray-400 outline-none">
+          <option value="score">按评分</option>
+          <option value="volume">按成交量</option>
+          <option value="change">按涨幅</option>
+          <option value="mentions">按广场热度</option>
+        </select>
+      </div>
+
+      <div x-show="filteredCandidates.length===0" class="text-center text-gray-600 py-20 text-sm">
+        <div class="text-4xl mb-3">🔍</div>
+        <div>暂无候选币种，启动扫描器后自动更新</div>
+      </div>
+
+      <template x-for="(c,i) in filteredCandidates.slice(0, yaobiPage*20)" :key="c.key||c.symbol">
+        <div class="card slide-in p-4 hover:border-green-500/20 transition-all" style="border-color:rgba(74,222,128,.1)">
+          <div class="flex items-start justify-between gap-3">
+            <!-- Left: symbol + chain + sources -->
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-white text-base" x-text="c.symbol"></span>
+                <span x-show="c.chain" class="text-xs px-2 py-0.5 rounded-full bg-[#1c1c38] text-gray-400" x-text="c.chain.toUpperCase()"></span>
+                <span x-show="c.has_futures" class="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300">合约</span>
+                <span x-show="c.smart_money_signal" class="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">🐋 聪明钱</span>
+                <span x-show="c.gecko_trend_rank>0" class="text-xs px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300"
+                  x-text="'趋势#'+c.gecko_trend_rank"></span>
+              </div>
+              <!-- Source chips -->
+              <div class="mt-1 flex flex-wrap gap-0.5">
+                <template x-for="s in (c.sources||[])" :key="s">
+                  <span class="source-chip"
+                    :class="s.includes('gecko')?'sc-gecko':(s.includes('dex')?'sc-dex':(s.includes('square')?'sc-square':'sc-okx'))"
+                    x-text="s.replace('gecko_','').replace('dex_','dex ').replace('binance_','')"></span>
+                </template>
+              </div>
+            </div>
+
+            <!-- Right: score + price -->
+            <div class="text-right flex-shrink-0">
+              <div class="text-2xl font-black"
+                :class="c.score>=70?'text-green-400':(c.score>=50?'text-yellow-400':'text-gray-400')"
+                x-text="c.score"></div>
+              <div class="text-xs text-gray-600">/ 100</div>
+            </div>
+          </div>
+
+          <!-- Score Bar -->
+          <div class="mt-2 score-bar-bg">
+            <div class="score-bar-fill"
+              :style="'width:'+c.score+'%;background:'+(c.score>=70?'#4ade80':(c.score>=50?'#facc15':'#6b7280'))"></div>
+          </div>
+
+          <!-- Metrics Row -->
+          <div class="mt-3 grid grid-cols-3 sm:grid-cols-5 gap-x-4 gap-y-1.5 text-xs">
+            <div>
+              <span class="text-gray-600">价格</span>
+              <div class="text-gray-300 font-mono" x-text="c.price_usd>0?'$'+c.price_usd.toPrecision(4):'—'"></div>
+            </div>
+            <div>
+              <span class="text-gray-600">24H</span>
+              <div :class="c.price_change_24h>=0?'text-green-400':'text-red-400'" class="font-mono"
+                x-text="c.price_change_24h?(c.price_change_24h>0?'+':'')+c.price_change_24h.toFixed(1)+'%':'—'"></div>
+            </div>
+            <div>
+              <span class="text-gray-600">成交量</span>
+              <div class="text-gray-300" x-text="c.volume_24h>=1e6?'$'+(c.volume_24h/1e6).toFixed(1)+'M':(c.volume_24h>0?'$'+(c.volume_24h/1e3).toFixed(0)+'K':'—')"></div>
+            </div>
+            <div>
+              <span class="text-gray-600">流动性</span>
+              <div class="text-gray-300" x-text="c.liquidity>=1e6?'$'+(c.liquidity/1e6).toFixed(1)+'M':(c.liquidity>0?'$'+(c.liquidity/1e3).toFixed(0)+'K':'—')"></div>
+            </div>
+            <div>
+              <span class="text-gray-600">广场</span>
+              <div :class="c.square_mentions>=10?'text-yellow-400':'text-gray-400'"
+                x-text="c.square_mentions>0?c.square_mentions+'次提及':'—'"></div>
+            </div>
+          </div>
+
+          <!-- Score Breakdown + Signals (expandable) -->
+          <div class="mt-2">
+            <button @click="c._open=!c._open"
+              class="text-xs text-gray-600 hover:text-green-400 transition-colors">
+              <span x-text="c._open?'▲ 收起':'▼ 评分详情'"></span>
+            </button>
+            <div x-show="c._open" class="mt-2 space-y-1.5">
+              <div class="flex flex-wrap gap-1">
+                <template x-for="[k,v] in Object.entries(c.score_breakdown||{})" :key="k">
+                  <span class="text-xs px-2 py-0.5 rounded"
+                    :class="v>0?'bg-green-500/10 text-green-400':'bg-red-500/10 text-red-400'"
+                    x-text="k+' '+(v>0?'+':'')+v"></span>
+                </template>
+              </div>
+              <div class="space-y-0.5">
+                <template x-for="s in (c.signals||[]).slice(0,6)" :key="s">
+                  <div class="text-xs text-gray-500">• <span x-text="s"></span></div>
+                </template>
+              </div>
+              <div x-show="(c.links?.dexscreener||c.links?.gecko)" class="flex gap-2 pt-1">
+                <a x-show="c.links?.dexscreener" :href="c.links.dexscreener" target="_blank"
+                  class="text-xs text-teal-400 hover:underline">DEXScreener ↗</a>
+                <a x-show="c.links?.gecko" :href="c.links.gecko" target="_blank"
+                  class="text-xs text-violet-400 hover:underline">GeckoTerminal ↗</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <button x-show="filteredCandidates.length > yaobiPage*20" @click="yaobiPage++"
+        class="w-full py-3 rounded-xl text-xs text-gray-500 hover:text-green-400 border border-[#1c1c38] hover:border-green-500/20 transition-all">
+        加载更多 (已显示 <span x-text="Math.min(yaobiPage*20,filteredCandidates.length)"></span> / <span x-text="filteredCandidates.length"></span>)
+      </button>
+
+    </div>
+  </div><!-- /grid -->
+
+</div><!-- /yaobi -->
+
+</main>
+
+<!-- Toast -->
+<div x-show="toast.show"
+  x-transition:enter="transition ease-out duration-200"
+  x-transition:enter-start="opacity-0 translate-y-2 scale-95"
+  x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+  x-transition:leave="transition ease-in duration-150"
+  x-transition:leave-end="opacity-0 translate-y-2"
+  class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-2xl text-sm font-medium max-w-sm text-center"
+  :class="toast.type==='success'?'bg-green-950/95 text-green-300 border border-green-800/50':'bg-red-950/95 text-red-300 border border-red-800/50'"
+  x-text="toast.msg">
+</div>
+
+<script>
+function app() {
+  return {
+    mode: 'swing',
+    clock: '',
+    toast: { show: false, msg: '', type: 'success' },
+    cfg: {{ config | tojson }},
+    wsStatus: { swingLog:'closed', scalpLog:'closed', swingSig:'closed', scalpSig:'closed', yaobiCand:'closed' },
+    _ws: {},
+
+    swingSignals: [], swingLogs: [], swingOpen: true,
+    csvSymbols: [], csvSymbol: '', csvData: [],
+    manualOpen: false,
+    manual: { symbol:'', side:'BUY', quantity:'' },
+
+    scalpSignals: [], scalpLogs: [], scalpOpen: true,
+    scalpPositions: {}, scalpRunning: false, scalpSymbolCount: 0,
+
+    yaobiCandidates: [], yaobiRunning: false, yaobiOpen: true,
+    yaobiStatus: { last_scan:null, scanning:false, total_scanned:0, scored:0, sources:{}, errors:[] },
+    obsidianStatus: { vault_path:'', exists:false, file_count:0 },
+    yaobiFilter: { minScore:0, chain:'', source:'' },
+    yaobiSort: 'score',
+    yaobiPage: 1,
+    filteredCandidates: [],
+
+    swingFilters: [
+      { key:'TA_CONFIRMATION_ENABLED', label:'TA 确认' },
+      { key:'ENABLE_NEWS_FILTER',      label:'Surf 新闻' },
+      { key:'ENABLE_LIQ_FILTER',       label:'清算热图' },
+      { key:'ENABLE_MTF_FILTER',       label:'MTF 择时' },
+      { key:'ENABLE_OKX_FILTER',       label:'OKX链上' },
+      { key:'ENABLE_AI_AGENT',         label:'AI Agent' },
+      { key:'USE_TRAILING_STOP',       label:'追踪止损' },
+      { key:'USE_DYNAMIC_SL',          label:'动态止损' },
+    ],
+    swingToggles: [
+      { key:'ENABLE_LONG_STRATEGY',  label:'做多',   color:'text-green-400' },
+      { key:'ENABLE_SHORT_STRATEGY', label:'做空',   color:'text-red-400'   },
+      { key:'AUTO_TRADE_ENABLED',    label:'自动交易', color:'text-blue-400' },
+    ],
+    scalpToggles: [
+      { key:'SCALP_ENABLE_LONG',  label:'做多',   color:'text-green-400'  },
+      { key:'SCALP_ENABLE_SHORT', label:'做空',   color:'text-red-400'    },
+      { key:'SCALP_AUTO_TRADE',   label:'自动下单', color:'text-orange-400' },
+    ],
+
+    get swingStats() {
+      return [
+        { label:'中线信号', value: this.swingSignals.length, color:'text-blue-400' },
+        { label:'扫描间隔', value: (this.cfg.INTERVAL_MINUTES??'—')+' min', color:'text-white' },
+        { label:'AI 最低分', value: this.cfg.AI_AGENT_SCORE_MIN??'—', color:'text-yellow-400' },
+        { label:'自动交易', value: this.cfg.AUTO_TRADE_ENABLED?'开启':'关闭',
+          color: this.cfg.AUTO_TRADE_ENABLED?'text-green-400':'text-gray-500' },
+      ]
+    },
+
+    init() {
+      this.startClock()
+      this.connectAll()
+      this.loadSwingSignals()
+      this.loadScalpSignals()
+      this.loadCsvSymbols()
+      this.pollScalpStatus()
+      this.pollYaobiStatus()
+      this.loadYaobiCandidates()
+      this.loadObsidianStatus()
+      setInterval(() => this.loadScalpPositions(), 2000)
+      setInterval(() => this.pollScalpStatus(), 5000)
+      setInterval(() => this.pollYaobiStatus(), 8000)
+    },
+
+    startClock() {
+      const tick = () => { this.clock = new Date().toLocaleTimeString('zh-CN',{hour12:false}); setTimeout(tick,1000) }
+      tick()
+    },
+
+    connectAll() {
+      this.connectWs('swingLog',  '/ws/log/swing')
+      this.connectWs('scalpLog',  '/ws/log/scalp')
+      this.connectWs('swingSig',  '/ws/signals')
+      this.connectWs('scalpSig',  '/ws/scalp/signals')
+      this.connectWs('yaobiCand', '/ws/yaobi/candidates')
+    },
+
+    connectWs(key, path) {
+      if (this._ws[key]?.readyState === WebSocket.OPEN) return
+      const ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}${path}`)
+      this._ws[key] = ws
+      ws.onopen  = () => { this.wsStatus[key] = 'open' }
+      ws.onclose = () => { this.wsStatus[key] = 'closed'; setTimeout(()=>this.connectWs(key,path), 3000) }
+      ws.onerror = () => { this.wsStatus[key] = 'error' }
+      ws.onmessage = (e) => this.handleWsMsg(key, e.data)
+    },
+
+    handleWsMsg(key, data) {
+      if (key === 'swingLog') {
+        this.swingLogs.unshift(data); if (this.swingLogs.length>400) this.swingLogs.pop()
+      } else if (key === 'scalpLog') {
+        this.scalpLogs.unshift(data); if (this.scalpLogs.length>400) this.scalpLogs.pop()
+      } else if (key === 'swingSig') {
+        try { const s=JSON.parse(data); this.swingSignals.unshift(s); if(this.swingSignals.length>200)this.swingSignals.pop() } catch{}
+      } else if (key === 'scalpSig') {
+        try { const s=JSON.parse(data); this.scalpSignals.unshift(s); if(this.scalpSignals.length>200)this.scalpSignals.pop() } catch{}
+      } else if (key === 'yaobiCand') {
+        try {
+          const msg=JSON.parse(data)
+          if (msg.type==='update' && msg.data) {
+            const idx=this.yaobiCandidates.findIndex(c=>c.key===msg.key||c.symbol===msg.data.symbol)
+            if (idx>=0) this.yaobiCandidates.splice(idx,1,msg.data)
+            else this.yaobiCandidates.unshift(msg.data)
+            this._applyYaobiFilter()
+          }
+        } catch{}
+      }
+    },
+
+    async loadSwingSignals() {
+      try { const d=await(await fetch('/api/signals?limit=100')).json(); this.swingSignals=d.signals||[] } catch{}
+    },
+    async clearSwingSignals() {
+      await fetch('/api/signals',{method:'DELETE'}); this.swingSignals=[]; this.showToast('✅ 中线信号已清空')
+    },
+    async loadCsvSymbols() {
+      try { const d=await(await fetch('/api/data/symbols')).json(); this.csvSymbols=d.symbols||[] } catch{}
+    },
+    async loadCsvData() {
+      if (!this.csvSymbol) return
+      try { const d=await(await fetch(`/api/data/${this.csvSymbol}?limit=60`)).json(); this.csvData=d.rows||[] } catch{}
+    },
+
+    async saveSwingConfig() {
+      const fd = new FormData(document.getElementById('swingForm'))
+      const bk = ['AUTO_TRADE_ENABLED','ENABLE_LONG_STRATEGY','ENABLE_SHORT_STRATEGY',
+        'TA_CONFIRMATION_ENABLED','ENABLE_NEWS_FILTER','ENABLE_LIQ_FILTER',
+        'ENABLE_MTF_FILTER','ENABLE_OKX_FILTER','ENABLE_AI_AGENT','USE_TRAILING_STOP','USE_DYNAMIC_SL']
+      bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
+      try {
+        const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
+        this.showToast(d.message, d.status==='success'?'success':'error')
+        if (d.status==='success') { this.cfg=await(await fetch('/api/config')).json() }
+      } catch(e) { this.showToast('❌ 保存失败: '+e,'error') }
+    },
+
+    async saveScalpConfig() {
+      const fd = new FormData(document.getElementById('scalpForm'))
+      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT']
+      bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
+      try {
+        const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
+        this.showToast(d.message, d.status==='success'?'success':'error')
+        if (d.status==='success') { this.cfg=await(await fetch('/api/config')).json() }
+      } catch(e) { this.showToast('❌ 保存失败: '+e,'error') }
+    },
+
+    async submitManual() {
+      const fd=new FormData(); fd.set('symbol',this.manual.symbol); fd.set('side',this.manual.side); fd.set('quantity',this.manual.quantity)
+      try { const d=await(await fetch('/api/trade',{method:'POST',body:fd})).json(); this.showToast(d.message,d.status==='success'?'success':'error') }
+      catch(e){ this.showToast('❌ 下单异常: '+e,'error') }
+    },
+
+    async pollScalpStatus() {
+      try { const d=await(await fetch('/api/scalp/status')).json(); this.scalpRunning=d.running; this.scalpSymbolCount=d.symbols_count } catch{}
+    },
+    async loadScalpSignals() {
+      try { const d=await(await fetch('/api/scalp/signals?limit=100')).json(); this.scalpSignals=d.signals||[] } catch{}
+    },
+    async clearScalpSignals() {
+      await fetch('/api/scalp/signals',{method:'DELETE'}); this.scalpSignals=[]; this.showToast('✅ 超短线信号已清空')
+    },
+    async loadScalpPositions() {
+      if (!this.scalpRunning) return
+      try { const d=await(await fetch('/api/scalp/positions')).json(); this.scalpPositions=d.positions||{} } catch{}
+    },
+    async startScalp() {
+      try {
+        const d=await(await fetch('/api/scalp/start',{method:'POST'})).json()
+        this.showToast(d.message, d.status==='started'||d.status==='already_running'?'success':'error')
+        await this.pollScalpStatus()
+      } catch(e){ this.showToast('❌ 启动失败: '+e,'error') }
+    },
+    async stopScalp() {
+      try {
+        const d=await(await fetch('/api/scalp/stop',{method:'POST'})).json()
+        this.showToast(d.message); this.scalpRunning=false; this.scalpPositions={}
+      } catch(e){ this.showToast('❌ 停止失败: '+e,'error') }
+    },
+    async refreshScalpSymbols() {
+      try {
+        const d=await(await fetch('/api/scalp/refresh',{method:'POST'})).json()
+        this.showToast(d.message, d.status==='success'?'success':'error')
+        await this.pollScalpStatus()
+      } catch{}
+    },
+
+    async pollYaobiStatus() {
+      try {
+        const d=await(await fetch('/api/yaobi/status')).json()
+        this.yaobiRunning=d.running; this.yaobiStatus=d
+      } catch{}
+    },
+    async loadYaobiCandidates() {
+      try {
+        const q=new URLSearchParams({min_score:this.yaobiFilter.minScore,chain:this.yaobiFilter.chain,source:this.yaobiFilter.source,limit:200})
+        const d=await(await fetch('/api/yaobi/candidates?'+q)).json()
+        this.yaobiCandidates=(d.candidates||[]).map(c=>({...c,_open:false}))
+        this._applyYaobiFilter()
+      } catch{}
+    },
+    async clearYaobiCandidates() {
+      await fetch('/api/yaobi/candidates',{method:'DELETE'}); this.yaobiCandidates=[]; this.filteredCandidates=[]; this.showToast('✅ 候选库已清空')
+    },
+    async startYaobi() {
+      try {
+        const d=await(await fetch('/api/yaobi/start',{method:'POST'})).json()
+        this.showToast(d.message,d.status==='started'||d.status==='already_running'?'success':'error')
+        await this.pollYaobiStatus()
+      } catch(e){ this.showToast('❌ 启动失败: '+e,'error') }
+    },
+    async stopYaobi() {
+      try {
+        const d=await(await fetch('/api/yaobi/stop',{method:'POST'})).json()
+        this.showToast(d.message); this.yaobiRunning=false
+      } catch(e){ this.showToast('❌ 停止失败: '+e,'error') }
+    },
+    async yaobiScanNow() {
+      try {
+        const d=await(await fetch('/api/yaobi/scan',{method:'POST'})).json()
+        this.showToast(d.message,d.status==='started'?'success':'error')
+        setTimeout(()=>this.pollYaobiStatus(), 2000)
+      } catch(e){ this.showToast('❌ 扫描失败: '+e,'error') }
+    },
+    async loadObsidianStatus() {
+      try { const d=await(await fetch('/api/yaobi/obsidian/status')).json(); this.obsidianStatus=d } catch{}
+    },
+    async saveYaobiConfig() {
+      const fd=new FormData(document.getElementById('yaobiForm'))
+      const bk=['YAOBI_ENABLED']; bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
+      try {
+        const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
+        this.showToast(d.message,d.status==='success'?'success':'error')
+        if(d.status==='success'){ this.cfg=await(await fetch('/api/config')).json() }
+      } catch(e){ this.showToast('❌ 保存失败: '+e,'error') }
+    },
+    _applyYaobiFilter() {
+      let items=[...this.yaobiCandidates]
+      if(this.yaobiFilter.minScore>0) items=items.filter(c=>c.score>=this.yaobiFilter.minScore)
+      if(this.yaobiFilter.chain) items=items.filter(c=>(c.chain||'').toLowerCase()===this.yaobiFilter.chain)
+      if(this.yaobiFilter.source) items=items.filter(c=>(c.sources||[]).includes(this.yaobiFilter.source))
+      this.filteredCandidates=this._sortItems(items)
+    },
+    sortCandidates() { this.filteredCandidates=this._sortItems(this.filteredCandidates) },
+    _sortItems(items) {
+      const k=this.yaobiSort
+      return [...items].sort((a,b)=>{
+        if(k==='volume') return (b.volume_24h||0)-(a.volume_24h||0)
+        if(k==='change') return (b.price_change_24h||0)-(a.price_change_24h||0)
+        if(k==='mentions') return (b.square_mentions||0)-(a.square_mentions||0)
+        return (b.score||0)-(a.score||0)
+      })
+    },
+
+    logColor(line) {
+      if (line.includes('[ERROR')||line.includes('[CRITICAL')) return 'text-red-400'
+      if (line.includes('[WARNING'))    return 'text-yellow-400'
+      if (line.includes('✅')||line.includes('成功')) return 'text-green-400'
+      if (line.includes('⚡'))          return 'text-orange-300'
+      if (line.includes('🚨')||line.includes('信号已发出')) return 'text-amber-400'
+      if (line.includes('🔍')||line.includes('扫描')) return 'text-blue-400'
+      return 'text-gray-400'
+    },
+
+    clamp(v) { return Math.min(100, Math.max(0, v||0)) },
+
+    showToast(msg, type='success') {
+      this.toast={show:true, msg, type}; setTimeout(()=>{ this.toast.show=false }, 3500)
+    },
+  }
+}
+</script>
 </body>
 </html>
