@@ -152,7 +152,7 @@ class BinanceSqueezeBot:
 
             df_4h = pd.DataFrame(klines_4h, columns=_KLINE_COLS)
             df_4h["close"] = df_4h["close"].astype(float)
-            df_4h["ema20"] = ta.ema(df_4h["close"], length=20)
+            df_4h["ema20"] = df_4h["close"].ewm(span=20, adjust=False).mean()
             current_price = float(df_4h["close"].iloc[-1])
             ema20_4h = float(df_4h["ema20"].iloc[-1])
 
@@ -170,7 +170,7 @@ class BinanceSqueezeBot:
 
             df_15m = pd.DataFrame(klines_15m, columns=_KLINE_COLS)
             df_15m["close"] = df_15m["close"].astype(float)
-            df_15m["ema50"] = ta.ema(df_15m["close"], length=50)
+            df_15m["ema50"] = df_15m["close"].ewm(span=50, adjust=False).mean()
             price_15m  = float(df_15m["close"].iloc[-1])
             ema50_15m  = float(df_15m["ema50"].iloc[-1])
 
@@ -209,10 +209,11 @@ class BinanceSqueezeBot:
         # ── 2. OI 历史激增 ────────────────────────────────────────────────
         oi_hist = await self.fetch_with_retry(
             session, f"{self.base_url}/futures/data/openInterestHist",
-            params={"symbol": symbol, "period": "5m", "limit": 10},
+            params={"symbol": symbol, "period": "5m", "limit": 25},
         )
         oi_surge_ratio = 0.0
         latest_oi = 0.0
+        oi_2h_change_pct = 0.0
         if oi_hist:
             oi_values = [float(x["sumOpenInterestValue"]) for x in oi_hist]
             latest_oi = oi_values[-1]
@@ -221,6 +222,39 @@ class BinanceSqueezeBot:
                 recent_10_mean = sum(oi_values) / 10
                 if recent_10_mean > 0:
                     oi_surge_ratio = recent_3_mean / recent_10_mean
+            # 2h OI 变化 (24 × 5m = 2h)
+            if len(oi_values) >= 24:
+                old_oi = oi_values[-24]
+                if old_oi > 0:
+                    oi_2h_change_pct = (latest_oi - old_oi) / old_oi * 100
+
+        # ── 资金费率反转信号 ───────────────────────────────────────────────
+        if cfg.get("ENABLE_FUNDING_REVERSAL", False):
+            fr_oi_pct = cfg.get("FR_OI_SURGE_PCT",       15.0)
+            fr_thresh = cfg.get("FR_FUNDING_THRESHOLD", -0.001)
+            if (oi_2h_change_pct > fr_oi_pct
+                    and last_funding_rate < fr_thresh
+                    and price_change > -3.0):
+                add_signal({
+                    "type":              "funding_reversal",
+                    "timestamp":         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "symbol":            symbol,
+                    "direction":         "LONG",
+                    "mark_price":        mark_price,
+                    "funding_rate":      round(last_funding_rate * 100, 5),
+                    "oi_usdt":           round(latest_oi / 1e6, 2),
+                    "oi_2h_change_pct":  round(oi_2h_change_pct, 2),
+                    "price_change":      round(price_change, 2),
+                    "note": (
+                        f"OI 2h+{oi_2h_change_pct:.1f}% | "
+                        f"空头付费 {last_funding_rate*100:.4f}% | "
+                        f"现货价格稳定 (未大跌)"
+                    ),
+                })
+                logger.info(
+                    "🔄 [%s] 资金费率反转信号: OI 2h+%.1f%%, FR=%.4f%%",
+                    symbol, oi_2h_change_pct, last_funding_rate * 100,
+                )
 
         # ── 3. 多空比 ─────────────────────────────────────────────────────
         ratios = await self.get_derivatives_ratios(session, symbol)

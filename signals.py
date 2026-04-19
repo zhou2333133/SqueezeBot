@@ -12,6 +12,13 @@ scalp_signals_history: list[dict]      = []
 # ── 超短线活跃仓位（共享状态，web.py 读取）────────────────────────────────────
 scalp_positions: dict[str, dict] = {}
 
+# ── 一直做空信号 ──────────────────────────────────────────────────────────────
+fade_signal_queue:    std_queue.Queue = std_queue.Queue(maxsize=200)
+fade_signals_history: list[dict]      = []
+
+# ── 一直做空活跃仓位 ──────────────────────────────────────────────────────────
+fade_positions: dict[str, dict] = {}
+
 MAX_SIGNALS = 200
 
 
@@ -52,3 +59,20 @@ def set_scalp_position(symbol: str, pos: dict | None) -> None:
         scalp_positions.pop(symbol, None)
     else:
         scalp_positions[symbol] = pos
+
+
+def add_fade_signal(signal: dict) -> None:
+    fade_signals_history.append(signal)
+    if len(fade_signals_history) > MAX_SIGNALS:
+        fade_signals_history.pop(0)
+    try:
+        _push(fade_signal_queue, json.dumps(signal, ensure_ascii=False, default=str))
+    except Exception:
+        pass
+
+
+def set_fade_position(symbol: str, pos: dict | None) -> None:
+    if pos is None:
+        fade_positions.pop(symbol, None)
+    else:
+        fade_positions[symbol] = pos

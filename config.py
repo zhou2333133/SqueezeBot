@@ -57,6 +57,24 @@ class ConfigManager:
         "SCALP_TP2_PCT":          (0.1,    200.0),
         "SCALP_TP2_RATIO":        (0.1,    0.9),
         "SCALP_TP3_TRAIL_PCT":    (0.1,    5.0),
+        # 一直做空
+        "FADE_TRIGGER_PCT":       (1.0,    50.0),
+        "FADE_MAX_POSITIONS":     (1,      20),
+        "FADE_POSITION_USDT":     (1,      1_000_000),
+        "FADE_LEVERAGE":          (1,      125),
+        "FADE_STOP_LOSS_PCT":     (0.1,    50.0),
+        "FADE_TP1_PCT":           (0.1,    100.0),
+        "FADE_TP1_RATIO":         (0.1,    0.9),
+        "FADE_TP2_PCT":           (0.1,    200.0),
+        "FADE_TP2_RATIO":         (0.1,    0.9),
+        "FADE_COOLDOWN_MINUTES":  (1,      480),
+        # Funding Rate Reversal
+        "FR_OI_SURGE_PCT":        (1.0,    200.0),
+        "FR_FUNDING_THRESHOLD":   (-0.1,   -0.0001),
+        # Global market filters
+        "BTC_GUARD_PCT":          (0.5,    10.0),
+        "SCALP_VWAP_MAX_DEV":     (0.5,    20.0),
+        "SCALP_TAKER_RATIO_MIN":  (0.5,    0.9),
     }
 
     def __init__(self):
@@ -119,6 +137,29 @@ class ConfigManager:
             "SCALP_TP3_TRAIL_PCT":     1.0,
             "SCALP_WATCHLIST":         "",
             "SCALP_PAPER_TRADE":       False,
+            # ── 一直做空策略 ──────────────────────────────────────────────────
+            "FADE_ENABLED":            False,
+            "FADE_AUTO_TRADE":         False,
+            "FADE_PAPER_TRADE":        False,
+            "FADE_TRIGGER_PCT":        10.0,
+            "FADE_MAX_POSITIONS":      3,
+            "FADE_POSITION_USDT":      50.0,
+            "FADE_LEVERAGE":           10,
+            "FADE_STOP_LOSS_PCT":      1.5,
+            "FADE_TP1_PCT":            1.5,
+            "FADE_TP1_RATIO":          0.5,
+            "FADE_TP2_PCT":            3.0,
+            "FADE_TP2_RATIO":          0.4,
+            "FADE_WATCHLIST":          "",
+            "FADE_COOLDOWN_MINUTES":   30,
+            # ── 资金费率反转信号（中线）─────────────────────────────────────
+            "ENABLE_FUNDING_REVERSAL": False,
+            "FR_OI_SURGE_PCT":         15.0,
+            "FR_FUNDING_THRESHOLD":    -0.001,
+            # ── 全局市场过滤（超短线 & 一直做空共用）─────────────────────────
+            "BTC_GUARD_PCT":           2.0,
+            "SCALP_VWAP_MAX_DEV":      3.0,
+            "SCALP_TAKER_RATIO_MIN":   0.55,
         }
         self.settings: dict = self.load()
 

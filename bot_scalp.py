@@ -181,11 +181,37 @@ class BinanceScalpBot:
             buf.append({
                 "o": float(k["o"]),
                 "c": float(k["c"]),
-                "q": float(k["q"]),  # USDT 成交额
+                "q": float(k["q"]),   # 总 USDT 成交额
+                "Q": float(k["Q"]),   # 主动买入 USDT 成交额 (taker buy)
             })
-            if len(buf) > 30:
+            if len(buf) > 60:
                 buf.pop(0)
             await self._check_momentum(symbol)
+
+    # ─── 辅助：VWAP ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _calc_vwap(buf: list) -> float:
+        """从 1m kline buffer 计算 VWAP (成交量加权均价)"""
+        total_q    = sum(k["q"] for k in buf)
+        total_base = sum(2 * k["q"] / (k["o"] + k["c"])
+                        for k in buf if k["o"] + k["c"] > 0)
+        return total_q / total_base if total_base > 0 else 0.0
+
+    def _btc_guard(self, direction: str) -> bool:
+        """BTC 5分钟方向过滤：急涨时不做空，急跌时不做多"""
+        guard_pct = self.cfg.get("BTC_GUARD_PCT", 2.0)
+        btc_buf   = self.kline_buffer.get("BTCUSDT", [])
+        if len(btc_buf) < 5:
+            return True
+        btc_5m = (btc_buf[-1]["c"] - btc_buf[-5]["o"]) / btc_buf[-5]["o"] * 100
+        if direction == "LONG"  and btc_5m < -guard_pct:
+            logger.debug("⚡ BTC急跌 %.2f%%，跳过做多", btc_5m)
+            return False
+        if direction == "SHORT" and btc_5m >  guard_pct:
+            logger.debug("⚡ BTC急拉 +%.2f%%，跳过做空", btc_5m)
+            return False
+        return True
 
     # ─── 动量检测 ──────────────────────────────────────────────────────────────
 
@@ -212,7 +238,7 @@ class BinanceScalpBot:
         pct       = (cp - op) / op * 100
         threshold = cfg.get("SCALP_TRIGGER_PCT", 4.0)
 
-        # 量能确认
+        # ── 量能确认 ──────────────────────────────────────────────────────
         vol_ok   = True
         vol_mult = cfg.get("SCALP_VOLUME_MULTIPLIER", 3.0)
         if len(buf) > window:
@@ -227,15 +253,43 @@ class BinanceScalpBot:
         elif pct <= -threshold and cfg.get("SCALP_ENABLE_SHORT", True):
             direction = "SHORT"
 
-        if not direction:
+        if not direction or not vol_ok:
+            if not vol_ok and direction:
+                logger.info("⚡ [%s] 动量 %+.2f%% 触发，量能不足，跳过", symbol, pct)
             return
 
-        if not vol_ok:
-            logger.info("⚡ [%s] 动量 %+.2f%% 触发，量能不足 (需 %.1fx 均量)，跳过",
-                        symbol, pct, vol_mult)
+        # ── BTC 方向过滤 ──────────────────────────────────────────────────
+        if not self._btc_guard(direction):
             return
 
-        logger.info("⚡ [%s] 动量触发 %+.2f%% | %s | 量能 ✅", symbol, pct, direction)
+        # ── Taker 主动买入比例确认 ────────────────────────────────────────
+        taker_min = cfg.get("SCALP_TAKER_RATIO_MIN", 0.55)
+        total_q  = sum(k["q"] for k in recent)
+        total_qb = sum(k["Q"] for k in recent)
+        taker_ratio = total_qb / total_q if total_q > 0 else 0.5
+        if direction == "LONG"  and taker_ratio < taker_min:
+            logger.info("⚡ [%s] 动量 +%.2f%%，Taker买入 %.0f%% 不足，跳过做多",
+                        symbol, pct, taker_ratio * 100)
+            return
+        if direction == "SHORT" and taker_ratio > (1 - taker_min):
+            logger.info("⚡ [%s] 动量 %.2f%%，Taker卖出 %.0f%% 不足，跳过做空",
+                        symbol, pct, (1 - taker_ratio) * 100)
+            return
+
+        # ── VWAP 偏离过滤（避免极端追高/追低）────────────────────────────
+        vwap_max = cfg.get("SCALP_VWAP_MAX_DEV", 3.0)
+        if len(buf) >= 10:
+            vwap    = self._calc_vwap(buf)
+            dev_pct = (cp - vwap) / vwap * 100 if vwap > 0 else 0
+            if direction == "LONG"  and dev_pct >  vwap_max:
+                logger.info("⚡ [%s] 价格偏离VWAP +%.1f%%，拒绝追高做多", symbol, dev_pct)
+                return
+            if direction == "SHORT" and dev_pct < -vwap_max:
+                logger.info("⚡ [%s] 价格偏离VWAP %.1f%%，拒绝追低做空", symbol, dev_pct)
+                return
+
+        logger.info("⚡ [%s] 动量触发 %+.2f%% | %s | 量能✅ Taker%.0f%%",
+                    symbol, pct, direction, taker_ratio * 100)
         await self._execute_entry(symbol, direction, pct)
 
     # ─── 开仓 ──────────────────────────────────────────────────────────────────
@@ -388,13 +442,23 @@ class BinanceScalpBot:
             if is_paper:
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += qty * abs(price - pos.entry_price)
+                pos.sl_price = pos.entry_price  # 移止损到成本价
             elif auto:
                 await self.trader.place_market_order(symbol, exit_s, qty)
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += qty * abs(price - pos.entry_price)
+                # 取消原止损单，在成本价挂新止损（保本）
+                if pos.sl_order_id:
+                    await self.trader.cancel_order(symbol, pos.sl_order_id)
+                new_sl = await self.trader.place_stop_loss_order(
+                    symbol, exit_s, pos.entry_price
+                )
+                if new_sl and new_sl.get("orderId"):
+                    pos.sl_order_id = new_sl["orderId"]
+                    pos.sl_price    = pos.entry_price
             pct = abs(price - pos.entry_price) / pos.entry_price * 100
-            logger.info("⚡ [%s] %sTP1 命中 @ %.6f (+%.2f%%) | 平 %.0f%%",
-                        symbol, tag, price, pct, tp1_ratio * 100)
+            logger.info("⚡ [%s] %sTP1 命中 @ %.6f (+%.2f%%) | 止损移至成本价 %.6f",
+                        symbol, tag, price, pct, pos.entry_price)
             set_scalp_position(symbol, pos.to_dict())
 
         elif pos.tp1_hit and not pos.tp2_hit and _tp_hit(pos.tp2_price):

@@ -11,10 +11,11 @@ from fastapi.templating import Jinja2Templates
 
 import bot_state
 from config import config_manager, DATA_DIR
-from log_manager import log_queue, swing_log_queue, scalp_log_queue
+from log_manager import log_queue, swing_log_queue, scalp_log_queue, fade_log_queue
 from signals import (
     signal_queue, signals_history,
     scalp_signal_queue, scalp_signals_history, scalp_positions,
+    fade_signal_queue, fade_signals_history, fade_positions,
 )
 from scanner.candidates import (
     candidates_queue, get_sorted_candidates, clear_candidates, scan_status,
@@ -287,6 +288,106 @@ async def ws_signals(websocket: WebSocket):
 @app.websocket("/ws/scalp/signals")
 async def ws_scalp_signals(websocket: WebSocket):
     await _ws_pump(websocket, scalp_signal_queue, sleep=0.3)
+
+
+# ─── 一直做空控制 API ─────────────────────────────────────────────────────────
+
+@app.get("/api/fade/status")
+async def fade_status():
+    is_running = bool(bot_state.fade_task and not bot_state.fade_task.done())
+    sym_count  = 0
+    if bot_state.fade_bot and bot_state.fade_bot.monitored_symbols:
+        sym_count = len(bot_state.fade_bot.monitored_symbols)
+    return JSONResponse({
+        "running":         is_running,
+        "positions_count": len(fade_positions),
+        "signals_count":   len(fade_signals_history),
+        "symbols_count":   sym_count,
+    })
+
+
+@app.post("/api/fade/start")
+async def fade_start():
+    if bot_state.fade_task and not bot_state.fade_task.done():
+        return JSONResponse({"status": "already_running", "message": "📉 已在运行中"})
+    from bot_fade import BinanceFadeBot
+    bot_state.fade_bot  = BinanceFadeBot()
+    bot_state.fade_task = asyncio.create_task(bot_state.fade_bot.run())
+    logger.info("📉 一直做空机器人通过 Web 面板启动")
+    return JSONResponse({"status": "started", "message": "📉 一直做空机器人已启动"})
+
+
+@app.post("/api/fade/stop")
+async def fade_stop():
+    if bot_state.fade_bot:
+        bot_state.fade_bot.running = False
+    if bot_state.fade_task and not bot_state.fade_task.done():
+        bot_state.fade_task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(bot_state.fade_task), timeout=3)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+    bot_state.fade_task = None
+    bot_state.fade_bot  = None
+    fade_positions.clear()
+    logger.info("📉 一直做空机器人通过 Web 面板停止")
+    return JSONResponse({"status": "stopped", "message": "📉 一直做空机器人已停止"})
+
+
+@app.post("/api/fade/refresh")
+async def fade_refresh_symbols():
+    if bot_state.fade_bot and bot_state.fade_bot.running:
+        await bot_state.fade_bot.refresh_symbols()
+        return JSONResponse({
+            "status":  "success",
+            "message": f"✅ 已刷新，监控 {len(bot_state.fade_bot.monitored_symbols)} 个币种",
+        })
+    return JSONResponse({"status": "error", "message": "❌ 机器人未运行"}, status_code=400)
+
+
+@app.get("/api/fade/positions")
+async def get_fade_positions():
+    return JSONResponse({"positions": dict(fade_positions)})
+
+
+@app.get("/api/fade/signals")
+async def get_fade_signals(limit: int = 50):
+    return JSONResponse({"signals": fade_signals_history[-limit:][::-1], "total": len(fade_signals_history)})
+
+
+@app.delete("/api/fade/signals")
+async def clear_fade_signals():
+    fade_signals_history.clear()
+    logger.info("一直做空信号历史已清空")
+    return JSONResponse({"status": "success", "message": "✅ 做空信号已清空"})
+
+
+@app.get("/api/fade/paper/positions")
+async def get_fade_paper_positions():
+    paper = {k: v for k, v in fade_positions.items() if v.get("paper")}
+    total_pnl = sum(v.get("realized_pnl", 0) for v in paper.values())
+    return JSONResponse({"positions": paper, "count": len(paper), "total_realized_pnl": round(total_pnl, 4)})
+
+
+@app.delete("/api/fade/paper/positions")
+async def clear_fade_paper_positions():
+    paper_keys = [k for k, v in fade_positions.items() if v.get("paper")]
+    for k in paper_keys:
+        fade_positions.pop(k, None)
+        if bot_state.fade_bot:
+            bot_state.fade_bot.open_positions.pop(k, None)
+    logger.info("📉 模拟仓位已全部清除 (%d 个)", len(paper_keys))
+    return JSONResponse({"status": "success", "message": f"✅ 已清除 {len(paper_keys)} 个模拟仓位"})
+
+
+@app.websocket("/ws/fade/signals")
+async def ws_fade_signals(websocket: WebSocket):
+    await _ws_pump(websocket, fade_signal_queue, sleep=0.3)
+
+
+@app.websocket("/ws/log/fade")
+async def ws_log_fade(websocket: WebSocket):
+    await _ws_pump(websocket, fade_log_queue)
 
 
 # ─── 妖币扫描器 API ───────────────────────────────────────────────────────────
