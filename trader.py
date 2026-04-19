@@ -165,3 +165,18 @@ class BinanceTrader:
         return await self._request("DELETE", "/fapi/v1/allOpenOrders", {
             "symbol": symbol,
         })
+
+    async def get_balance(self) -> dict | None:
+        """查询U本位合约账户 USDT 余额（余额/可用/未实现盈亏）"""
+        resp = await self._request("GET", "/fapi/v2/balance", {})
+        if not resp:
+            return None
+        for asset in resp:
+            if asset.get("asset") == "USDT":
+                return {
+                    "asset":            "USDT",
+                    "balance":          float(asset.get("balance",          0)),
+                    "availableBalance": float(asset.get("availableBalance", 0)),
+                    "unrealizedProfit": float(asset.get("crossUnPnl",       0)),
+                }
+        return None

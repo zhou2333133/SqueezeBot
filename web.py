@@ -96,6 +96,19 @@ async def manual_trade(request: Request):
         return JSONResponse({"status": "error", "message": f"❌ 下单异常: {e}"}, status_code=500)
 
 
+# ─── 账户余额 ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/account/balance")
+async def get_account_balance():
+    try:
+        async with aiohttp.ClientSession(trust_env=True) as session:
+            bal = await BinanceTrader(session).get_balance()
+        return JSONResponse(bal or {})
+    except Exception as e:
+        logger.error("查询余额异常: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── 中线状态 & 信号 ──────────────────────────────────────────────────────────
 
 @app.get("/api/status")
