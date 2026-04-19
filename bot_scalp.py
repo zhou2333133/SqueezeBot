@@ -419,15 +419,15 @@ class BinanceScalpBot:
         if direction == "LONG" and taker_ratio < taker_min:
             self._fstat["taker"] += 1
             if not is_realtime:
-                logger.info("⚡ [%s] [%s] Taker买入%.0f%% 不足(需>%.0f%%)，跳过",
+                logger.info("⚡ [%s] [%s] Taker买入%.1f%% 不足(需≥%.1f%%)，跳过",
                             symbol, label, taker_ratio * 100, taker_min * 100)
             self._maybe_print_fstat()
             return
         if direction == "SHORT" and taker_ratio > (1 - taker_min):
             self._fstat["taker"] += 1
             if not is_realtime:
-                logger.info("⚡ [%s] [%s] Taker卖出%.0f%% 不足，跳过",
-                            symbol, label, (1 - taker_ratio) * 100)
+                logger.info("⚡ [%s] [%s] Taker卖出%.1f%% 不足(需≥%.1f%%)，跳过",
+                            symbol, label, (1 - taker_ratio) * 100, taker_min * 100)
             self._maybe_print_fstat()
             return
 
