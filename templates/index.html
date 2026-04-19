@@ -397,9 +397,10 @@
       <div class="text-xs text-gray-600 mt-0.5">已实现(含模拟)</div>
     </div>
     <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">触发阈值</div>
-      <div class="text-2xl font-bold text-orange-300" x-text="cfg.SCALP_TRIGGER_PCT+'%'"></div>
-      <div class="text-xs text-gray-600 mt-0.5" x-text="cfg.SCALP_WINDOW_MINUTES+'m | 监控'+scalpSymbolCount+'个'"></div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">策略参数</div>
+      <div class="text-base font-bold text-orange-300"
+        x-text="'回调'+cfg.SCALP_PULLBACK_PCT+'% | 反转'+cfg.SCALP_MEAN_REVERT_PCT+'%'"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="'活跃振幅'+cfg.SCALP_ACTIVE_RANGE_PCT+'% | 监控'+scalpSymbolCount+'个'"></div>
     </div>
   </div>
 
@@ -415,14 +416,20 @@
         <div x-show="scalpOpen" class="px-5 pb-5 space-y-4">
           <form @submit.prevent="saveScalpConfig()" id="scalpForm">
 
-            <p class="text-xs text-orange-800 uppercase tracking-widest pt-1">触发参数</p>
+            <p class="text-xs text-orange-800 uppercase tracking-widest pt-1">选币 & 策略参数</p>
             <div class="grid grid-cols-3 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">触发涨跌 %</label>
-                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_TRIGGER_PCT" :value="cfg.SCALP_TRIGGER_PCT"></div>
-              <div><label class="text-xs text-gray-500">窗口(分钟)</label>
+              <div><label class="text-xs text-gray-500">活跃振幅 % (15分钟)</label>
+                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_ACTIVE_RANGE_PCT" :value="cfg.SCALP_ACTIVE_RANGE_PCT??6"></div>
+              <div><label class="text-xs text-gray-500">回调阈值 % (趋势跟随)</label>
+                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_PULLBACK_PCT" :value="cfg.SCALP_PULLBACK_PCT??2.5"></div>
+              <div><label class="text-xs text-gray-500">反转阈值 % (均线偏离)</label>
+                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_MEAN_REVERT_PCT" :value="cfg.SCALP_MEAN_REVERT_PCT??7"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              <div><label class="text-xs text-gray-500">Taker比例下限 (0~1)</label>
+                <input class="inp inp-o mt-1" type="number" step="0.01" name="SCALP_TAKER_RATIO_MIN" :value="cfg.SCALP_TAKER_RATIO_MIN??0.55"></div>
+              <div><label class="text-xs text-gray-500">触发窗口 (分钟)</label>
                 <input class="inp inp-o mt-1" type="number" name="SCALP_WINDOW_MINUTES" :value="cfg.SCALP_WINDOW_MINUTES"></div>
-              <div><label class="text-xs text-gray-500">量能倍数 x</label>
-                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_VOLUME_MULTIPLIER" :value="cfg.SCALP_VOLUME_MULTIPLIER"></div>
             </div>
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">交易方向 & 控制</p>
