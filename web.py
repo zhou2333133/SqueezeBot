@@ -254,8 +254,11 @@ async def _ws_pump(websocket: WebSocket, q: std_queue.Queue, sleep: float = 0.1)
                 msg = q.get_nowait()
                 await websocket.send_text(msg)
             except std_queue.Empty:
-                await asyncio.sleep(sleep)
-    except WebSocketDisconnect:
+                try:
+                    await asyncio.sleep(sleep)
+                except asyncio.CancelledError:
+                    return
+    except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     except Exception as e:
         logger.debug("WS 异常: %s", e)
