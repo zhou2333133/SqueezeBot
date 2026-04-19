@@ -8,7 +8,7 @@ import pandas as pd
 
 from config import config_manager, DATA_DIR, MAX_CONCURRENT_REQUESTS, SURF_API_KEY
 from okx_client import OKXOnChainClient
-from signals import add_signal
+from signals import add_signal, signals_history
 from trader import BinanceTrader
 
 logger = logging.getLogger(__name__)
@@ -535,12 +535,24 @@ class BinanceSqueezeBot:
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
                         errors  = [r for r in results if isinstance(r, Exception)]
+                        signals_this_round = len(signals_history)
+                        fr_enabled = cfg.get("ENABLE_FUNDING_REVERSAL", False)
+                        logger.info(
+                            "✅ 本轮扫描完成 | 扫描 %d 个币种 | BTC %.2f%% | "
+                            "自动交易:%s | 资金费率反转:%s | 累计信号:%d条 | 异常:%d个 | 休眠 %d 分钟",
+                            len(symbols),
+                            btc_change,
+                            "开" if cfg.get("AUTO_TRADE_ENABLED") else "关",
+                            "开" if fr_enabled else "关",
+                            signals_this_round,
+                            len(errors),
+                            cfg["INTERVAL_MINUTES"],
+                        )
                         if errors:
                             logger.warning("本轮 %d 个币种处理出现异常（已跳过）", len(errors))
                     else:
                         logger.error("无法获取 premiumIndex 或 ticker 数据，本轮跳过")
-
-                    logger.info("✅ 本轮扫描完成，休眠 %d 分钟", cfg["INTERVAL_MINUTES"])
+                        logger.info("✅ 本轮扫描完成，休眠 %d 分钟", cfg["INTERVAL_MINUTES"])
 
                 except Exception as e:
                     logger.error("主循环异常: %s", e, exc_info=True)

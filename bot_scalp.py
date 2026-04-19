@@ -90,6 +90,7 @@ class BinanceScalpBot:
                 await asyncio.gather(
                     self._ws_loop(),
                     self._position_monitor_loop(),
+                    self._heartbeat_loop(),
                 )
         except asyncio.CancelledError:
             pass
@@ -490,6 +491,33 @@ class BinanceScalpBot:
             logger.info("⚡ [%s] %sSL 触发 @ %.6f", symbol, tag, price)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
+
+    # ─── 心跳日志（每 5 分钟汇报一次运行状态）────────────────────────────────
+
+    async def _heartbeat_loop(self) -> None:
+        await asyncio.sleep(30)  # 启动后稍等，让 WS 先连上
+        while self.running:
+            cfg        = self.cfg
+            buffered   = sum(1 for b in self.kline_buffer.values() if len(b) >= cfg.get("SCALP_WINDOW_MINUTES", 3))
+            positions  = len(self.open_positions)
+            paper_cnt  = sum(1 for p in self.open_positions.values() if p.paper)
+            real_cnt   = positions - paper_cnt
+            enabled    = cfg.get("SCALP_ENABLED", False)
+            auto       = cfg.get("SCALP_AUTO_TRADE", False)
+            paper_mode = cfg.get("SCALP_PAPER_TRADE", False)
+
+            mode_str = "自动下单" if auto else ("模拟开仓" if paper_mode else "仅信号")
+            logger.info(
+                "⚡ 超短线心跳 | 策略%s | 监控%d个 | 已就绪%d个 | "
+                "活跃仓位%d个(真实%d/模拟%d) | 触发阈值%.1f%% %dm | 模式:%s",
+                "开启" if enabled else "关闭",
+                len(self.monitored_symbols), buffered,
+                positions, real_cnt, paper_cnt,
+                cfg.get("SCALP_TRIGGER_PCT", 4.0),
+                cfg.get("SCALP_WINDOW_MINUTES", 3),
+                mode_str,
+            )
+            await asyncio.sleep(300)  # 每 5 分钟
 
     # ─── REST 仓位同步（防 WS 漏消息）────────────────────────────────────────
 

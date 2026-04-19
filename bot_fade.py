@@ -93,6 +93,7 @@ class BinanceFadeBot:
                 await asyncio.gather(
                     self._ws_loop(),
                     self._position_monitor_loop(),
+                    self._heartbeat_loop(),
                 )
         except asyncio.CancelledError:
             pass
@@ -515,6 +516,38 @@ class BinanceFadeBot:
                 await self.trader.place_market_order(symbol, "BUY", pos.quantity_remaining)
             del self.open_positions[symbol]
             set_fade_position(symbol, None)
+
+    # ─── 心跳日志（每 5 分钟汇报一次运行状态）────────────────────────────────
+
+    async def _heartbeat_loop(self) -> None:
+        await asyncio.sleep(30)
+        while self.running:
+            cfg       = self.cfg
+            buffered  = sum(1 for b in self.kline_buffer.values() if len(b) >= 15)
+            positions = len(self.open_positions)
+            paper_cnt = sum(1 for p in self.open_positions.values() if p.paper)
+            real_cnt  = positions - paper_cnt
+            cooldown  = cfg.get("FADE_COOLDOWN_MINUTES", 30)
+            in_cool   = sum(
+                1 for sym, t in self._last_signal_time.items()
+                if (datetime.now() - t).total_seconds() < cooldown * 60
+            )
+            enabled   = cfg.get("FADE_ENABLED", False)
+            auto      = cfg.get("FADE_AUTO_TRADE", False)
+            paper_m   = cfg.get("FADE_PAPER_TRADE", False)
+            mode_str  = "自动下单" if auto else ("模拟开仓" if paper_m else "仅信号")
+
+            logger.info(
+                "📉 一直做空心跳 | 策略%s | 监控%d个 | 已就绪%d个 | "
+                "活跃仓位%d个(真实%d/模拟%d) | 冷却中%d个 | 触发阈值%.0f%% | 模式:%s",
+                "开启" if enabled else "关闭",
+                len(self.monitored_symbols), buffered,
+                positions, real_cnt, paper_cnt,
+                in_cool,
+                cfg.get("FADE_TRIGGER_PCT", 10.0),
+                mode_str,
+            )
+            await asyncio.sleep(300)
 
     # ─── REST 仓位同步 ─────────────────────────────────────────────────────────
 
