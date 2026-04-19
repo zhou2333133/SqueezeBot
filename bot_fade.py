@@ -144,16 +144,23 @@ class BinanceFadeBot:
     async def _ws_connect(self) -> None:
         async with self.session.ws_connect(_WS_URL, heartbeat=20) as ws:
             params = [f"{s.lower()}@kline_1m" for s in self.monitored_symbols]
-            for chunk in [params[i:i + 200] for i in range(0, len(params), 200)]:
-                await ws.send_str(json.dumps({"method": "SUBSCRIBE", "params": chunk, "id": 1}))
+            for i, chunk in enumerate([params[j:j + 200] for j in range(0, len(params), 200)]):
+                await ws.send_str(json.dumps({"method": "SUBSCRIBE", "params": chunk, "id": i + 1}))
+                await asyncio.sleep(0.3)
             logger.info("📉 WS 已连接，监控 %d 个币种", len(self.monitored_symbols))
+            close_code = None
             async for msg in ws:
                 if not self.running:
                     break
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     await self._on_message(msg.data)
-                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                    close_code = ws.close_code
                     break
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    break
+            if self.running:
+                logger.warning("📉 WS 连接关闭 (code=%s)，即将重连...", close_code)
 
     async def _on_message(self, raw: str) -> None:
         try:

@@ -363,6 +363,12 @@
         class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs font-medium transition-colors">
         ↻ 刷新列表
       </button>
+      <!-- 策略扫描开关（显眼，独立于启动进程）-->
+      <button x-show="scalpRunning" @click="toggleScalpEnabled()"
+        :class="cfg.SCALP_ENABLED?'bg-orange-500 hover:bg-orange-400 text-white':'bg-gray-700 hover:bg-gray-600 text-gray-300'"
+        class="px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5">
+        <span x-text="cfg.SCALP_ENABLED?'🟢 策略开启':'⚫ 策略关闭'"></span>
+      </button>
       <button @click="scalpRunning?stopScalp():startScalp()"
         :class="scalpRunning?'bg-red-700 hover:bg-red-600':'bg-orange-600 hover:bg-orange-500'"
         class="px-6 py-2 rounded-xl text-white text-sm font-bold transition-colors">
@@ -648,6 +654,12 @@
       <button @click="refreshFadeSymbols()" :disabled="!fadeRunning"
         class="px-3 py-1.5 rounded-xl bg-[#2a0a0f] hover:bg-[#3d1015] text-red-400 text-xs font-medium transition-colors disabled:opacity-40">
         ↻ 刷新列表
+      </button>
+      <!-- 策略扫描开关 -->
+      <button x-show="fadeRunning" @click="toggleFadeEnabled()"
+        :class="cfg.FADE_ENABLED?'bg-red-600 hover:bg-red-500 text-white':'bg-gray-700 hover:bg-gray-600 text-gray-300'"
+        class="px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5">
+        <span x-text="cfg.FADE_ENABLED?'🔴 策略开启':'⚫ 策略关闭'"></span>
       </button>
       <button @click="fadeRunning?stopFade():startFade()"
         :class="fadeRunning?'bg-red-900 hover:bg-red-800':'bg-red-700 hover:bg-red-600'"
@@ -1397,6 +1409,24 @@ function app() {
         this.showToast(d.message, d.status==='success'?'success':'error')
         await this.loadScalpPositions()
       } catch(e){ this.showToast('❌ 清除失败: '+e,'error') }
+    },
+    async toggleScalpEnabled() {
+      this.cfg.SCALP_ENABLED = !this.cfg.SCALP_ENABLED
+      const fd = new FormData()
+      fd.set('SCALP_ENABLED', this.cfg.SCALP_ENABLED ? 'true' : 'false')
+      try {
+        await fetch('/api/config', {method:'POST', body:fd})
+        this.showToast(this.cfg.SCALP_ENABLED ? '🟢 策略已开启，开始扫描信号' : '⚫ 策略已暂停', 'success')
+      } catch(e) { this.showToast('❌ 保存失败: '+e, 'error') }
+    },
+    async toggleFadeEnabled() {
+      this.cfg.FADE_ENABLED = !this.cfg.FADE_ENABLED
+      const fd = new FormData()
+      fd.set('FADE_ENABLED', this.cfg.FADE_ENABLED ? 'true' : 'false')
+      try {
+        await fetch('/api/config', {method:'POST', body:fd})
+        this.showToast(this.cfg.FADE_ENABLED ? '🔴 做空策略已开启' : '⚫ 做空策略已暂停', 'success')
+      } catch(e) { this.showToast('❌ 保存失败: '+e, 'error') }
     },
     async startScalp() {
       try {
