@@ -14,8 +14,8 @@ from config import config_manager, DATA_DIR
 from log_manager import log_queue, swing_log_queue, scalp_log_queue, fade_log_queue
 from signals import (
     signal_queue, signals_history,
-    scalp_signal_queue, scalp_signals_history, scalp_positions,
-    fade_signal_queue, fade_signals_history, fade_positions,
+    scalp_signal_queue, scalp_signals_history, scalp_positions, scalp_trade_history,
+    fade_signal_queue, fade_signals_history, fade_positions, fade_trade_history,
 )
 from scanner.candidates import (
     candidates_queue, get_sorted_candidates, clear_candidates, scan_status,
@@ -220,6 +220,25 @@ async def clear_scalp_signals():
     return JSONResponse({"status": "success", "message": "✅ 超短线信号已清空"})
 
 
+@app.get("/api/scalp/trades")
+async def get_scalp_trades(limit: int = 200):
+    trades = scalp_trade_history[-limit:][::-1]
+    wins  = sum(1 for t in scalp_trade_history if t.get("pnl_usdt", 0) > 0)
+    total = len(scalp_trade_history)
+    return JSONResponse({
+        "trades": trades,
+        "total": total,
+        "total_pnl": round(sum(t.get("pnl_usdt", 0) for t in scalp_trade_history), 4),
+        "win_rate": round(wins / total * 100, 1) if total > 0 else 0,
+    })
+
+
+@app.delete("/api/scalp/trades")
+async def clear_scalp_trades():
+    scalp_trade_history.clear()
+    return JSONResponse({"status": "success", "message": "✅ 历史成交已清空"})
+
+
 @app.get("/api/scalp/paper/positions")
 async def get_scalp_paper_positions():
     paper = {k: v for k, v in scalp_positions.items() if v.get("paper")}
@@ -360,6 +379,25 @@ async def clear_fade_signals():
     fade_signals_history.clear()
     logger.info("一直做空信号历史已清空")
     return JSONResponse({"status": "success", "message": "✅ 做空信号已清空"})
+
+
+@app.get("/api/fade/trades")
+async def get_fade_trades(limit: int = 200):
+    trades = fade_trade_history[-limit:][::-1]
+    wins  = sum(1 for t in fade_trade_history if t.get("pnl_usdt", 0) > 0)
+    total = len(fade_trade_history)
+    return JSONResponse({
+        "trades": trades,
+        "total": total,
+        "total_pnl": round(sum(t.get("pnl_usdt", 0) for t in fade_trade_history), 4),
+        "win_rate": round(wins / total * 100, 1) if total > 0 else 0,
+    })
+
+
+@app.delete("/api/fade/trades")
+async def clear_fade_trades():
+    fade_trade_history.clear()
+    return JSONResponse({"status": "success", "message": "✅ 历史成交已清空"})
 
 
 @app.get("/api/fade/paper/positions")

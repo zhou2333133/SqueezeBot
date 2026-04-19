@@ -12,6 +12,9 @@ scalp_signals_history: list[dict]      = []
 # ── 超短线活跃仓位（共享状态，web.py 读取）────────────────────────────────────
 scalp_positions: dict[str, dict] = {}
 
+# ── 超短线历史成交记录 ────────────────────────────────────────────────────────
+scalp_trade_history: list[dict] = []
+
 # ── 一直做空信号 ──────────────────────────────────────────────────────────────
 fade_signal_queue:    std_queue.Queue = std_queue.Queue(maxsize=200)
 fade_signals_history: list[dict]      = []
@@ -19,7 +22,11 @@ fade_signals_history: list[dict]      = []
 # ── 一直做空活跃仓位 ──────────────────────────────────────────────────────────
 fade_positions: dict[str, dict] = {}
 
+# ── 一直做空历史成交记录 ──────────────────────────────────────────────────────
+fade_trade_history: list[dict] = []
+
 MAX_SIGNALS = 200
+MAX_TRADES  = 500
 
 
 def _push(q: std_queue.Queue, msg: str) -> None:
@@ -76,3 +83,15 @@ def set_fade_position(symbol: str, pos: dict | None) -> None:
         fade_positions.pop(symbol, None)
     else:
         fade_positions[symbol] = pos
+
+
+def add_scalp_trade(trade: dict) -> None:
+    scalp_trade_history.append(trade)
+    if len(scalp_trade_history) > MAX_TRADES:
+        scalp_trade_history.pop(0)
+
+
+def add_fade_trade(trade: dict) -> None:
+    fade_trade_history.append(trade)
+    if len(fade_trade_history) > MAX_TRADES:
+        fade_trade_history.pop(0)

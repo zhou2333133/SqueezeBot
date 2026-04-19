@@ -16,7 +16,7 @@ from datetime import datetime
 import aiohttp
 
 from config import config_manager
-from signals import add_fade_signal, set_fade_position
+from signals import add_fade_signal, set_fade_position, add_fade_trade
 from trader import BinanceTrader
 
 logger = logging.getLogger("bot_fade")
@@ -476,6 +476,25 @@ class BinanceFadeBot:
 
     # ─── TP / SL 检查 ──────────────────────────────────────────────────────────
 
+    def _record_fade_trade(self, pos, exit_price: float, close_reason: str, extra_pnl: float = 0.0) -> None:
+        total_pnl = pos.realized_pnl + extra_pnl
+        position_usdt = pos.entry_price * pos.quantity / self.cfg.get("FADE_LEVERAGE", 10)
+        pnl_pct = total_pnl / position_usdt * 100 if position_usdt > 0 else 0.0
+        add_fade_trade({
+            "symbol":       pos.symbol,
+            "direction":    "SHORT",
+            "entry_price":  round(pos.entry_price, 8),
+            "exit_price":   round(exit_price, 8),
+            "entry_time":   pos.entry_time,
+            "exit_time":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "pnl_usdt":     round(total_pnl, 4),
+            "pnl_pct":      round(pnl_pct, 2),
+            "close_reason": close_reason,
+            "paper":        pos.paper,
+            "leverage":     self.cfg.get("FADE_LEVERAGE", 10),
+            "quantity":     round(pos.quantity, 6),
+        })
+
     async def _check_tp_sl(self, symbol: str, price: float) -> None:
         pos = self.open_positions.get(symbol)
         if not pos:
@@ -490,13 +509,14 @@ class BinanceFadeBot:
         if not pos.tp1_hit and price <= pos.tp1_price:
             pos.tp1_hit = True
             qty = pos.quantity * tp1_ratio
+            tp1_pnl = qty * (pos.entry_price - price)
             if is_paper:
                 pos.quantity_remaining -= qty
-                pos.realized_pnl += qty * (pos.entry_price - price)
+                pos.realized_pnl += tp1_pnl
             elif auto:
                 await self.trader.place_market_order(symbol, "BUY", qty)
                 pos.quantity_remaining -= qty
-                pos.realized_pnl += qty * (pos.entry_price - price)
+                pos.realized_pnl += tp1_pnl
             pct = (pos.entry_price - price) / pos.entry_price * 100
             logger.info("📉 [%s] %sTP1 命中 @ %.6f (+%.2f%%)", symbol, tag, price, pct)
             set_fade_position(symbol, pos.to_dict())
@@ -504,23 +524,29 @@ class BinanceFadeBot:
         elif pos.tp1_hit and not pos.tp2_hit and price <= pos.tp2_price:
             pos.tp2_hit = True
             qty = pos.quantity * tp2_ratio
+            tp2_pnl = qty * (pos.entry_price - price)
             if is_paper:
                 pos.quantity_remaining -= qty
-                pos.realized_pnl += qty * (pos.entry_price - price)
+                pos.realized_pnl += tp2_pnl
             elif auto:
                 await self.trader.place_market_order(symbol, "BUY", qty)
                 pos.quantity_remaining -= qty
+                pos.realized_pnl += tp2_pnl
             pct = (pos.entry_price - price) / pos.entry_price * 100
             logger.info("📉 [%s] %sTP2 命中 @ %.6f (+%.2f%%) | 全平", symbol, tag, price, pct)
+            self._record_fade_trade(pos, price, "TP2", tp2_pnl)
             del self.open_positions[symbol]
             set_fade_position(symbol, None)
             return
 
         sl_crossed = price >= pos.sl_price * 1.001
         if sl_crossed and symbol in self.open_positions:
-            logger.info("📉 [%s] %sSL 触发 @ %.6f", symbol, tag, price)
+            sl_pnl = pos.quantity_remaining * (pos.entry_price - price)
+            reason = "SL_保本" if pos.tp1_hit else "SL"
+            logger.info("📉 [%s] %s%s 触发 @ %.6f", symbol, tag, reason, price)
             if not is_paper and auto and pos.quantity_remaining > 0:
                 await self.trader.place_market_order(symbol, "BUY", pos.quantity_remaining)
+            self._record_fade_trade(pos, price, reason, sl_pnl)
             del self.open_positions[symbol]
             set_fade_position(symbol, None)
 

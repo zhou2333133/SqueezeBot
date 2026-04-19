@@ -385,17 +385,20 @@
       <div class="text-xs text-gray-600 mt-0.5" x-text="'最大 '+cfg.SCALP_MAX_POSITIONS+' 个'"></div>
     </div>
     <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">今日信号</div>
-      <div class="text-2xl font-bold text-white" x-text="scalpSignals.length"></div>
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">历史成交</div>
+      <div class="text-2xl font-bold text-white" x-text="scalpTradeTotal+'笔'"></div>
+      <div class="text-xs mt-0.5" :class="scalpWinRate>=50?'text-green-500':'text-red-500'" x-text="'胜率 '+scalpWinRate+'%'"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">累计盈亏</div>
+      <div class="text-2xl font-bold" :class="scalpTotalPnl>=0?'text-green-400':'text-red-400'"
+        x-text="(scalpTotalPnl>=0?'+':'')+scalpTotalPnl.toFixed(2)+' U'"></div>
+      <div class="text-xs text-gray-600 mt-0.5">已实现(含模拟)</div>
     </div>
     <div class="card p-4">
       <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">触发阈值</div>
       <div class="text-2xl font-bold text-orange-300" x-text="cfg.SCALP_TRIGGER_PCT+'%'"></div>
-      <div class="text-xs text-gray-600 mt-0.5" x-text="cfg.SCALP_WINDOW_MINUTES+'分钟窗口'"></div>
-    </div>
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">监控币种</div>
-      <div class="text-2xl font-bold text-white" x-text="scalpSymbolCount||'—'"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="cfg.SCALP_WINDOW_MINUTES+'m | 监控'+scalpSymbolCount+'个'"></div>
     </div>
   </div>
 
@@ -617,6 +620,64 @@
 
     </div>
   </div><!-- end grid -->
+
+  <!-- Scalp Trade History -->
+  <div class="card">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
+      <div class="flex items-center gap-3">
+        <span class="text-sm font-semibold text-orange-400">📋 历史成交</span>
+        <span class="text-xs bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded-full" x-text="scalpTradeTotal+'笔'"></span>
+        <span class="text-xs px-2 py-0.5 rounded-full" :class="scalpTotalPnl>=0?'bg-green-500/20 text-green-300':'bg-red-500/20 text-red-300'"
+          x-text="(scalpTotalPnl>=0?'+':'')+scalpTotalPnl.toFixed(2)+' U'"></span>
+        <span class="text-xs text-gray-600" x-text="'胜率 '+scalpWinRate+'%'"></span>
+      </div>
+      <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+    </div>
+    <div class="overflow-x-auto">
+      <div x-show="scalpTrades.length===0" class="text-center text-gray-600 py-8 text-sm">暂无历史成交记录</div>
+      <table x-show="scalpTrades.length>0" class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-600 border-b border-[#1c1c38]">
+            <th class="text-left px-4 py-2 font-medium">时间</th>
+            <th class="text-left px-4 py-2 font-medium">品种</th>
+            <th class="text-left px-4 py-2 font-medium">方向</th>
+            <th class="text-right px-4 py-2 font-medium">开仓价</th>
+            <th class="text-right px-4 py-2 font-medium">平仓价</th>
+            <th class="text-right px-4 py-2 font-medium">盈亏</th>
+            <th class="text-center px-4 py-2 font-medium">原因</th>
+            <th class="text-center px-4 py-2 font-medium">类型</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(t,i) in scalpTrades" :key="i">
+            <tr class="border-b border-[#0d0d20] hover:bg-[#0a0a1c] transition-colors">
+              <td class="px-4 py-2 text-gray-500 font-mono" x-text="(t.exit_time||'').slice(5,16)"></td>
+              <td class="px-4 py-2 font-bold text-white" x-text="t.symbol?.replace('USDT','')"></td>
+              <td class="px-4 py-2">
+                <span class="px-1.5 py-0.5 rounded text-xs font-semibold" :class="t.direction==='LONG'?'badge-long':'badge-short'" x-text="t.direction"></span>
+              </td>
+              <td class="px-4 py-2 text-right font-mono text-gray-400" x-text="t.entry_price"></td>
+              <td class="px-4 py-2 text-right font-mono text-gray-300" x-text="t.exit_price"></td>
+              <td class="px-4 py-2 text-right font-bold">
+                <span :class="t.pnl_usdt>=0?'text-green-400':'text-red-400'"
+                  x-text="(t.pnl_usdt>=0?'+':'')+t.pnl_usdt.toFixed(3)+' U'"></span>
+                <span class="text-gray-600 ml-1" x-text="'('+t.pnl_pct+'%)'"></span>
+              </td>
+              <td class="px-4 py-2 text-center">
+                <span class="px-2 py-0.5 rounded text-xs font-semibold"
+                  :class="t.close_reason==='TP2'?'bg-green-500/20 text-green-300':t.close_reason==='SL_保本'?'bg-blue-500/20 text-blue-300':'bg-red-500/20 text-red-400'"
+                  x-text="t.close_reason"></span>
+              </td>
+              <td class="px-4 py-2 text-center">
+                <span class="text-xs px-1.5 py-0.5 rounded" :class="t.paper?'bg-gray-700 text-gray-400':'bg-orange-900/40 text-orange-400'"
+                  x-text="t.paper?'模拟':'真实'"></span>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
   <!-- Scalp Log -->
   <div class="card">
@@ -864,6 +925,60 @@
 
     </div>
   </div><!-- /grid -->
+
+  <!-- Fade Trade History -->
+  <div class="card">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
+      <div class="flex items-center gap-3">
+        <span class="text-sm font-semibold text-red-400">📋 历史成交</span>
+        <span class="text-xs bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full" x-text="fadeTradeTotal+'笔'"></span>
+        <span class="text-xs px-2 py-0.5 rounded-full" :class="fadeTotalPnl>=0?'bg-green-500/20 text-green-300':'bg-red-500/20 text-red-300'"
+          x-text="(fadeTotalPnl>=0?'+':'')+fadeTotalPnl.toFixed(2)+' U'"></span>
+        <span class="text-xs text-gray-600" x-text="'胜率 '+fadeWinRate+'%'"></span>
+      </div>
+      <button @click="clearFadeTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+    </div>
+    <div class="overflow-x-auto">
+      <div x-show="fadeTrades.length===0" class="text-center text-gray-600 py-8 text-sm">暂无历史成交记录</div>
+      <table x-show="fadeTrades.length>0" class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-600 border-b border-[#1c1c38]">
+            <th class="text-left px-4 py-2 font-medium">时间</th>
+            <th class="text-left px-4 py-2 font-medium">品种</th>
+            <th class="text-right px-4 py-2 font-medium">开仓价</th>
+            <th class="text-right px-4 py-2 font-medium">平仓价</th>
+            <th class="text-right px-4 py-2 font-medium">盈亏</th>
+            <th class="text-center px-4 py-2 font-medium">原因</th>
+            <th class="text-center px-4 py-2 font-medium">类型</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(t,i) in fadeTrades" :key="i">
+            <tr class="border-b border-[#0d0d20] hover:bg-[#0a0508] transition-colors">
+              <td class="px-4 py-2 text-gray-500 font-mono" x-text="(t.exit_time||'').slice(5,16)"></td>
+              <td class="px-4 py-2 font-bold text-white" x-text="t.symbol?.replace('USDT','')"></td>
+              <td class="px-4 py-2 text-right font-mono text-gray-400" x-text="t.entry_price"></td>
+              <td class="px-4 py-2 text-right font-mono text-gray-300" x-text="t.exit_price"></td>
+              <td class="px-4 py-2 text-right font-bold">
+                <span :class="t.pnl_usdt>=0?'text-green-400':'text-red-400'"
+                  x-text="(t.pnl_usdt>=0?'+':'')+t.pnl_usdt.toFixed(3)+' U'"></span>
+                <span class="text-gray-600 ml-1" x-text="'('+t.pnl_pct+'%)'"></span>
+              </td>
+              <td class="px-4 py-2 text-center">
+                <span class="px-2 py-0.5 rounded text-xs font-semibold"
+                  :class="t.close_reason==='TP2'?'bg-green-500/20 text-green-300':t.close_reason==='SL_保本'?'bg-blue-500/20 text-blue-300':'bg-red-500/20 text-red-400'"
+                  x-text="t.close_reason"></span>
+              </td>
+              <td class="px-4 py-2 text-center">
+                <span class="text-xs px-1.5 py-0.5 rounded" :class="t.paper?'bg-gray-700 text-gray-400':'bg-red-900/40 text-red-400'"
+                  x-text="t.paper?'模拟':'真实'"></span>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
   <!-- Fade Log -->
   <div class="card">
@@ -1225,10 +1340,12 @@ function app() {
 
     scalpSignals: [], scalpLogs: [], scalpOpen: true,
     scalpPositions: {}, scalpRunning: false, scalpSymbolCount: 0,
+    scalpTrades: [], scalpTotalPnl: 0, scalpWinRate: 0, scalpTradeTotal: 0,
 
     fadeSignals: [], fadeLogs: [], fadeOpen: true,
     fadePositions: {}, fadeRunning: false,
     fadeStatus: { positions_count:0, signals_count:0, symbols_count:0 },
+    fadeTrades: [], fadeTotalPnl: 0, fadeWinRate: 0, fadeTradeTotal: 0,
 
     yaobiCandidates: [], yaobiRunning: false, yaobiOpen: true,
     yaobiStatus: { last_scan:null, scanning:false, total_scanned:0, scored:0, sources:{}, errors:[] },
@@ -1280,15 +1397,19 @@ function app() {
       this.connectAll()
       this.loadSwingSignals()
       this.loadScalpSignals()
+      this.loadScalpTrades()
       this.loadCsvSymbols()
       this.pollScalpStatus()
       this.pollFadeStatus()
       this.loadFadeSignals()
+      this.loadFadeTrades()
       this.pollYaobiStatus()
       this.loadYaobiCandidates()
       this.loadObsidianStatus()
       setInterval(() => this.loadScalpPositions(), 2000)
       setInterval(() => this.loadFadePositions(), 2000)
+      setInterval(() => this.loadScalpTrades(), 10000)
+      setInterval(() => this.loadFadeTrades(), 10000)
       setInterval(() => this.pollScalpStatus(), 5000)
       setInterval(() => this.pollFadeStatus(), 5000)
       setInterval(() => this.pollYaobiStatus(), 8000)
@@ -1329,9 +1450,9 @@ function app() {
       } else if (key === 'swingSig') {
         try { const s=JSON.parse(data); this.swingSignals.unshift(s); if(this.swingSignals.length>200)this.swingSignals.pop() } catch{}
       } else if (key === 'scalpSig') {
-        try { const s=JSON.parse(data); this.scalpSignals.unshift(s); if(this.scalpSignals.length>200)this.scalpSignals.pop() } catch{}
+        try { const s=JSON.parse(data); this.scalpSignals.unshift(s); if(this.scalpSignals.length>200)this.scalpSignals.pop(); this.loadScalpTrades() } catch{}
       } else if (key === 'fadeSig') {
-        try { const s=JSON.parse(data); this.fadeSignals.unshift(s); if(this.fadeSignals.length>200)this.fadeSignals.pop() } catch{}
+        try { const s=JSON.parse(data); this.fadeSignals.unshift(s); if(this.fadeSignals.length>200)this.fadeSignals.pop(); this.loadFadeTrades() } catch{}
       } else if (key === 'yaobiCand') {
         try {
           const msg=JSON.parse(data)
@@ -1399,6 +1520,20 @@ function app() {
     async clearScalpSignals() {
       await fetch('/api/scalp/signals',{method:'DELETE'}); this.scalpSignals=[]; this.showToast('✅ 超短线信号已清空')
     },
+    async loadScalpTrades() {
+      try {
+        const d = await(await fetch('/api/scalp/trades?limit=200')).json()
+        this.scalpTrades    = d.trades    || []
+        this.scalpTotalPnl  = d.total_pnl || 0
+        this.scalpWinRate   = d.win_rate  || 0
+        this.scalpTradeTotal = d.total    || 0
+      } catch{}
+    },
+    async clearScalpTrades() {
+      await fetch('/api/scalp/trades',{method:'DELETE'})
+      this.scalpTrades=[]; this.scalpTotalPnl=0; this.scalpWinRate=0; this.scalpTradeTotal=0
+      this.showToast('✅ 历史成交已清空')
+    },
     async loadScalpPositions() {
       if (!this.scalpRunning) return
       try { const d=await(await fetch('/api/scalp/positions')).json(); this.scalpPositions=d.positions||{} } catch{}
@@ -1457,6 +1592,20 @@ function app() {
     },
     async clearFadeSignals() {
       await fetch('/api/fade/signals',{method:'DELETE'}); this.fadeSignals=[]; this.showToast('✅ 做空信号已清空')
+    },
+    async loadFadeTrades() {
+      try {
+        const d = await(await fetch('/api/fade/trades?limit=200')).json()
+        this.fadeTrades    = d.trades    || []
+        this.fadeTotalPnl  = d.total_pnl || 0
+        this.fadeWinRate   = d.win_rate  || 0
+        this.fadeTradeTotal = d.total    || 0
+      } catch{}
+    },
+    async clearFadeTrades() {
+      await fetch('/api/fade/trades',{method:'DELETE'})
+      this.fadeTrades=[]; this.fadeTotalPnl=0; this.fadeWinRate=0; this.fadeTradeTotal=0
+      this.showToast('✅ 历史成交已清空')
     },
     async loadFadePositions() {
       if (!this.fadeRunning) return

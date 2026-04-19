@@ -11,7 +11,7 @@ from datetime import datetime
 import aiohttp
 
 from config import config_manager
-from signals import add_scalp_signal, set_scalp_position
+from signals import add_scalp_signal, set_scalp_position, add_scalp_trade
 from trader import BinanceTrader
 
 logger = logging.getLogger("bot_scalp")
@@ -424,6 +424,25 @@ class BinanceScalpBot:
 
     # ─── TP / SL 实时检查 ──────────────────────────────────────────────────────
 
+    def _record_scalp_trade(self, pos, exit_price: float, close_reason: str, extra_pnl: float = 0.0) -> None:
+        total_pnl = pos.realized_pnl + extra_pnl
+        pnl_pct   = total_pnl / (pos.entry_price * pos.quantity / self.cfg.get("SCALP_LEVERAGE", 10)) * 100 \
+                    if pos.entry_price > 0 and pos.quantity > 0 else 0.0
+        add_scalp_trade({
+            "symbol":       pos.symbol,
+            "direction":    pos.direction,
+            "entry_price":  round(pos.entry_price, 8),
+            "exit_price":   round(exit_price, 8),
+            "entry_time":   pos.entry_time,
+            "exit_time":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "pnl_usdt":     round(total_pnl, 4),
+            "pnl_pct":      round(pnl_pct, 2),
+            "close_reason": close_reason,
+            "paper":        pos.paper,
+            "leverage":     self.cfg.get("SCALP_LEVERAGE", 10),
+            "quantity":     round(pos.quantity, 6),
+        })
+
     async def _check_tp_sl(self, symbol: str, price: float) -> None:
         pos = self.open_positions.get(symbol)
         if not pos:
@@ -470,13 +489,14 @@ class BinanceScalpBot:
         elif pos.tp1_hit and not pos.tp2_hit and _tp_hit(pos.tp2_price):
             pos.tp2_hit = True
             qty = pos.quantity * tp2_ratio
+            tp2_pnl = qty * abs(price - pos.entry_price)
             if is_paper:
                 pos.quantity_remaining -= qty
-                pos.realized_pnl += qty * abs(price - pos.entry_price)
+                pos.realized_pnl += tp2_pnl
             elif auto:
                 await self.trader.place_market_order(symbol, exit_s, qty)
                 pos.quantity_remaining -= qty
-                pos.realized_pnl += qty * abs(price - pos.entry_price)
+                pos.realized_pnl += tp2_pnl
                 if pos.quantity_remaining > 0:
                     activ = price * (1 - trail_pct / 200) if pos.direction == "LONG" \
                             else price * (1 + trail_pct / 200)
@@ -486,6 +506,7 @@ class BinanceScalpBot:
             pct = abs(price - pos.entry_price) / pos.entry_price * 100
             logger.info("⚡ [%s] %sTP2 命中 @ %.6f (+%.2f%%) | 余仓追踪止损",
                         symbol, tag, price, pct)
+            self._record_scalp_trade(pos, price, "TP2", tp2_pnl)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
             return
@@ -493,7 +514,13 @@ class BinanceScalpBot:
         sl_crossed = (pos.direction == "LONG"  and price <= pos.sl_price * 0.999) or \
                      (pos.direction == "SHORT" and price >= pos.sl_price * 1.001)
         if sl_crossed and symbol in self.open_positions:
-            logger.info("⚡ [%s] %sSL 触发 @ %.6f", symbol, tag, price)
+            sl_pnl = pos.quantity_remaining * (
+                (price - pos.entry_price) if pos.direction == "LONG"
+                else (pos.entry_price - price)
+            )
+            reason = "SL_保本" if pos.tp1_hit else "SL"
+            logger.info("⚡ [%s] %s%s 触发 @ %.6f", symbol, tag, reason, price)
+            self._record_scalp_trade(pos, price, reason, sl_pnl)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
 
