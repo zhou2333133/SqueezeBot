@@ -43,6 +43,11 @@
   .tab-off:hover { color:#9ca3af; background:#10102a; }
   .score-bar-bg { background:#0e1a14; border-radius:6px; overflow:hidden; height:6px; }
   .score-bar-fill { height:100%; border-radius:6px; transition:width .6s cubic-bezier(.4,0,.2,1); }
+  .param-desc { font-size:10.5px; color:#4b5563; line-height:1.4; margin:2px 0 4px; }
+  .section-hd { font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; padding-top:4px; color:#1d4ed8; opacity:.85; }
+  .section-hd-g { color:#065f46; }
+  .section-hd-p { color:#6d28d9; }
+  .stat-card { background:linear-gradient(135deg,#0c0c1e 60%,#0e0e28); }
   .source-chip { display:inline-block; padding:1px 7px; border-radius:10px; font-size:10px; margin:1px; }
   .sc-gecko   { background:rgba(139,92,246,.2); color:#a78bfa; }
   .sc-dex     { background:rgba(20,184,166,.2); color:#2dd4bf; }
@@ -98,77 +103,183 @@
 <!-- ═══════════ SWING TAB ════════════════════════════════════════════════════ -->
 <div x-show="mode==='swing'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
 
-  <!-- Stats -->
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
-    <template x-for="s in swingStats" :key="s.label">
-      <div class="card p-4">
-        <div class="text-xs text-gray-500 uppercase tracking-wider mb-1" x-text="s.label"></div>
-        <div class="text-2xl font-bold" :class="s.color" x-text="s.value"></div>
-        <div class="text-xs text-gray-600 mt-0.5" x-show="s.sub" x-text="s.sub"></div>
+  <!-- Stats + Control Bar -->
+  <div class="card glow-blue px-5 py-4 flex flex-wrap items-center gap-4 mb-5">
+    <div class="flex items-center gap-3 flex-1 min-w-0">
+      <span class="text-blue-400 font-bold text-sm">📊 中线策略</span>
+      <span class="text-xs text-gray-600 border border-[#1c1c38] rounded px-2 py-0.5"
+        x-text="'扫描间隔 '+(cfg.INTERVAL_MINUTES??5)+' min'"></span>
+      <span class="text-xs px-2 py-0.5 rounded"
+        :class="cfg.AUTO_TRADE_ENABLED?'bg-green-900/40 text-green-400':'bg-gray-800 text-gray-500'"
+        x-text="cfg.AUTO_TRADE_ENABLED?'🤖 自动交易':'手动模式'"></span>
+      <span class="text-xs px-2 py-0.5 rounded bg-cyan-900/30 text-cyan-400" x-show="cfg.SWING_PAPER_TRADE">📋 模拟仓开启</span>
+    </div>
+    <div class="flex flex-wrap gap-4">
+      <div class="text-center">
+        <div class="text-lg font-bold text-blue-400" x-text="swingSignals.length"></div>
+        <div class="text-[10px] text-gray-600">累计信号</div>
       </div>
-    </template>
+      <div class="text-center">
+        <div class="text-lg font-bold text-yellow-400" x-text="cfg.AI_AGENT_SCORE_MIN??'—'"></div>
+        <div class="text-[10px] text-gray-600">AI最低分</div>
+      </div>
+      <div class="text-center">
+        <div class="text-lg font-bold" :class="swingPaperTotalPnl>=0?'text-green-400':'text-red-400'"
+          x-text="(swingPaperTotalPnl>=0?'+':'')+'$'+swingPaperTotalPnl.toFixed(2)"></div>
+        <div class="text-[10px] text-gray-600">模拟盈亏</div>
+      </div>
+      <div class="text-center">
+        <div class="text-lg font-bold text-violet-400" x-text="swingPaperWinRate+'%'"></div>
+        <div class="text-[10px] text-gray-600">模拟胜率</div>
+      </div>
+    </div>
   </div>
 
   <div class="grid grid-cols-12 gap-5">
 
     <!-- Settings col -->
-    <div class="col-span-12 lg:col-span-4 space-y-4">
+    <div class="col-span-12 lg:col-span-5 space-y-4">
 
       <div class="card glow-blue">
         <button @click="swingOpen=!swingOpen" class="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-blue-400">
           <span>⚙️ 中线策略参数</span>
           <span class="text-gray-600 text-xs" x-text="swingOpen?'▲':'▼'"></span>
         </button>
-        <div x-show="swingOpen" class="px-5 pb-5 space-y-4">
+        <div x-show="swingOpen" class="px-5 pb-5 space-y-3">
           <form @submit.prevent="saveSwingConfig()" id="swingForm">
 
-            <p class="text-xs text-gray-600 uppercase tracking-widest pt-1">基础设置</p>
-            <div class="grid grid-cols-2 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">扫描间隔 (min)</label>
-                <input class="inp mt-1" type="number" name="INTERVAL_MINUTES" :value="cfg.INTERVAL_MINUTES"></div>
-              <div><label class="text-xs text-gray-500">RSI 周期</label>
-                <input class="inp mt-1" type="number" name="RSI_PERIOD" :value="cfg.RSI_PERIOD"></div>
-              <div><label class="text-xs text-gray-500">RSI 超买上限</label>
-                <input class="inp mt-1" type="number" name="RSI_MAX_ENTRY" :value="cfg.RSI_MAX_ENTRY"></div>
-              <div><label class="text-xs text-gray-500">OI 激增倍数</label>
-                <input class="inp mt-1" type="number" step="0.1" name="OI_SURGE_RATIO" :value="cfg.OI_SURGE_RATIO"></div>
+            <!-- ── 基础扫描 ─────────────────────── -->
+            <p class="section-hd">基础扫描</p>
+            <div class="grid grid-cols-3 gap-3 mt-2">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">扫描间隔 (分钟)</label>
+                <div class="param-desc">每隔多少分钟扫描一次全市场。越小=响应快但API消耗多。建议5~15分钟。</div>
+                <input class="inp" type="number" name="INTERVAL_MINUTES" :value="cfg.INTERVAL_MINUTES">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">RSI 周期</label>
+                <div class="param-desc">计算RSI的K线数量。默认14，越小越灵敏，越大越稳定。</div>
+                <input class="inp" type="number" name="RSI_PERIOD" :value="cfg.RSI_PERIOD">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">RSI 超买上限</label>
+                <div class="param-desc">RSI超过此值时拒绝做多，防止追高。默认75，越低越保守。</div>
+                <input class="inp" type="number" name="RSI_MAX_ENTRY" :value="cfg.RSI_MAX_ENTRY">
+              </div>
             </div>
 
-            <p class="text-xs text-gray-600 uppercase tracking-widest mt-4 pt-1">交易参数</p>
-            <div class="grid grid-cols-2 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">杠杆</label>
-                <input class="inp mt-1" type="number" name="LEVERAGE" :value="cfg.LEVERAGE"></div>
-              <div><label class="text-xs text-gray-500">仓位 USDT</label>
-                <input class="inp mt-1" type="number" name="POSITION_SIZE_USDT" :value="cfg.POSITION_SIZE_USDT"></div>
-              <div><label class="text-xs text-gray-500">止损 %</label>
-                <input class="inp mt-1" type="number" step="0.1" name="STOP_LOSS_PERCENT" :value="cfg.STOP_LOSS_PERCENT"></div>
-              <div><label class="text-xs text-gray-500">止盈 %</label>
-                <input class="inp mt-1" type="number" step="0.1" name="TAKE_PROFIT_PERCENT" :value="cfg.TAKE_PROFIT_PERCENT"></div>
-              <div><label class="text-xs text-gray-500">TSL 激活 %</label>
-                <input class="inp mt-1" type="number" step="0.1" name="TSL_ACTIVATION_PERCENT" :value="cfg.TSL_ACTIVATION_PERCENT"></div>
-              <div><label class="text-xs text-gray-500">TSL 回调 %</label>
-                <input class="inp mt-1" type="number" step="0.1" name="TSL_CALLBACK_PERCENT" :value="cfg.TSL_CALLBACK_PERCENT"></div>
-              <div><label class="text-xs text-gray-500">AI 最低分</label>
-                <input class="inp mt-1" type="number" name="AI_AGENT_SCORE_MIN" :value="cfg.AI_AGENT_SCORE_MIN"></div>
-              <div><label class="text-xs text-gray-500">OI 下限 (USDT)</label>
-                <input class="inp mt-1" type="number" name="MIN_OI_USDT" :value="cfg.MIN_OI_USDT"></div>
+            <!-- ── 仓位 & 风控 ─────────────────── -->
+            <p class="section-hd mt-3">仓位 & 风控</p>
+            <div class="grid grid-cols-3 gap-3 mt-2">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">杠杆倍数</label>
+                <div class="param-desc">实际仓位 = 保证金 × 杠杆。中线建议5~10倍。</div>
+                <input class="inp" type="number" name="LEVERAGE" :value="cfg.LEVERAGE">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">保证金 USDT</label>
+                <div class="param-desc">每笔投入保证金，名义仓位 = 保证金 × 杠杆。</div>
+                <input class="inp" type="number" name="POSITION_SIZE_USDT" :value="cfg.POSITION_SIZE_USDT">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">AI 最低评分</label>
+                <div class="param-desc">综合评分低于此值的信号被过滤。0=关闭，建议60~85。</div>
+                <input class="inp" type="number" name="AI_AGENT_SCORE_MIN" :value="cfg.AI_AGENT_SCORE_MIN">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">止损 %</label>
+                <div class="param-desc">入场价亏损超过此%止损。中线建议3~8%，勿设太小。</div>
+                <input class="inp" type="number" step="0.1" name="STOP_LOSS_PERCENT" :value="cfg.STOP_LOSS_PERCENT">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">止盈目标 %</label>
+                <div class="param-desc">不开追踪止损时的固定止盈，建议设止损的1.5~2倍。</div>
+                <input class="inp" type="number" step="0.1" name="TAKE_PROFIT_PERCENT" :value="cfg.TAKE_PROFIT_PERCENT">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TSL 激活点 %</label>
+                <div class="param-desc">盈利达到此%时激活追踪止损。需开启「追踪止损」。</div>
+                <input class="inp" type="number" step="0.1" name="TSL_ACTIVATION_PERCENT" :value="cfg.TSL_ACTIVATION_PERCENT">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TSL 回调 %</label>
+                <div class="param-desc">激活后，价格从最高点回撤超过此%时平仓锁利。</div>
+                <input class="inp" type="number" step="0.1" name="TSL_CALLBACK_PERCENT" :value="cfg.TSL_CALLBACK_PERCENT">
+              </div>
             </div>
 
-            <p class="text-xs text-gray-600 uppercase tracking-widest mt-4 pt-1">过滤器</p>
-            <div class="grid grid-cols-2 gap-y-3 mt-2">
+            <!-- ── OI & 流量过滤 ───────────────── -->
+            <p class="section-hd mt-3">OI & 流量过滤</p>
+            <div class="grid grid-cols-3 gap-3 mt-2">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">OI 激增倍数</label>
+                <div class="param-desc">OI相比基准激增超过此倍才触发。1.5=增加50%。</div>
+                <input class="inp" type="number" step="0.1" name="OI_SURGE_RATIO" :value="cfg.OI_SURGE_RATIO">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">OI 下限 (USDT)</label>
+                <div class="param-desc">合约总持仓须超过此值，过滤流动性差的小币。建议5M~20M。</div>
+                <input class="inp" type="number" name="MIN_OI_USDT" :value="cfg.MIN_OI_USDT">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">OI 上限 (USDT)</label>
+                <div class="param-desc">过滤OI过大的品种（如BTC）。聚焦中小市值合约。</div>
+                <input class="inp" type="number" name="MAX_OI_USDT" :value="cfg.MAX_OI_USDT">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">资金流量比</label>
+                <div class="param-desc">净流入/OI比值须超过此值。0.05=流入≥OI的5%。</div>
+                <input class="inp" type="number" step="0.001" name="FLOW_OI_RATIO" :value="cfg.FLOW_OI_RATIO">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">大户多空比下限</label>
+                <div class="param-desc">大户多/空比须超过此值才做多。1.05=大户略偏多。</div>
+                <input class="inp" type="number" step="0.01" name="WHALE_LS_MIN" :value="cfg.WHALE_LS_MIN">
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">散户多空比上限</label>
+                <div class="param-desc">散户多/空比须低于此值。散户过多=危险，反向信号。</div>
+                <input class="inp" type="number" step="0.01" name="RETAIL_LS_MAX" :value="cfg.RETAIL_LS_MAX">
+              </div>
+            </div>
+
+            <!-- ── 资金费率反转（仅开关打开时显示）── -->
+            <div x-show="cfg.ENABLE_FUNDING_REVERSAL" x-transition>
+              <p class="section-hd-p section-hd mt-3">资金费率反转参数</p>
+              <div class="grid grid-cols-2 gap-3 mt-2">
+                <div>
+                  <label class="text-xs text-gray-400 font-medium">OI 激增 %（FR）</label>
+                  <div class="param-desc">FR反转信号要求短时间内OI增加此%。15=增加15%代表新资金涌入。</div>
+                  <input class="inp" type="number" step="1" name="FR_OI_SURGE_PCT" :value="cfg.FR_OI_SURGE_PCT">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-400 font-medium">资金费率阈值</label>
+                  <div class="param-desc">资金费率低于此值（负数）时认为做空拥挤，触发反转。-0.001=-0.1%/8h。</div>
+                  <input class="inp" type="number" step="0.0001" name="FR_FUNDING_THRESHOLD" :value="cfg.FR_FUNDING_THRESHOLD">
+                </div>
+              </div>
+            </div>
+
+            <!-- ── 功能开关 ─────────────────────── -->
+            <p class="section-hd mt-3">功能开关</p>
+            <div class="grid grid-cols-2 gap-y-2 mt-2">
               <template x-for="f in swingFilters" :key="f.key">
-                <label class="flex items-center gap-2 cursor-pointer select-none">
-                  <label class="toggle">
+                <label class="flex items-start gap-2 cursor-pointer select-none">
+                  <label class="toggle mt-0.5 shrink-0">
                     <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$event.target.checked">
                     <span class="ttrack"></span>
                   </label>
-                  <span class="text-sm text-gray-300" x-text="f.label"></span>
+                  <div>
+                    <div class="text-sm text-gray-300" x-text="f.label"></div>
+                    <div class="param-desc" x-text="f.desc||''"></div>
+                  </div>
                 </label>
               </template>
             </div>
 
-            <p class="text-xs text-gray-600 uppercase tracking-widest mt-4 pt-1">交易方向 & 控制</p>
-            <div class="grid grid-cols-3 gap-y-3 mt-2">
+            <!-- ── 交易方向 & 控制 ─────────────── -->
+            <p class="section-hd mt-3">交易方向 & 控制</p>
+            <div class="grid grid-cols-2 gap-y-2 mt-2">
               <template x-for="f in swingToggles" :key="f.key">
                 <label class="flex items-center gap-2 cursor-pointer select-none">
                   <label class="toggle">
@@ -180,7 +291,7 @@
               </template>
             </div>
 
-            <button type="submit" class="mt-5 w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
+            <button type="submit" class="mt-4 w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
               💾 保存中线参数
             </button>
           </form>
@@ -211,7 +322,7 @@
     </div><!-- end left col -->
 
     <!-- Right: Signals -->
-    <div class="col-span-12 lg:col-span-8">
+    <div class="col-span-12 lg:col-span-7">
       <div class="card h-full">
         <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
           <div class="flex items-center gap-2">
@@ -452,28 +563,40 @@
   </div>
 
   <!-- Stats -->
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">当前持仓</div>
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="card stat-card p-4 border-orange-900/20">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-orange-400 text-base">📌</span>
+        <span class="text-xs text-gray-500 uppercase tracking-wider">当前持仓</span>
+      </div>
       <div class="text-2xl font-bold text-orange-400" x-text="Object.keys(scalpPositions).length"></div>
-      <div class="text-xs text-gray-600 mt-0.5" x-text="'最大 '+cfg.SCALP_MAX_POSITIONS+' 个'"></div>
+      <div class="text-xs text-gray-600 mt-1" x-text="'最大 '+cfg.SCALP_MAX_POSITIONS+' 个 · 监控'+scalpSymbolCount+'币'"></div>
     </div>
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">历史成交</div>
+    <div class="card stat-card p-4">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-gray-400 text-base">📊</span>
+        <span class="text-xs text-gray-500 uppercase tracking-wider">历史成交</span>
+      </div>
       <div class="text-2xl font-bold text-white" x-text="scalpTradeTotal+'笔'"></div>
-      <div class="text-xs mt-0.5" :class="scalpWinRate>=50?'text-green-500':'text-red-500'" x-text="'胜率 '+scalpWinRate+'%'"></div>
+      <div class="text-xs mt-1" :class="scalpWinRate>=50?'text-green-500':'text-red-500'" x-text="'胜率 '+scalpWinRate+'%'"></div>
     </div>
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">累计盈亏</div>
+    <div class="card stat-card p-4">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-base" :class="scalpTotalPnl>=0?'text-green-400':'text-red-400'">💰</span>
+        <span class="text-xs text-gray-500 uppercase tracking-wider">累计盈亏</span>
+      </div>
       <div class="text-2xl font-bold" :class="scalpTotalPnl>=0?'text-green-400':'text-red-400'"
         x-text="(scalpTotalPnl>=0?'+':'')+scalpTotalPnl.toFixed(2)+' U'"></div>
-      <div class="text-xs text-gray-600 mt-0.5">已实现(含模拟)</div>
+      <div class="text-xs text-gray-600 mt-1">已实现(含模拟)</div>
     </div>
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">策略参数</div>
-      <div class="text-base font-bold text-orange-300"
+    <div class="card stat-card p-4">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-orange-300 text-base">⚡</span>
+        <span class="text-xs text-gray-500 uppercase tracking-wider">策略参数</span>
+      </div>
+      <div class="text-sm font-bold text-orange-300"
         x-text="'回调'+cfg.SCALP_PULLBACK_PCT+'% | 反转'+cfg.SCALP_MEAN_REVERT_PCT+'%'"></div>
-      <div class="text-xs text-gray-600 mt-0.5" x-text="'活跃振幅'+cfg.SCALP_ACTIVE_RANGE_PCT+'% | 监控'+scalpSymbolCount+'个'"></div>
+      <div class="text-xs text-gray-600 mt-1" x-text="'振幅阈值 '+cfg.SCALP_ACTIVE_RANGE_PCT+'%'"></div>
     </div>
   </div>
 
@@ -1663,15 +1786,15 @@ function app() {
     filteredCandidates: [],
 
     swingFilters: [
-      { key:'TA_CONFIRMATION_ENABLED',  label:'TA 确认' },
-      { key:'ENABLE_NEWS_FILTER',       label:'Surf 新闻' },
-      { key:'ENABLE_LIQ_FILTER',        label:'清算热图' },
-      { key:'ENABLE_MTF_FILTER',        label:'MTF 择时' },
-      { key:'ENABLE_OKX_FILTER',        label:'OKX链上' },
-      { key:'ENABLE_AI_AGENT',          label:'AI Agent' },
-      { key:'USE_TRAILING_STOP',        label:'追踪止损' },
-      { key:'USE_DYNAMIC_SL',           label:'动态止损' },
-      { key:'ENABLE_FUNDING_REVERSAL',  label:'资金费率反转' },
+      { key:'TA_CONFIRMATION_ENABLED', label:'TA 确认',     desc:'RSI/趋势等技术指标二次确认，过滤技术面弱势信号' },
+      { key:'ENABLE_NEWS_FILTER',      label:'Surf 新闻',   desc:'接入链上新闻情绪，正面消息增加做多权重' },
+      { key:'ENABLE_LIQ_FILTER',       label:'清算热图',    desc:'基于清算价格判断方向，做多需要空头被清算区域' },
+      { key:'ENABLE_MTF_FILTER',       label:'MTF 择时',    desc:'多时间框架过滤，确保大周期趋势方向一致' },
+      { key:'ENABLE_OKX_FILTER',       label:'OKX链上',     desc:'使用OKX合约基差和资金流向辅助判断' },
+      { key:'ENABLE_AI_AGENT',         label:'AI Agent',    desc:'AI综合评分，低于阈值的信号过滤掉' },
+      { key:'USE_TRAILING_STOP',       label:'追踪止损',    desc:'盈利达激活点后改用追踪止损，让利润奔跑' },
+      { key:'USE_DYNAMIC_SL',          label:'动态止损',    desc:'以近期高低点计算止损，更贴近市场结构' },
+      { key:'ENABLE_FUNDING_REVERSAL', label:'资金费率反转', desc:'扫描费率极负的合约，做多等待空头爆仓反转' },
     ],
     swingToggles: [
       { key:'ENABLE_LONG_STRATEGY',  label:'做多',   color:'text-green-400' },
@@ -1797,7 +1920,7 @@ function app() {
       const bk = ['AUTO_TRADE_ENABLED','ENABLE_LONG_STRATEGY','ENABLE_SHORT_STRATEGY',
         'TA_CONFIRMATION_ENABLED','ENABLE_NEWS_FILTER','ENABLE_LIQ_FILTER',
         'ENABLE_MTF_FILTER','ENABLE_OKX_FILTER','ENABLE_AI_AGENT','USE_TRAILING_STOP','USE_DYNAMIC_SL',
-        'ENABLE_FUNDING_REVERSAL']
+        'ENABLE_FUNDING_REVERSAL','SWING_PAPER_TRADE']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
