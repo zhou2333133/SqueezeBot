@@ -12,10 +12,12 @@ from fastapi.templating import Jinja2Templates
 import bot_state
 from config import config_manager, DATA_DIR
 from log_manager import log_queue, swing_log_queue, scalp_log_queue, fade_log_queue
+import signals as _signals_mod
 from signals import (
     signal_queue, signals_history,
     scalp_signal_queue, scalp_signals_history, scalp_positions, scalp_trade_history,
     fade_signal_queue, fade_signals_history, fade_positions, fade_trade_history,
+    swing_paper_positions, swing_paper_trade_history,
 )
 from scanner.candidates import (
     candidates_queue, get_sorted_candidates, clear_candidates, scan_status,
@@ -261,6 +263,49 @@ async def clear_scalp_paper_positions():
 async def get_scalp_symbols():
     syms = bot_state.scalp_bot.monitored_symbols if bot_state.scalp_bot else []
     return JSONResponse({"symbols": syms, "count": len(syms)})
+
+
+@app.get("/api/scalp/filter-stats")
+async def get_scalp_filter_stats():
+    return JSONResponse(_signals_mod.scalp_filter_stats or {})
+
+
+# ─── 中线模拟仓 ───────────────────────────────────────────────────────────────
+
+@app.get("/api/swing/paper/positions")
+async def get_swing_paper_positions():
+    total_pnl = sum(v.get("pnl_usdt", 0) for v in swing_paper_positions.values() if v.get("status") != "open")
+    return JSONResponse({
+        "positions": dict(swing_paper_positions),
+        "count":     len(swing_paper_positions),
+        "total_pnl": round(total_pnl, 4),
+    })
+
+
+@app.delete("/api/swing/paper/positions")
+async def clear_swing_paper_positions():
+    swing_paper_positions.clear()
+    logger.info("📋 中线模拟仓位已全部清除")
+    return JSONResponse({"status": "success", "message": "✅ 中线模拟仓位已清除"})
+
+
+@app.get("/api/swing/paper/trades")
+async def get_swing_paper_trades():
+    trades = swing_paper_trade_history[::-1]
+    wins   = sum(1 for t in swing_paper_trade_history if t.get("pnl_usdt", 0) > 0)
+    total  = len(swing_paper_trade_history)
+    return JSONResponse({
+        "trades":    trades,
+        "total":     total,
+        "total_pnl": round(sum(t.get("pnl_usdt", 0) for t in swing_paper_trade_history), 4),
+        "win_rate":  round(wins / total * 100, 1) if total > 0 else 0,
+    })
+
+
+@app.delete("/api/swing/paper/trades")
+async def clear_swing_paper_trades():
+    swing_paper_trade_history.clear()
+    return JSONResponse({"status": "success", "message": "✅ 中线模拟历史已清除"})
 
 
 # ─── WebSocket ────────────────────────────────────────────────────────────────

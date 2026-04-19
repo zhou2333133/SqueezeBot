@@ -91,6 +91,7 @@ class ConfigManager:
             "RSI_MAX_ENTRY":           75,
             "INTERVAL_MINUTES":        5,
             "AUTO_TRADE_ENABLED":      False,
+            "SWING_PAPER_TRADE":       False,
             "ENABLE_LONG_STRATEGY":    True,
             "ENABLE_SHORT_STRATEGY":   False,
             "LEVERAGE":                5,

@@ -13,6 +13,7 @@ import aiohttp
 
 from config import config_manager
 from market_hub import hub
+import signals as _signals_mod
 from signals import add_scalp_signal, set_scalp_position, add_scalp_trade
 from trader import BinanceTrader
 
@@ -801,6 +802,25 @@ class BinanceScalpBot:
             f"  ────────────────────────────────────────────────────────────",
         ]
         logger.info("\n".join(lines))
+        # 共享到 signals 模块供 Web 面板读取
+        _signals_mod.scalp_filter_stats = {
+            "checked":    s["checked"],
+            "no_active":  s["no_active"],
+            "no_signal":  s["no_signal"],
+            "btc_guard":  s["btc_guard"],
+            "taker":      s["taker"],
+            "vwap":       s["vwap"],
+            "hub":        s["hub"],
+            "passed":     s["passed"],
+            "bottleneck": bottleneck,
+            "cfg_active_pct":   cfg.get("SCALP_ACTIVE_RANGE_PCT", 3),
+            "cfg_pullback_pct": cfg.get("SCALP_PULLBACK_PCT", 1.5),
+            "cfg_revert_pct":   cfg.get("SCALP_MEAN_REVERT_PCT", 4.5),
+            "cfg_btc_guard":    cfg.get("BTC_GUARD_PCT", 2),
+            "cfg_taker_min":    cfg.get("SCALP_TAKER_RATIO_MIN", 0.55),
+            "cfg_vwap_dev":     cfg.get("SCALP_VWAP_MAX_DEV", 3),
+            "updated_at":       time.time(),
+        }
         for k in self._fstat:
             self._fstat[k] = 0
 

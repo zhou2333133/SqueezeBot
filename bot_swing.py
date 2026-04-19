@@ -9,7 +9,10 @@ import pandas as pd
 from config import config_manager, DATA_DIR, MAX_CONCURRENT_REQUESTS, SURF_API_KEY
 from market_hub import hub
 from okx_client import OKXOnChainClient
-from signals import add_signal, signals_history
+from signals import (
+    add_signal, signals_history,
+    set_swing_paper_position, add_swing_paper_trade, swing_paper_positions,
+)
 from trader import BinanceTrader
 
 logger = logging.getLogger(__name__)
@@ -510,6 +513,93 @@ class BinanceSqueezeBot:
         add_signal(signal)
         logger.info("🚨 [%s] 信号已发出 (方向: %s, AI评分: %d)", symbol, signal_direction, ai_score)
 
+        # ── 中线模拟仓（AUTO_TRADE_ENABLED=False 且 SWING_PAPER_TRADE=True 时开仓）
+        if not cfg.get("AUTO_TRADE_ENABLED", False) and cfg.get("SWING_PAPER_TRADE", False):
+            if symbol not in swing_paper_positions:
+                sl_mult = (1 - cfg["STOP_LOSS_PERCENT"] / 100) if signal_direction == "LONG" \
+                          else (1 + cfg["STOP_LOSS_PERCENT"] / 100)
+                tp_mult = (1 + cfg["TAKE_PROFIT_PERCENT"] / 100) if signal_direction == "LONG" \
+                          else (1 - cfg["TAKE_PROFIT_PERCENT"] / 100)
+                paper_pos = {
+                    "symbol":        symbol,
+                    "direction":     signal_direction,
+                    "entry_price":   mark_price,
+                    "sl_price":      round(mark_price * sl_mult, 6),
+                    "tp_price":      round(mark_price * tp_mult, 6),
+                    "entry_time":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "leverage":      cfg.get("LEVERAGE", 5),
+                    "position_usdt": cfg.get("POSITION_SIZE_USDT", 20.0),
+                    "status":        "open",
+                    "current_price": mark_price,
+                    "unrealized_pct": 0.0,
+                }
+                set_swing_paper_position(symbol, paper_pos)
+                logger.info("📋 [%s] 中线模拟仓已开 方向:%s 入场:%.4f SL:%.4f TP:%.4f",
+                            symbol, signal_direction, mark_price,
+                            paper_pos["sl_price"], paper_pos["tp_price"])
+
+    # ─── 中线模拟仓监控 ────────────────────────────────────────────────────────
+
+    def _check_paper_positions(self, ticker_dict: dict) -> None:
+        """每轮扫描时检查模拟仓是否触及 SL / TP"""
+        for sym, pos in list(swing_paper_positions.items()):
+            if pos.get("status") != "open":
+                continue
+            full_sym = sym if sym.endswith("USDT") else sym + "USDT"
+            t = ticker_dict.get(full_sym, {})
+            price = float(t.get("lastPrice", 0) or 0)
+            if price <= 0:
+                continue
+            direction   = pos["direction"]
+            entry_price = pos["entry_price"]
+            sl_price    = pos["sl_price"]
+            tp_price    = pos["tp_price"]
+            leverage    = pos.get("leverage", 5)
+            usdt        = pos.get("position_usdt", 20.0)
+
+            if direction == "LONG":
+                unreal_pct = (price - entry_price) / entry_price * 100
+                hit_sl = price <= sl_price
+                hit_tp = price >= tp_price
+            else:
+                unreal_pct = (entry_price - price) / entry_price * 100
+                hit_sl = price >= sl_price
+                hit_tp = price <= tp_price
+
+            pos["current_price"]   = price
+            pos["unrealized_pct"]  = round(unreal_pct, 2)
+
+            if hit_tp or hit_sl:
+                outcome    = "tp" if hit_tp else "sl"
+                pnl_pct    = unreal_pct * leverage
+                pnl_usdt   = usdt * pnl_pct / 100
+                pos["status"]     = "tp_hit" if hit_tp else "sl_hit"
+                pos["exit_price"] = price
+                pos["pnl_pct"]    = round(pnl_pct, 2)
+                pos["pnl_usdt"]   = round(pnl_usdt, 4)
+                trade = {
+                    "symbol":      sym,
+                    "direction":   direction,
+                    "entry_price": entry_price,
+                    "exit_price":  price,
+                    "entry_time":  pos["entry_time"],
+                    "exit_time":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "outcome":     outcome,
+                    "pnl_pct":     round(pnl_pct, 2),
+                    "pnl_usdt":    round(pnl_usdt, 4),
+                    "leverage":    leverage,
+                }
+                add_swing_paper_trade(trade)
+                set_swing_paper_position(sym, None)
+                icon = "✅" if hit_tp else "❌"
+                logger.info(
+                    "%s [%s] 中线模拟仓平仓 方向:%s %s 入:%.4f 出:%.4f P&L:%.2f%% ($%.2f)",
+                    icon, sym, direction, "TP命中" if hit_tp else "SL止损",
+                    entry_price, price, pnl_pct, pnl_usdt,
+                )
+            else:
+                set_swing_paper_position(sym, pos)
+
     # ─── 主循环 ────────────────────────────────────────────────────────────
 
     async def run(self) -> None:
@@ -533,6 +623,9 @@ class BinanceSqueezeBot:
                         ticker_dict  = {x["symbol"]: x for x in ticker_data  if x["symbol"].endswith("USDT")}
                         btc_change   = float(ticker_dict.get("BTCUSDT", {}).get("priceChangePercent", 0))
                         symbols      = [s for s in premium_dict if s != "BTCUSDT"]
+
+                        # 每轮扫描时检查中线模拟仓是否触及SL/TP
+                        self._check_paper_positions(ticker_dict)
 
                         tasks = [
                             self.process_symbol(

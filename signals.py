@@ -28,6 +28,13 @@ fade_trade_history: list[dict] = []
 MAX_SIGNALS = 200
 MAX_TRADES  = 500
 
+# ── 超短线过滤统计（实时共享，web.py 读取）────────────────────────────────────
+scalp_filter_stats: dict = {}
+
+# ── 中线模拟仓位 ──────────────────────────────────────────────────────────────
+swing_paper_positions: dict[str, dict] = {}
+swing_paper_trade_history: list[dict]  = []
+
 
 def _push(q: std_queue.Queue, msg: str) -> None:
     if q.full():
@@ -95,3 +102,16 @@ def add_fade_trade(trade: dict) -> None:
     fade_trade_history.append(trade)
     if len(fade_trade_history) > MAX_TRADES:
         fade_trade_history.pop(0)
+
+
+def set_swing_paper_position(symbol: str, pos: dict | None) -> None:
+    if pos is None:
+        swing_paper_positions.pop(symbol, None)
+    else:
+        swing_paper_positions[symbol] = pos
+
+
+def add_swing_paper_trade(trade: dict) -> None:
+    swing_paper_trade_history.append(trade)
+    if len(swing_paper_trade_history) > MAX_TRADES:
+        swing_paper_trade_history.pop(0)

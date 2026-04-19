@@ -328,6 +328,79 @@
     </div>
   </div>
 
+  <!-- Swing Paper Positions -->
+  <div class="card" style="border-color:rgba(96,165,250,.15)" x-show="Object.keys(swingPaperPositions).length>0 || swingPaperTrades.length>0">
+    <div class="px-5 py-3 border-b border-blue-900/30 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-semibold text-blue-300">📋 中线模拟仓</span>
+        <span class="text-xs bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded-full"
+          x-text="Object.keys(swingPaperPositions).length+' 持仓'"></span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-blue-700">模拟P&L:
+          <span class="font-bold font-mono" :class="swingPaperTotalPnl>=0?'text-green-400':'text-red-400'"
+            x-text="(swingPaperTotalPnl>=0?'+':'')+'$'+swingPaperTotalPnl.toFixed(2)"></span>
+          <span class="text-gray-600 ml-1" x-text="'胜率'+swingPaperWinRate+'%'"></span>
+        </span>
+        <button @click="clearSwingPaperPositions()" class="text-xs px-3 py-1 rounded-lg bg-blue-900/30 hover:bg-blue-800/40 text-blue-400 transition-colors">🗑 清除</button>
+      </div>
+    </div>
+    <!-- Open positions -->
+    <div class="p-4 space-y-2" x-show="Object.keys(swingPaperPositions).length>0">
+      <div class="text-xs text-gray-600 uppercase tracking-widest mb-2">持仓中</div>
+      <template x-for="[sym,pos] in Object.entries(swingPaperPositions)" :key="sym">
+        <div class="rounded-xl border border-blue-900/30 bg-[#040a18] p-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-white text-sm" x-text="pos.symbol"></span>
+              <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="pos.direction==='LONG'?'badge-long':'badge-short'"
+                x-text="pos.direction==='LONG'?'做多 ▲':'做空 ▼'"></span>
+              <span class="text-xs text-gray-600" x-text="pos.leverage+'x'"></span>
+            </div>
+            <div class="text-right">
+              <div class="font-bold text-sm" :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'"
+                x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
+              <div class="text-[10px] text-gray-600" x-text="pos.entry_time.slice(11,19)"></div>
+            </div>
+          </div>
+          <div class="mt-2 grid grid-cols-4 gap-x-3 text-xs text-gray-500">
+            <span>入场 <span class="text-gray-300 font-mono" x-text="Number(pos.entry_price).toFixed(4)"></span></span>
+            <span>现价 <span class="text-blue-300 font-mono" x-text="Number(pos.current_price||pos.entry_price).toFixed(4)"></span></span>
+            <span>止损 <span class="text-red-400 font-mono" x-text="Number(pos.sl_price).toFixed(4)"></span></span>
+            <span>止盈 <span class="text-green-400 font-mono" x-text="Number(pos.tp_price).toFixed(4)"></span></span>
+          </div>
+        </div>
+      </template>
+    </div>
+    <!-- Trade history -->
+    <div class="p-4 pt-0 space-y-1" x-show="swingPaperTrades.length>0">
+      <div class="text-xs text-gray-600 uppercase tracking-widest mb-2">历史成交 (最近10笔)</div>
+      <template x-for="(t,i) in swingPaperTrades.slice(0,10)" :key="i">
+        <div class="flex items-center justify-between text-xs rounded-lg px-3 py-1.5"
+          :class="t.outcome==='tp'?'bg-green-900/20':'bg-red-900/20'">
+          <div class="flex items-center gap-2">
+            <span x-text="t.outcome==='tp'?'✅':'❌'"></span>
+            <span class="font-bold text-white" x-text="t.symbol"></span>
+            <span :class="t.direction==='LONG'?'text-green-400':'text-red-400'" x-text="t.direction==='LONG'?'多':'空'"></span>
+          </div>
+          <div class="flex items-center gap-3 text-right">
+            <span class="text-gray-500" x-text="t.exit_time.slice(11,16)"></span>
+            <span class="font-bold" :class="t.pnl_usdt>=0?'text-green-400':'text-red-400'"
+              x-text="(t.pnl_usdt>=0?'+':'')+'$'+t.pnl_usdt.toFixed(2)+'('+t.pnl_pct.toFixed(1)+'%)'"></span>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- Swing Paper Trade toggle -->
+  <div class="card" x-show="!cfg.SWING_PAPER_TRADE && !cfg.AUTO_TRADE_ENABLED" style="border-color:rgba(96,165,250,.08)">
+    <div class="px-5 py-3 flex items-center justify-between">
+      <span class="text-xs text-gray-600">💡 开启「中线模拟仓」可在不真实交易的情况下追踪策略效果</span>
+      <button @click="quickToggleSwingPaper()" class="text-xs px-3 py-1.5 rounded-lg bg-blue-900/30 hover:bg-blue-700/40 text-blue-400 transition-colors">开启模拟仓</button>
+    </div>
+  </div>
+
   <!-- Swing Log -->
   <div class="card">
     <div class="flex items-center justify-between px-5 py-3 border-b border-[#1c1c38]">
@@ -530,6 +603,98 @@
 
     <!-- Right: Positions + Signals -->
     <div class="col-span-12 lg:col-span-7 space-y-4">
+
+      <!-- Filter Stats Panel -->
+      <div class="card" style="border-color:rgba(251,146,60,.15)" x-show="scalpFilterStats && scalpFilterStats.checked>0">
+        <div class="px-5 py-3 border-b border-orange-900/30 flex items-center justify-between">
+          <span class="text-sm font-semibold text-orange-300">⚡ 过滤统计 <span class="text-xs text-gray-600 font-normal ml-1">每5分钟刷新</span></span>
+          <span class="text-xs text-gray-600" x-text="scalpFilterStats.updated_at?new Date(scalpFilterStats.updated_at*1000).toLocaleTimeString():''"></span>
+        </div>
+        <div class="p-4" x-show="scalpFilterStats.checked>0">
+          <div class="grid grid-cols-4 gap-2 mb-3">
+            <div class="text-center">
+              <div class="text-lg font-bold text-white" x-text="scalpFilterStats.checked??0"></div>
+              <div class="text-[10px] text-gray-600">总检测</div>
+            </div>
+            <div class="text-center">
+              <div class="text-lg font-bold" :class="(scalpFilterStats.no_active/Math.max(scalpFilterStats.checked,1)*100)>50?'text-red-400':'text-yellow-400'"
+                x-text="(scalpFilterStats.no_active/Math.max(scalpFilterStats.checked,1)*100).toFixed(0)+'%'"></div>
+              <div class="text-[10px] text-gray-600">振幅不足</div>
+            </div>
+            <div class="text-center">
+              <div class="text-lg font-bold" :class="(scalpFilterStats.no_signal/Math.max(scalpFilterStats.checked,1)*100)>30?'text-red-400':'text-yellow-400'"
+                x-text="(scalpFilterStats.no_signal/Math.max(scalpFilterStats.checked,1)*100).toFixed(0)+'%'"></div>
+              <div class="text-[10px] text-gray-600">无信号</div>
+            </div>
+            <div class="text-center">
+              <div class="text-lg font-bold" :class="scalpFilterStats.passed>0?'text-green-400':'text-gray-600'"
+                x-text="scalpFilterStats.passed??0"></div>
+              <div class="text-[10px] text-gray-600">通过开仓</div>
+            </div>
+          </div>
+          <div class="space-y-1.5 text-xs">
+            <!-- Active range bar -->
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500 w-20 shrink-0">振幅不足</span>
+              <div class="flex-1 h-2 bg-[#1a1a30] rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all"
+                  :class="scalpFilterStats.bottleneck==='no_active'?'bg-red-500':'bg-orange-700/60'"
+                  :style="'width:'+Math.min((scalpFilterStats.no_active/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+              </div>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.no_active"></span>
+              <span x-show="scalpFilterStats.bottleneck==='no_active'" class="text-red-400 font-bold">◄主瓶颈</span>
+            </div>
+            <!-- No signal bar -->
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500 w-20 shrink-0">无入场信号</span>
+              <div class="flex-1 h-2 bg-[#1a1a30] rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all"
+                  :class="scalpFilterStats.bottleneck==='no_signal'?'bg-red-500':'bg-orange-700/60'"
+                  :style="'width:'+Math.min((scalpFilterStats.no_signal/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+              </div>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.no_signal"></span>
+              <span x-show="scalpFilterStats.bottleneck==='no_signal'" class="text-red-400 font-bold">◄主瓶颈</span>
+            </div>
+            <!-- BTC guard / Taker / VWAP / Hub -->
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500 w-20 shrink-0">BTC大盘</span>
+              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
+                <div class="h-full bg-blue-700/60 rounded-full" :style="'width:'+Math.min((scalpFilterStats.btc_guard/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+              </div>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.btc_guard"></span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500 w-20 shrink-0">Taker比例</span>
+              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
+                <div class="h-full bg-blue-700/60 rounded-full" :style="'width:'+Math.min((scalpFilterStats.taker/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+              </div>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.taker"></span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500 w-20 shrink-0">VWAP追高</span>
+              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
+                <div class="h-full bg-blue-700/60 rounded-full" :style="'width:'+Math.min((scalpFilterStats.vwap/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+              </div>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.vwap"></span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500 w-20 shrink-0">Hub市场</span>
+              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
+                <div class="h-full bg-blue-700/60 rounded-full" :style="'width:'+Math.min((scalpFilterStats.hub/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+              </div>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.hub"></span>
+            </div>
+          </div>
+          <!-- Bottleneck tip -->
+          <div class="mt-2 p-2 rounded-lg bg-[#0e0a05] text-xs" x-show="scalpFilterStats.bottleneck">
+            <span class="text-orange-400 font-semibold">💡 调参建议: </span>
+            <span x-show="scalpFilterStats.bottleneck==='no_active'" class="text-gray-300"
+              x-text="'振幅不足是主瓶颈 → 降低「活跃振幅」(当前'+scalpFilterStats.cfg_active_pct+'%)'"></span>
+            <span x-show="scalpFilterStats.bottleneck==='no_signal'" class="text-gray-300"
+              x-text="'无入场信号是主瓶颈 → 降低「回调阈值」(当前'+scalpFilterStats.cfg_pullback_pct+'%) 或「反转阈值」(当前'+scalpFilterStats.cfg_revert_pct+'%)'"></span>
+          </div>
+        </div>
+      </div>
 
       <!-- Real Open Positions -->
       <div class="card" x-show="Object.values(scalpPositions).some(p=>!p.paper)">
@@ -1480,6 +1645,9 @@ function app() {
     scalpSignals: [], scalpLogs: [], scalpOpen: true,
     scalpPositions: {}, scalpRunning: false, scalpSymbolCount: 0,
     scalpTrades: [], scalpTotalPnl: 0, scalpWinRate: 0, scalpTradeTotal: 0,
+    scalpFilterStats: {},
+
+    swingPaperPositions: {}, swingPaperTrades: [], swingPaperTotalPnl: 0, swingPaperWinRate: 0,
 
     fadeSignals: [], fadeLogs: [], fadeOpen: true,
     fadePositions: {}, fadeRunning: false,
@@ -1509,6 +1677,7 @@ function app() {
       { key:'ENABLE_LONG_STRATEGY',  label:'做多',   color:'text-green-400' },
       { key:'ENABLE_SHORT_STRATEGY', label:'做空',   color:'text-red-400'   },
       { key:'AUTO_TRADE_ENABLED',    label:'自动交易', color:'text-blue-400' },
+      { key:'SWING_PAPER_TRADE',     label:'模拟仓',  color:'text-cyan-400'  },
     ],
     scalpToggles: [
       { key:'SCALP_ENABLE_LONG',  label:'做多',   color:'text-green-400'  },
@@ -1552,6 +1721,10 @@ function app() {
       setInterval(() => this.pollScalpStatus(), 5000)
       setInterval(() => this.pollFadeStatus(), 5000)
       setInterval(() => this.pollYaobiStatus(), 8000)
+      setInterval(() => this.loadScalpFilterStats(), 30000)
+      setInterval(() => this.loadSwingPaper(), 10000)
+      this.loadScalpFilterStats()
+      this.loadSwingPaper()
     },
 
     startClock() {
@@ -1676,6 +1849,37 @@ function app() {
     async loadScalpPositions() {
       if (!this.scalpRunning) return
       try { const d=await(await fetch('/api/scalp/positions')).json(); this.scalpPositions=d.positions||{} } catch{}
+    },
+    async loadScalpFilterStats() {
+      try { const d=await(await fetch('/api/scalp/filter-stats')).json(); this.scalpFilterStats=d } catch{}
+    },
+    async loadSwingPaper() {
+      try {
+        const [pd, td] = await Promise.all([
+          fetch('/api/swing/paper/positions').then(r=>r.json()),
+          fetch('/api/swing/paper/trades').then(r=>r.json()),
+        ])
+        this.swingPaperPositions = pd.positions||{}
+        this.swingPaperTrades    = td.trades||[]
+        this.swingPaperTotalPnl  = td.total_pnl||0
+        this.swingPaperWinRate   = td.win_rate||0
+      } catch{}
+    },
+    async clearSwingPaperPositions() {
+      try {
+        const d=await(await fetch('/api/swing/paper/positions',{method:'DELETE'})).json()
+        await fetch('/api/swing/paper/trades',{method:'DELETE'})
+        this.showToast(d.message, d.status==='success'?'success':'error')
+        await this.loadSwingPaper()
+      } catch(e){ this.showToast('❌ 清除失败: '+e,'error') }
+    },
+    async quickToggleSwingPaper() {
+      this.cfg.SWING_PAPER_TRADE = true
+      const fd = new FormData(); fd.set('SWING_PAPER_TRADE','true')
+      try {
+        await fetch('/api/config',{method:'POST',body:fd})
+        this.showToast('✅ 中线模拟仓已开启，下次信号触发时自动建仓','success')
+      } catch(e){ this.showToast('❌ 保存失败: '+e,'error') }
     },
     async clearPaperPositions() {
       try {
