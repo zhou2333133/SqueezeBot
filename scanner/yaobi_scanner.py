@@ -21,6 +21,7 @@ from scanner.sources.dexscreener import (
 )
 from scanner.sources.okx_market import get_token_price_info
 from scanner.sources.binance_square import fetch_hot_posts, extract_ticker_mentions
+from scanner.sources.binance_futures import scan_futures_oi
 from scanner.obsidian import (
     init_rulebook, write_daily_candidates, write_daily_digest,
     write_square_archive, write_token_doc,
@@ -108,6 +109,57 @@ class YaobiScanner:
                 "count": dex_count, "last_run": start.strftime("%H:%M"),
             }
             logger.info("🔍 DEX Screener: %d 个项目", dex_count)
+
+            # ── 3.5 Binance Futures OI 扫描 ──────────────────────────────────
+            try:
+                top_n = int(config_manager.settings.get("YAOBI_FUTURES_TOP_N", 120))
+                futures_items = await scan_futures_oi(session, top_n=top_n)
+                fut_new = fut_enrich = 0
+                for item in futures_items:
+                    sym = item.get("symbol", "")
+                    if not sym:
+                        continue
+                    # Try to enrich existing candidate first
+                    existing = candidates.get(sym)
+                    if existing:
+                        existing.oi_change_24h_pct = item.get("oi_change_24h_pct", 0)
+                        existing.oi_acceleration   = item.get("oi_acceleration",   0)
+                        existing.oi_flat_days      = item.get("oi_flat_days",      0)
+                        existing.volume_ratio      = item.get("volume_ratio",      1)
+                        existing.whale_long_ratio  = item.get("whale_long_ratio",  0.5)
+                        existing.short_crowd_pct   = item.get("short_crowd_pct",  50)
+                        existing.category          = item.get("category",          "")
+                        existing.has_futures       = True
+                        if "binance_futures" not in existing.sources:
+                            existing.sources.append("binance_futures")
+                        fut_enrich += 1
+                    else:
+                        # Create new candidate from futures data
+                        from scanner.candidates import Candidate
+                        c = Candidate(
+                            symbol=sym,
+                            name=sym,
+                            price_usd=item.get("price_usd", 0),
+                            price_change_24h=item.get("price_change_24h", 0),
+                            has_futures=True,
+                            sources=["binance_futures"],
+                            oi_change_24h_pct=item.get("oi_change_24h_pct", 0),
+                            oi_acceleration=item.get("oi_acceleration",   0),
+                            oi_flat_days=item.get("oi_flat_days",      0),
+                            volume_ratio=item.get("volume_ratio",      1),
+                            whale_long_ratio=item.get("whale_long_ratio",  0.5),
+                            short_crowd_pct=item.get("short_crowd_pct",  50),
+                            category=item.get("category", ""),
+                            signals=item.get("signals", []),
+                        )
+                        candidates[sym] = c
+                        fut_new += 1
+                scan_status["sources"]["binance_futures"] = {
+                    "count": len(futures_items), "last_run": start.strftime("%H:%M"),
+                }
+                logger.info("🔍 合约OI: %d 个信号 (新增%d 补充%d)", len(futures_items), fut_new, fut_enrich)
+            except Exception as e:
+                logger.warning("合约OI扫描失败: %s", e)
 
             # ── 4. Binance Square ────────────────────────────────────────────
             try:

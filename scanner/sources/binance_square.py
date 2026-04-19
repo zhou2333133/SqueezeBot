@@ -11,19 +11,24 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-# 尝试多个可能的端点
+# 尝试多个可能的端点（按成功率排序）
 _ENDPOINTS = [
+    "https://www.binance.com/bapi/square/v1/friendly/square/post/list",
+    "https://www.binance.com/bapi/feed/v1/friendly/feed/posts",
+    "https://www.binance.com/bapi/social/v2/public/square/post/list",
     "https://www.binance.com/bapi/social/v1/public/feed/community/post/list",
     "https://www.binance.com/bapi/social/v1/public/topic/home/posts",
     "https://www.binance.com/bapi/square/v1/public/square/homepage-stream",
 ]
 
 _HEADERS = {
-    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept":          "application/json",
+    "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept":          "application/json, text/plain, */*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     "Referer":         "https://www.binance.com/en/square",
     "Origin":          "https://www.binance.com",
+    "clienttype":      "web",
+    "lang":            "zh-CN",
 }
 
 _TICKER_RE = re.compile(r'\$([A-Z]{2,10})\b|\b([A-Z]{2,10})USDT\b', re.IGNORECASE)
@@ -44,23 +49,31 @@ async def fetch_hot_posts(
 
 
 async def _try_endpoint(session: aiohttp.ClientSession, url: str, rows: int) -> list[dict]:
-    for params in [
+    param_sets = [
+        {"page": 1, "rows": rows, "type": "recommend"},
+        {"page": 1, "size": rows, "type": "HOT"},
         {"page": 1, "rows": rows, "type": "hot"},
         {"page": 1, "rows": rows},
         {"cursor": "", "limit": rows},
-    ]:
+    ]
+    for params in param_sets:
         try:
             async with session.get(
                 url, params=params, headers=_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
+                logger.debug("币安广场 %s status=%d", url.split("/")[-1], resp.status)
                 if resp.status == 200:
-                    data = await resp.json()
+                    data = await resp.json(content_type=None)
                     posts = _extract_posts(data)
                     if posts:
                         return posts
+                elif resp.status not in (403, 404):
+                    # Log unexpected errors to help diagnose
+                    body = await resp.text()
+                    logger.debug("币安广场 %s %d: %s", url.split("/")[-1], resp.status, body[:200])
         except Exception as e:
-            logger.debug("币安广场端点 %s 异常: %s", url, e)
+            logger.debug("币安广场端点 %s 异常: %s", url.split("/")[-1], e)
     return []
 
 

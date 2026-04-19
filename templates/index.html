@@ -48,6 +48,7 @@
   .sc-dex     { background:rgba(20,184,166,.2); color:#2dd4bf; }
   .sc-square  { background:rgba(234,179,8,.2); color:#fbbf24; }
   .sc-okx     { background:rgba(59,130,246,.2); color:#93c5fd; }
+  .sc-futures { background:rgba(239,68,68,.15); color:#fca5a5; }
 </style>
 </head>
 <body x-data="app()" x-cloak>
@@ -1165,6 +1166,7 @@
             <label class="text-xs text-gray-500">数据源</label>
             <select x-model="yaobiFilter.source" class="inp mt-1 text-xs" style="border-color:#1a3a2a">
               <option value="">全部</option>
+              <option value="binance_futures">合约OI信号</option>
               <option value="gecko_trending">GeckoTerminal 趋势</option>
               <option value="gecko_new">GeckoTerminal 新盘</option>
               <option value="dex_boost">DEX Screener Boost</option>
@@ -1187,7 +1189,7 @@
     </div>
 
     <!-- Right: Candidate Cards -->
-    <div class="col-span-12 lg:col-span-8 space-y-3">
+    <div class="col-span-12 lg:col-span-8 space-y-4">
 
       <div class="flex items-center gap-3">
         <span class="text-sm text-gray-500" x-text="filteredCandidates.length+' 个候选'"></span>
@@ -1196,6 +1198,7 @@
           <option value="score">按评分</option>
           <option value="volume">按成交量</option>
           <option value="change">按涨幅</option>
+          <option value="oi">按OI变化</option>
           <option value="mentions">按广场热度</option>
         </select>
       </div>
@@ -1205,104 +1208,200 @@
         <div>暂无候选币种，启动扫描器后自动更新</div>
       </div>
 
-      <template x-for="(c,i) in filteredCandidates.slice(0, yaobiPage*20)" :key="c.key||c.symbol">
-        <div class="card slide-in p-4 hover:border-green-500/20 transition-all" style="border-color:rgba(74,222,128,.1)">
-          <div class="flex items-start justify-between gap-3">
-            <!-- Left: symbol + chain + sources -->
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-bold text-white text-base" x-text="c.symbol"></span>
-                <span x-show="c.chain" class="text-xs px-2 py-0.5 rounded-full bg-[#1c1c38] text-gray-400" x-text="c.chain.toUpperCase()"></span>
-                <span x-show="c.has_futures" class="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300">合约</span>
-                <span x-show="c.smart_money_signal" class="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">🐋 聪明钱</span>
-                <span x-show="c.gecko_trend_rank>0" class="text-xs px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300"
-                  x-text="'趋势#'+c.gecko_trend_rank"></span>
-              </div>
-              <!-- Source chips -->
-              <div class="mt-1 flex flex-wrap gap-0.5">
-                <template x-for="s in (c.sources||[])" :key="s">
-                  <span class="source-chip"
-                    :class="s.includes('gecko')?'sc-gecko':(s.includes('dex')?'sc-dex':(s.includes('square')?'sc-square':'sc-okx'))"
-                    x-text="s.replace('gecko_','').replace('dex_','dex ').replace('binance_','')"></span>
-                </template>
-              </div>
-            </div>
-
-            <!-- Right: score + price -->
-            <div class="text-right flex-shrink-0">
-              <div class="text-2xl font-black"
-                :class="c.score>=70?'text-green-400':(c.score>=50?'text-yellow-400':'text-gray-400')"
-                x-text="c.score"></div>
-              <div class="text-xs text-gray-600">/ 100</div>
-            </div>
+      <!-- ── 分类板块：启动预警 ─────────────────────────────────────────── -->
+      <template x-if="filteredCandidates.filter(c=>c.category==='启动预警').length>0">
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-sm font-bold text-red-400">🔴 启动预警</span>
+            <span class="text-xs text-red-400/60 bg-red-500/10 px-2 py-0.5 rounded-full"
+              x-text="filteredCandidates.filter(c=>c.category==='启动预警').length"></span>
+            <div class="flex-1 h-px" style="background:rgba(239,68,68,.2)"></div>
           </div>
-
-          <!-- Score Bar -->
-          <div class="mt-2 score-bar-bg">
-            <div class="score-bar-fill"
-              :style="'width:'+c.score+'%;background:'+(c.score>=70?'#4ade80':(c.score>=50?'#facc15':'#6b7280'))"></div>
-          </div>
-
-          <!-- Metrics Row -->
-          <div class="mt-3 grid grid-cols-3 sm:grid-cols-5 gap-x-4 gap-y-1.5 text-xs">
-            <div>
-              <span class="text-gray-600">价格</span>
-              <div class="text-gray-300 font-mono" x-text="c.price_usd>0?'$'+c.price_usd.toPrecision(4):'—'"></div>
-            </div>
-            <div>
-              <span class="text-gray-600">24H</span>
-              <div :class="c.price_change_24h>=0?'text-green-400':'text-red-400'" class="font-mono"
-                x-text="c.price_change_24h?(c.price_change_24h>0?'+':'')+c.price_change_24h.toFixed(1)+'%':'—'"></div>
-            </div>
-            <div>
-              <span class="text-gray-600">成交量</span>
-              <div class="text-gray-300" x-text="c.volume_24h>=1e6?'$'+(c.volume_24h/1e6).toFixed(1)+'M':(c.volume_24h>0?'$'+(c.volume_24h/1e3).toFixed(0)+'K':'—')"></div>
-            </div>
-            <div>
-              <span class="text-gray-600">流动性</span>
-              <div class="text-gray-300" x-text="c.liquidity>=1e6?'$'+(c.liquidity/1e6).toFixed(1)+'M':(c.liquidity>0?'$'+(c.liquidity/1e3).toFixed(0)+'K':'—')"></div>
-            </div>
-            <div>
-              <span class="text-gray-600">广场</span>
-              <div :class="c.square_mentions>=10?'text-yellow-400':'text-gray-400'"
-                x-text="c.square_mentions>0?c.square_mentions+'次提及':'—'"></div>
-            </div>
-          </div>
-
-          <!-- Score Breakdown + Signals (expandable) -->
-          <div class="mt-2">
-            <button @click="c._open=!c._open"
-              class="text-xs text-gray-600 hover:text-green-400 transition-colors">
-              <span x-text="c._open?'▲ 收起':'▼ 评分详情'"></span>
-            </button>
-            <div x-show="c._open" class="mt-2 space-y-1.5">
-              <div class="flex flex-wrap gap-1">
-                <template x-for="[k,v] in Object.entries(c.score_breakdown||{})" :key="k">
-                  <span class="text-xs px-2 py-0.5 rounded"
-                    :class="v>0?'bg-green-500/10 text-green-400':'bg-red-500/10 text-red-400'"
-                    x-text="k+' '+(v>0?'+':'')+v"></span>
-                </template>
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-2">
+            <template x-for="c in filteredCandidates.filter(c=>c.category==='启动预警').slice(0,12)" :key="c.key||c.symbol">
+              <div class="rounded-xl p-3 cursor-pointer hover:scale-[1.02] transition-all"
+                style="background:#1a0808;border:1px solid rgba(239,68,68,.25)"
+                @click="c._open=!c._open">
+                <div class="flex items-start justify-between">
+                  <span class="font-bold text-white text-sm" x-text="c.symbol"></span>
+                  <span class="font-black text-base text-red-400" x-text="c.score"></span>
+                </div>
+                <div class="mt-1 text-xs text-red-300/70 leading-relaxed"
+                  x-text="(c.signals||[]).filter(s=>!s.startsWith('⚠')).slice(0,3).join('·')"></div>
+                <!-- OI 死平 details -->
+                <div x-show="c._open" class="mt-2 pt-2 border-t border-red-500/10 space-y-0.5">
+                  <template x-for="s in (c.signals||[])" :key="s">
+                    <div class="text-xs" :class="s.startsWith('⚠')?'text-red-400':'text-gray-500'">• <span x-text="s"></span></div>
+                  </template>
+                  <div class="flex gap-1 mt-1 flex-wrap">
+                    <template x-for="[k,v] in Object.entries(c.score_breakdown||{})" :key="k">
+                      <span class="text-xs px-1.5 py-0.5 rounded"
+                        :class="v>0?'bg-green-500/10 text-green-500':'bg-red-500/10 text-red-500'"
+                        x-text="k+(v>0?'+':'')+v"></span>
+                    </template>
+                  </div>
+                </div>
               </div>
-              <div class="space-y-0.5">
-                <template x-for="s in (c.signals||[]).slice(0,6)" :key="s">
-                  <div class="text-xs text-gray-500">• <span x-text="s"></span></div>
-                </template>
-              </div>
-              <div x-show="(c.links?.dexscreener||c.links?.gecko)" class="flex gap-2 pt-1">
-                <a x-show="c.links?.dexscreener" :href="c.links.dexscreener" target="_blank"
-                  class="text-xs text-teal-400 hover:underline">DEXScreener ↗</a>
-                <a x-show="c.links?.gecko" :href="c.links.gecko" target="_blank"
-                  class="text-xs text-violet-400 hover:underline">GeckoTerminal ↗</a>
-              </div>
-            </div>
+            </template>
           </div>
         </div>
       </template>
 
-      <button x-show="filteredCandidates.length > yaobiPage*20" @click="yaobiPage++"
-        class="w-full py-3 rounded-xl text-xs text-gray-500 hover:text-green-400 border border-[#1c1c38] hover:border-green-500/20 transition-all">
-        加载更多 (已显示 <span x-text="Math.min(yaobiPage*20,filteredCandidates.length)"></span> / <span x-text="filteredCandidates.length"></span>)
-      </button>
+      <!-- ── 分类板块：蓄势观察 ─────────────────────────────────────────── -->
+      <template x-if="filteredCandidates.filter(c=>c.category==='蓄势观察').length>0">
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-sm font-bold text-yellow-400">🟡 蓄势观察</span>
+            <span class="text-xs text-yellow-400/60 bg-yellow-500/10 px-2 py-0.5 rounded-full"
+              x-text="filteredCandidates.filter(c=>c.category==='蓄势观察').length"></span>
+            <div class="flex-1 h-px" style="background:rgba(234,179,8,.2)"></div>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 gap-2">
+            <template x-for="c in filteredCandidates.filter(c=>c.category==='蓄势观察').slice(0,18)" :key="c.key||c.symbol">
+              <div class="rounded-xl p-3 cursor-pointer hover:scale-[1.02] transition-all"
+                style="background:#141204;border:1px solid rgba(234,179,8,.2)"
+                @click="c._open=!c._open">
+                <div class="flex items-start justify-between">
+                  <span class="font-bold text-white text-sm" x-text="c.symbol"></span>
+                  <span class="font-black text-base text-yellow-400" x-text="c.score"></span>
+                </div>
+                <div class="mt-1 text-xs text-yellow-300/70 leading-relaxed"
+                  x-text="(c.signals||[]).filter(s=>!s.startsWith('⚠')).slice(0,3).join('·')"></div>
+                <div x-show="c._open" class="mt-2 pt-2 border-t border-yellow-500/10 space-y-0.5">
+                  <template x-for="s in (c.signals||[])" :key="s">
+                    <div class="text-xs" :class="s.startsWith('⚠')?'text-red-400':'text-gray-500'">• <span x-text="s"></span></div>
+                  </template>
+                  <div class="flex gap-1 mt-1 flex-wrap">
+                    <template x-for="[k,v] in Object.entries(c.score_breakdown||{})" :key="k">
+                      <span class="text-xs px-1.5 py-0.5 rounded"
+                        :class="v>0?'bg-green-500/10 text-green-500':'bg-red-500/10 text-red-500'"
+                        x-text="k+(v>0?'+':'')+v"></span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- ── 分类板块：风险 ───────────────────────────────────────────────── -->
+      <template x-if="filteredCandidates.filter(c=>c.category==='风险').length>0">
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-sm font-bold text-orange-400">⚠ 风险</span>
+            <span class="text-xs text-orange-400/60 bg-orange-500/10 px-2 py-0.5 rounded-full"
+              x-text="filteredCandidates.filter(c=>c.category==='风险').length"></span>
+            <div class="flex-1 h-px" style="background:rgba(249,115,22,.2)"></div>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <template x-for="c in filteredCandidates.filter(c=>c.category==='风险').slice(0,6)" :key="c.key||c.symbol">
+              <div class="rounded-xl p-3 cursor-pointer hover:scale-[1.02] transition-all"
+                style="background:#130b02;border:1px solid rgba(249,115,22,.25)"
+                @click="c._open=!c._open">
+                <div class="flex items-start justify-between">
+                  <span class="font-bold text-white text-sm" x-text="c.symbol"></span>
+                  <span class="font-black text-base text-orange-400" x-text="c.score"></span>
+                </div>
+                <div class="mt-1 text-xs text-orange-300/70 leading-relaxed"
+                  x-text="(c.signals||[]).slice(0,3).join('·')"></div>
+                <div x-show="c._open" class="mt-2 pt-2 border-t border-orange-500/10 space-y-0.5">
+                  <template x-for="s in (c.signals||[])" :key="s">
+                    <div class="text-xs text-orange-400/80">• <span x-text="s"></span></div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- ── 其他候选（无分类）───────────────────────────────────────────── -->
+      <template x-if="filteredCandidates.filter(c=>!c.category).length>0">
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-sm text-gray-500">其他候选</span>
+            <div class="flex-1 h-px bg-[#1c1c38]"></div>
+          </div>
+          <template x-for="(c,i) in filteredCandidates.filter(c=>!c.category).slice(0, yaobiPage*20)" :key="c.key||c.symbol">
+            <div class="card slide-in p-4 hover:border-green-500/20 transition-all mb-3" style="border-color:rgba(74,222,128,.1)">
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-bold text-white text-base" x-text="c.symbol"></span>
+                    <span x-show="c.chain" class="text-xs px-2 py-0.5 rounded-full bg-[#1c1c38] text-gray-400" x-text="c.chain.toUpperCase()"></span>
+                    <span x-show="c.has_futures" class="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300">合约</span>
+                    <span x-show="c.smart_money_signal" class="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">🐋 聪明钱</span>
+                    <span x-show="c.gecko_trend_rank>0" class="text-xs px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300"
+                      x-text="'趋势#'+c.gecko_trend_rank"></span>
+                  </div>
+                  <div class="mt-1 flex flex-wrap gap-0.5">
+                    <template x-for="s in (c.sources||[])" :key="s">
+                      <span class="source-chip"
+                        :class="s.includes('gecko')?'sc-gecko':(s.includes('dex')?'sc-dex':(s.includes('square')?'sc-square':(s.includes('futures')?'sc-futures':'sc-okx')))"
+                        x-text="s.replace('gecko_','').replace('dex_','dex ').replace('binance_','')"></span>
+                    </template>
+                  </div>
+                </div>
+                <div class="text-right flex-shrink-0">
+                  <div class="text-2xl font-black"
+                    :class="c.score>=70?'text-green-400':(c.score>=50?'text-yellow-400':'text-gray-400')"
+                    x-text="c.score"></div>
+                  <div class="text-xs text-gray-600">/ 100</div>
+                </div>
+              </div>
+              <div class="mt-2 score-bar-bg">
+                <div class="score-bar-fill"
+                  :style="'width:'+c.score+'%;background:'+(c.score>=70?'#4ade80':(c.score>=50?'#facc15':'#6b7280'))"></div>
+              </div>
+              <div class="mt-3 grid grid-cols-3 sm:grid-cols-5 gap-x-4 gap-y-1.5 text-xs">
+                <div><span class="text-gray-600">价格</span>
+                  <div class="text-gray-300 font-mono" x-text="c.price_usd>0?'$'+c.price_usd.toPrecision(4):'—'"></div></div>
+                <div><span class="text-gray-600">24H</span>
+                  <div :class="c.price_change_24h>=0?'text-green-400':'text-red-400'" class="font-mono"
+                    x-text="c.price_change_24h?(c.price_change_24h>0?'+':'')+c.price_change_24h.toFixed(1)+'%':'—'"></div></div>
+                <div><span class="text-gray-600">成交量</span>
+                  <div class="text-gray-300" x-text="c.volume_24h>=1e6?'$'+(c.volume_24h/1e6).toFixed(1)+'M':(c.volume_24h>0?'$'+(c.volume_24h/1e3).toFixed(0)+'K':'—')"></div></div>
+                <div><span class="text-gray-600">流动性</span>
+                  <div class="text-gray-300" x-text="c.liquidity>=1e6?'$'+(c.liquidity/1e6).toFixed(1)+'M':(c.liquidity>0?'$'+(c.liquidity/1e3).toFixed(0)+'K':'—')"></div></div>
+                <div><span class="text-gray-600">广场</span>
+                  <div :class="c.square_mentions>=10?'text-yellow-400':'text-gray-400'"
+                    x-text="c.square_mentions>0?c.square_mentions+'次提及':'—'"></div></div>
+              </div>
+              <div class="mt-2">
+                <button @click="c._open=!c._open" class="text-xs text-gray-600 hover:text-green-400 transition-colors">
+                  <span x-text="c._open?'▲ 收起':'▼ 评分详情'"></span>
+                </button>
+                <div x-show="c._open" class="mt-2 space-y-1.5">
+                  <div class="flex flex-wrap gap-1">
+                    <template x-for="[k,v] in Object.entries(c.score_breakdown||{})" :key="k">
+                      <span class="text-xs px-2 py-0.5 rounded"
+                        :class="v>0?'bg-green-500/10 text-green-400':'bg-red-500/10 text-red-400'"
+                        x-text="k+' '+(v>0?'+':'')+v"></span>
+                    </template>
+                  </div>
+                  <div class="space-y-0.5">
+                    <template x-for="s in (c.signals||[]).slice(0,6)" :key="s">
+                      <div class="text-xs text-gray-500">• <span x-text="s"></span></div>
+                    </template>
+                  </div>
+                  <div x-show="(c.links?.dexscreener||c.links?.gecko)" class="flex gap-2 pt-1">
+                    <a x-show="c.links?.dexscreener" :href="c.links.dexscreener" target="_blank"
+                      class="text-xs text-teal-400 hover:underline">DEXScreener ↗</a>
+                    <a x-show="c.links?.gecko" :href="c.links.gecko" target="_blank"
+                      class="text-xs text-violet-400 hover:underline">GeckoTerminal ↗</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <button x-show="filteredCandidates.filter(c=>!c.category).length > yaobiPage*20" @click="yaobiPage++"
+            class="w-full py-3 rounded-xl text-xs text-gray-500 hover:text-green-400 border border-[#1c1c38] hover:border-green-500/20 transition-all">
+            加载更多
+          </button>
+        </div>
+      </template>
 
     </div>
   </div><!-- /grid -->
@@ -1712,6 +1811,7 @@ function app() {
         if(k==='volume') return (b.volume_24h||0)-(a.volume_24h||0)
         if(k==='change') return (b.price_change_24h||0)-(a.price_change_24h||0)
         if(k==='mentions') return (b.square_mentions||0)-(a.square_mentions||0)
+        if(k==='oi') return (b.oi_change_24h_pct||0)-(a.oi_change_24h_pct||0)
         return (b.score||0)-(a.score||0)
       })
     },

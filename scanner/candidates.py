@@ -56,6 +56,17 @@ class Candidate:
     gecko_trend_rank:     int   = 0
     dex_boost_rank:       int   = 0
 
+    # ── OI & 合约异动 ─────────────────────────────────────────────────────────
+    oi_change_24h_pct: float = 0.0   # OI日增%
+    oi_acceleration:   float = 0.0   # OI加速% (近4h vs 前4h)
+    oi_flat_days:      int   = 0     # OI连续死平天数
+    volume_ratio:      float = 0.0   # 成交量放量倍数 (今日 / 7日均量)
+    whale_long_ratio:  float = 0.5   # 大户多头比例 (0~1)
+    short_crowd_pct:   float = 50.0  # 空头拥挤度%
+
+    # ── 分类 ──────────────────────────────────────────────────────────────────
+    category: str = ""   # 启动预警 / 蓄势观察 / 风险
+
     # ── 打分 ──────────────────────────────────────────────────────────────────
     score:           int  = 0
     score_breakdown: dict = field(default_factory=dict)
@@ -99,6 +110,13 @@ class Candidate:
             "smart_money_detail": self.smart_money_detail,
             "gecko_trend_rank":   self.gecko_trend_rank,
             "dex_boost_rank":     self.dex_boost_rank,
+            "oi_change_24h_pct":  round(self.oi_change_24h_pct, 1),
+            "oi_acceleration":    round(self.oi_acceleration, 1),
+            "oi_flat_days":       self.oi_flat_days,
+            "volume_ratio":       round(self.volume_ratio, 1),
+            "whale_long_ratio":   round(self.whale_long_ratio, 3),
+            "short_crowd_pct":    round(self.short_crowd_pct, 1),
+            "category":           self.category,
             "score":              self.score,
             "score_breakdown":    self.score_breakdown,
             "signals":            self.signals,

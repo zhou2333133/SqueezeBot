@@ -375,9 +375,18 @@ class BinanceFadeBot:
             logger.error("📉 [%s] 获取入场价失败: %s", symbol, e)
             return
 
-        sl_pct  = cfg.get("FADE_STOP_LOSS_PCT", 1.5)
-        tp1_pct = cfg.get("FADE_TP1_PCT",       1.5)
-        tp2_pct = cfg.get("FADE_TP2_PCT",       3.0)
+        leverage      = cfg.get("FADE_LEVERAGE",     10)
+        position_usdt = cfg.get("FADE_POSITION_USDT", 10.0)
+
+        # SL/TP 以"保证金%"为单位（设10 = 亏10%保证金止损，直观易懂）
+        # 实际价格变动幅度 = 保证金% ÷ 杠杆倍数
+        sl_margin_pct  = cfg.get("FADE_STOP_LOSS_PCT", 10.0)
+        tp1_margin_pct = cfg.get("FADE_TP1_PCT",       10.0)
+        tp2_margin_pct = cfg.get("FADE_TP2_PCT",       30.0)
+        sl_pct  = sl_margin_pct  / leverage
+        tp1_pct = tp1_margin_pct / leverage
+        tp2_pct = tp2_margin_pct / leverage
+
         sl_price  = entry_price * (1 + sl_pct  / 100)
         tp1_price = entry_price * (1 - tp1_pct / 100)
         tp2_price = entry_price * (1 - tp2_pct / 100)
@@ -400,11 +409,9 @@ class BinanceFadeBot:
             logger.info("📉 [%s] 信号发出 (自动交易关闭，未实际开仓)", symbol)
             return
 
-        leverage      = cfg.get("FADE_LEVERAGE",     10)
-        position_usdt = cfg.get("FADE_POSITION_USDT", 50.0)
         quantity      = position_usdt * leverage / entry_price
         tp1_ratio     = cfg.get("FADE_TP1_RATIO",    0.5)
-        tp2_ratio     = cfg.get("FADE_TP2_RATIO",    0.4)
+        tp2_ratio     = cfg.get("FADE_TP2_RATIO",    0.3)
 
         # ── 模拟开仓 ──────────────────────────────────────────────────────
         if cfg.get("FADE_PAPER_TRADE", False):

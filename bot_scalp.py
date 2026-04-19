@@ -5,6 +5,7 @@
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -32,6 +33,7 @@ class ScalpPosition:
     tp2_price:          float
     tp1_hit:            bool       = False
     tp2_hit:            bool       = False
+    trail_ref_price:    float      = 0.0   # TP2命中后追踪基准价
     paper:              bool       = False
     entry_time:         str        = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     sl_order_id:        int | None = None
@@ -66,12 +68,14 @@ class ScalpPosition:
 
 class BinanceScalpBot:
     def __init__(self):
-        self.open_positions:     dict[str, ScalpPosition] = {}
-        self.kline_buffer:       dict[str, list]          = {}
-        self.monitored_symbols:  list[str]                = []
-        self.running:            bool                     = False
-        self.session:            aiohttp.ClientSession | None = None
-        self.trader:             BinanceTrader | None         = None
+        self.open_positions:       dict[str, ScalpPosition] = {}
+        self.kline_buffer:         dict[str, list]          = {}
+        self.monitored_symbols:    list[str]                = []
+        self.cooldown_symbols:     dict[str, float]         = {}  # 止损冷却（默认关闭）
+        self.last_realtime_check:  dict[str, float]         = {}  # 实时检测防抖（每5秒最多触发一次）
+        self.running:              bool                     = False
+        self.session:              aiohttp.ClientSession | None = None
+        self.trader:               BinanceTrader | None         = None
 
     @property
     def cfg(self) -> dict:
@@ -178,22 +182,37 @@ class BinanceScalpBot:
         is_closed   = k["x"]
         close_price = float(k["c"])
 
-        # 更新活跃仓位的当前价格（每 tick）
-        if symbol in self.open_positions and not is_closed:
-            self.open_positions[symbol].current_price = close_price
-            set_scalp_position(symbol, self.open_positions[symbol].to_dict())
-            await self._check_tp_sl(symbol, close_price)
-
-        if is_closed:
+        if not is_closed:
+            # 实时更新仓位价格并检查 TP/SL
+            if symbol in self.open_positions:
+                self.open_positions[symbol].current_price = close_price
+                set_scalp_position(symbol, self.open_positions[symbol].to_dict())
+                await self._check_tp_sl(symbol, close_price)
+            # 实时动量检测：不等K线关闭，每5秒触发一次（快速抓波动）
+            elif self.cfg.get("SCALP_ENABLED", False):
+                now = time.monotonic()
+                last = self.last_realtime_check.get(symbol, 0)
+                if now - last >= 5:
+                    buf = self.kline_buffer.get(symbol, [])
+                    window = self.cfg.get("SCALP_WINDOW_MINUTES", 3)
+                    threshold = self.cfg.get("SCALP_TRIGGER_PCT", 4.0)
+                    # 至少需要 window-1 根已闭合K线 + 当前价
+                    if len(buf) >= window - 1 and window > 1:
+                        op = buf[-(window - 1)]["o"]
+                        if op > 0 and abs((close_price - op) / op * 100) >= threshold:
+                            self.last_realtime_check[symbol] = now
+                            await self._check_momentum(symbol, realtime_price=close_price)
+        else:
             buf = self.kline_buffer.setdefault(symbol, [])
             buf.append({
                 "o": float(k["o"]),
                 "c": float(k["c"]),
-                "q": float(k["q"]),   # 总 USDT 成交额
-                "Q": float(k["Q"]),   # 主动买入 USDT 成交额 (taker buy)
+                "q": float(k["q"]),
+                "Q": float(k["Q"]),
             })
             if len(buf) > 60:
                 buf.pop(0)
+            self.last_realtime_check.pop(symbol, None)  # K线关闭后重置，让下根K线重新实时检测
             await self._check_momentum(symbol)
 
     # ─── 辅助：VWAP ────────────────────────────────────────────────────────────
@@ -221,86 +240,198 @@ class BinanceScalpBot:
             return False
         return True
 
-    # ─── 动量检测 ──────────────────────────────────────────────────────────────
+    # ─── 三层选币框架 ─────────────────────────────────────────────────────────
 
-    async def _check_momentum(self, symbol: str) -> None:
+    def _is_coin_active(self, buf: list, cp: float) -> bool:
+        """
+        第一层：15分钟内振幅是否足够大（币是否处于活跃行情中）
+        只有活跃的币才进入后续分析，过滤掉大多数平静的币种
+        """
+        if len(buf) < 15:
+            return False
+        prices = [k["c"] for k in buf[-15:]] + [cp]
+        min_p, max_p = min(prices), max(prices)
+        if min_p <= 0:
+            return False
+        return (max_p - min_p) / min_p * 100 >= self.cfg.get("SCALP_ACTIVE_RANGE_PCT", 6.0)
+
+    def _detect_trend(self, buf: list) -> str:
+        """
+        第二层：用均线排列判断趋势方向
+        MA5 > MA10 > MA20 → 上行趋势（UP）
+        MA5 < MA10 < MA20 → 下行趋势（DOWN）
+        其他 → 震荡横盘（FLAT）
+        """
+        if len(buf) < 20:
+            return "FLAT"
+        ma5  = sum(k["c"] for k in buf[-5:])  / 5
+        ma10 = sum(k["c"] for k in buf[-10:]) / 10
+        ma20 = sum(k["c"] for k in buf[-20:]) / 20
+        if ma5 > ma10 > ma20:
+            return "UP"
+        if ma5 < ma10 < ma20:
+            return "DOWN"
+        return "FLAT"
+
+    def _get_signal(self, buf: list, cp: float, trend: str) -> tuple[str | None, float, str]:
+        """
+        第三层：根据趋势决定入场信号
+        返回 (direction, trigger_pct, signal_label)
+
+        ── 上行趋势：等回调买入（逢低做多）────────────────────────────────
+          价格从近期高点回落 pullback_pct% → LONG
+          逻辑：趋势向上，短暂回调是买入机会，反转策略与顺势策略双重确认
+
+        ── 下行趋势：等反弹做空（逢高做空）────────────────────────────────
+          价格从近期低点反弹 pullback_pct% → SHORT
+          逻辑：趋势向下，短暂反弹是做空机会，双重确认
+
+        ── 横盘震荡：偏离均线做反转────────────────────────────────────────
+          价格偏离MA20超过 mean_revert_pct% → 超涨做空 / 超跌做多
+          逻辑：无趋势时价格回归均值概率高
+        """
+        cfg = self.cfg
+        pullback_pct    = cfg.get("SCALP_PULLBACK_PCT",    2.5)
+        mean_revert_pct = cfg.get("SCALP_MEAN_REVERT_PCT", 7.0)
+
+        if trend == "UP":
+            if not cfg.get("SCALP_ENABLE_LONG", True):
+                return None, 0.0, ""
+            # 近5根K线的最高收盘价作为"近期高点"
+            local_high = max(k["c"] for k in buf[-5:])
+            if local_high <= 0:
+                return None, 0.0, ""
+            drop_pct = (local_high - cp) / local_high * 100
+            if drop_pct < pullback_pct:
+                return None, 0.0, ""
+            # 回调量能应小于上涨量能（卖方力量弱，回调是洗盘而非趋势反转）
+            if len(buf) >= 7:
+                vol_recent  = sum(k["q"] for k in buf[-2:]) / 2
+                vol_upmove  = sum(k["q"] for k in buf[-7:-2]) / 5
+                if vol_upmove > 0 and vol_recent > vol_upmove * 1.8:
+                    return None, 0.0, ""  # 回调量能过大，可能真反转，跳过
+            return "LONG", drop_pct, "上行回调买"
+
+        if trend == "DOWN":
+            if not cfg.get("SCALP_ENABLE_SHORT", True):
+                return None, 0.0, ""
+            # 近5根K线的最低收盘价作为"近期低点"
+            local_low = min(k["c"] for k in buf[-5:])
+            if local_low <= 0:
+                return None, 0.0, ""
+            rise_pct = (cp - local_low) / local_low * 100
+            if rise_pct < pullback_pct:
+                return None, 0.0, ""
+            # 反弹量能应小于下跌量能（买方力量弱，反弹是死猫弹）
+            if len(buf) >= 7:
+                vol_recent   = sum(k["q"] for k in buf[-2:]) / 2
+                vol_downmove = sum(k["q"] for k in buf[-7:-2]) / 5
+                if vol_downmove > 0 and vol_recent > vol_downmove * 1.8:
+                    return None, 0.0, ""  # 反弹量能过大，可能真反转，跳过
+            return "SHORT", rise_pct, "下行反弹空"
+
+        # FLAT：均线偏离做反转
+        if len(buf) < 20:
+            return None, 0.0, ""
+        ma20 = sum(k["c"] for k in buf[-20:]) / 20
+        if ma20 <= 0:
+            return None, 0.0, ""
+        dev = (cp - ma20) / ma20 * 100
+        if dev > mean_revert_pct and cfg.get("SCALP_ENABLE_SHORT", True):
+            return "SHORT", dev, "超买反转空"
+        if dev < -mean_revert_pct and cfg.get("SCALP_ENABLE_LONG", True):
+            return "LONG", abs(dev), "超卖反转多"
+        return None, 0.0, ""
+
+    # ─── 主控：三层串联 ────────────────────────────────────────────────────────
+
+    async def _check_momentum(self, symbol: str, realtime_price: float | None = None) -> None:
+        """
+        realtime_price 非空时：K线还没关闭，用当前价实时检测（每5秒最多触发一次）
+        realtime_price 为空时 ：标准闭合K线检测
+        """
         cfg = self.cfg
         if not cfg.get("SCALP_ENABLED", False):
             return
         if symbol in self.open_positions:
             return
+
+        # 冷却（默认关闭；SCALP_SL_COOLDOWN_MINUTES > 0 时启用）
+        cooldown_mins = cfg.get("SCALP_SL_COOLDOWN_MINUTES", 0)
+        if symbol in self.cooldown_symbols:
+            if cooldown_mins > 0:
+                elapsed = (time.monotonic() - self.cooldown_symbols[symbol]) / 60
+                if elapsed < cooldown_mins:
+                    return
+            del self.cooldown_symbols[symbol]
+
         if len(self.open_positions) >= cfg.get("SCALP_MAX_POSITIONS", 3):
             return
 
-        buf    = self.kline_buffer.get(symbol, [])
-        window = cfg.get("SCALP_WINDOW_MINUTES", 3)
-        if len(buf) < window:
+        buf = self.kline_buffer.get(symbol, [])
+        if len(buf) < 20:  # MA20 最少需要20根K线
             return
 
-        recent = buf[-window:]
-        op     = recent[0]["o"]
-        cp     = recent[-1]["c"]
-        if op <= 0:
+        is_realtime = realtime_price is not None
+        cp = realtime_price if is_realtime else buf[-1]["c"]
+
+        # ── 第一层：这币活跃吗？──────────────────────────────────────────
+        if not self._is_coin_active(buf, cp):
             return
 
-        pct       = (cp - op) / op * 100
-        threshold = cfg.get("SCALP_TRIGGER_PCT", 4.0)
+        # ── 第二层：当前趋势方向？────────────────────────────────────────
+        trend = self._detect_trend(buf)
 
-        # ── 量能确认 ──────────────────────────────────────────────────────
-        vol_ok   = True
-        vol_mult = cfg.get("SCALP_VOLUME_MULTIPLIER", 3.0)
-        if len(buf) > window:
-            past    = buf[:-window]
-            avg_vol = sum(k["q"] for k in past) / len(past)
-            cur_vol = sum(k["q"] for k in recent) / window
-            vol_ok  = cur_vol >= avg_vol * vol_mult if avg_vol > 0 else True
-
-        direction = None
-        if pct >= threshold and cfg.get("SCALP_ENABLE_LONG", True):
-            direction = "LONG"
-        elif pct <= -threshold and cfg.get("SCALP_ENABLE_SHORT", True):
-            direction = "SHORT"
-
-        if not direction or not vol_ok:
-            if not vol_ok and direction:
-                logger.info("⚡ [%s] 动量 %+.2f%% 触发，量能不足，跳过", symbol, pct)
+        # ── 第三层：有没有入场信号？──────────────────────────────────────
+        direction, trigger_pct, label = self._get_signal(buf, cp, trend)
+        if not direction:
             return
 
-        # ── BTC 方向过滤 ──────────────────────────────────────────────────
+        # ── BTC 大盘方向过滤 ──────────────────────────────────────────────
         if not self._btc_guard(direction):
             return
 
-        # ── Taker 主动买入比例确认 ────────────────────────────────────────
-        taker_min = cfg.get("SCALP_TAKER_RATIO_MIN", 0.55)
-        total_q  = sum(k["q"] for k in recent)
-        total_qb = sum(k["Q"] for k in recent)
+        # ── Taker 比例过滤 ────────────────────────────────────────────────
+        # 趋势回调入场：Taker 门槛适当放宽（回调本身就是短暂的反向Taker）
+        # 均线反转入场：用标准门槛
+        base_min  = cfg.get("SCALP_TAKER_RATIO_MIN", 0.55)
+        taker_min = (base_min - 0.08) if "回调" in label or "反弹" in label else base_min
+        taker_min = max(0.42, taker_min)
+
+        taker_data  = buf[-3:] if len(buf) >= 3 else buf
+        total_q     = sum(k["q"] for k in taker_data)
+        total_qb    = sum(k["Q"] for k in taker_data)
         taker_ratio = total_qb / total_q if total_q > 0 else 0.5
-        if direction == "LONG"  and taker_ratio < taker_min:
-            logger.info("⚡ [%s] 动量 +%.2f%%，Taker买入 %.0f%% 不足，跳过做多",
-                        symbol, pct, taker_ratio * 100)
+
+        if direction == "LONG" and taker_ratio < taker_min:
+            if not is_realtime:
+                logger.info("⚡ [%s] [%s] Taker买入%.0f%% 不足(需>%.0f%%)，跳过",
+                            symbol, label, taker_ratio * 100, taker_min * 100)
             return
         if direction == "SHORT" and taker_ratio > (1 - taker_min):
-            logger.info("⚡ [%s] 动量 %.2f%%，Taker卖出 %.0f%% 不足，跳过做空",
-                        symbol, pct, (1 - taker_ratio) * 100)
+            if not is_realtime:
+                logger.info("⚡ [%s] [%s] Taker卖出%.0f%% 不足，跳过",
+                            symbol, label, (1 - taker_ratio) * 100)
             return
 
-        # ── VWAP 偏离过滤（只防追高做多，不限制做空）────────────────────
-        # SHORT 方向：暴跌时价格必然低于 VWAP，过滤做空没有意义
-        vwap_max = cfg.get("SCALP_VWAP_MAX_DEV", 3.0)
-        if direction == "LONG" and len(buf) >= 10:
+        # ── VWAP 过度追高防护（仅对非均线反转的做多生效）────────────────
+        if direction == "LONG" and "反转" not in label and len(buf) >= 10:
             vwap    = self._calc_vwap(buf)
             dev_pct = (cp - vwap) / vwap * 100 if vwap > 0 else 0
+            vwap_max = cfg.get("SCALP_VWAP_MAX_DEV", 5.0)
             if dev_pct > vwap_max:
-                logger.info("⚡ [%s] 价格偏离VWAP +%.1f%%，拒绝追高做多", symbol, dev_pct)
+                if not is_realtime:
+                    logger.info("⚡ [%s] 价格偏离VWAP +%.1f%%，拒绝追高", symbol, dev_pct)
                 return
 
-        logger.info("⚡ [%s] 动量触发 %+.2f%% | %s | 量能✅ Taker%.0f%%",
-                    symbol, pct, direction, taker_ratio * 100)
-        await self._execute_entry(symbol, direction, pct)
+        src = "实时" if is_realtime else ""
+        logger.info("⚡ [%s] %s[%s|%s趋势] %.2f%% → %s | Taker%.0f%%",
+                    symbol, src, label, trend, trigger_pct, direction, taker_ratio * 100)
+        await self._execute_entry(symbol, direction, trigger_pct, label)
 
     # ─── 开仓 ──────────────────────────────────────────────────────────────────
 
-    async def _execute_entry(self, symbol: str, direction: str, trigger_pct: float) -> None:
+    async def _execute_entry(self, symbol: str, direction: str, trigger_pct: float, signal_label: str = "") -> None:
         cfg = self.cfg
 
         try:
@@ -314,9 +445,18 @@ class BinanceScalpBot:
             logger.error("⚡ [%s] 获取入场价失败: %s", symbol, e)
             return
 
-        sl_pct  = cfg.get("SCALP_STOP_LOSS_PCT", 1.5)
-        tp1_pct = cfg.get("SCALP_TP1_PCT",       1.5)
-        tp2_pct = cfg.get("SCALP_TP2_PCT",       3.0)
+        leverage      = cfg.get("SCALP_LEVERAGE",     10)
+        position_usdt = cfg.get("SCALP_POSITION_USDT", 10.0)
+
+        # ── SL/TP 以"保证金%"为单位，直观易懂 ──────────────────────────────
+        # 例：SL_PCT=10 意味着最多亏损保证金的10%（10U保证金 → 亏1U）
+        # 实际价格变动幅度 = 保证金% ÷ 杠杆倍数
+        sl_margin_pct  = cfg.get("SCALP_STOP_LOSS_PCT", 10.0)   # 亏多少%保证金止损
+        tp1_margin_pct = cfg.get("SCALP_TP1_PCT",       10.0)   # 赚多少%保证金触发TP1
+        tp2_margin_pct = cfg.get("SCALP_TP2_PCT",       30.0)   # 赚多少%保证金触发TP2
+        sl_pct  = sl_margin_pct  / leverage   # 换算成价格变动%
+        tp1_pct = tp1_margin_pct / leverage
+        tp2_pct = tp2_margin_pct / leverage
 
         if direction == "LONG":
             sl_price  = entry_price * (1 - sl_pct  / 100)
@@ -328,15 +468,16 @@ class BinanceScalpBot:
             tp2_price = entry_price * (1 - tp2_pct / 100)
 
         base_signal = {
-            "type":        "scalp",
-            "timestamp":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "symbol":      symbol,
-            "direction":   direction,
-            "trigger_pct": round(trigger_pct, 2),
-            "entry_price": round(entry_price, 8),
-            "sl_price":    round(sl_price, 8),
-            "tp1_price":   round(tp1_price, 8),
-            "tp2_price":   round(tp2_price, 8),
+            "type":         "scalp",
+            "timestamp":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "symbol":       symbol,
+            "direction":    direction,
+            "signal_label": signal_label,
+            "trigger_pct":  round(trigger_pct, 2),
+            "entry_price":  round(entry_price, 8),
+            "sl_price":     round(sl_price, 8),
+            "tp1_price":    round(tp1_price, 8),
+            "tp2_price":    round(tp2_price, 8),
         }
 
         if not cfg.get("SCALP_AUTO_TRADE", False):
@@ -344,8 +485,6 @@ class BinanceScalpBot:
             logger.info("⚡ [%s] 信号发出 (自动交易关闭，未实际开仓)", symbol)
             return
 
-        leverage      = cfg.get("SCALP_LEVERAGE",     10)
-        position_usdt = cfg.get("SCALP_POSITION_USDT", 50.0)
         quantity      = position_usdt * leverage / entry_price
         side          = "BUY"  if direction == "LONG" else "SELL"
         exit_s        = "SELL" if direction == "LONG" else "BUY"
@@ -449,9 +588,12 @@ class BinanceScalpBot:
             return
 
         cfg       = self.cfg
-        tp1_ratio = cfg.get("SCALP_TP1_RATIO",    0.4)
-        tp2_ratio = cfg.get("SCALP_TP2_RATIO",    0.4)
-        trail_pct = cfg.get("SCALP_TP3_TRAIL_PCT", 1.0)
+        # TP1: 赚够 tp1_margin_pct% 保证金 → 平掉 50% 仓位，SL移至成本（保本）
+        # TP2: 赚够 tp2_margin_pct% 保证金 → 再平 30% 仓位，剩余20%开始追踪
+        # TP3: 剩余20% 跟踪止损，每次创新高/低就收紧止损，回撤 trail_pct% 平仓
+        tp1_ratio = cfg.get("SCALP_TP1_RATIO",    0.5)   # TP1 平掉50%
+        tp2_ratio = cfg.get("SCALP_TP2_RATIO",    0.3)   # TP2 再平30%，剩20%追踪
+        trail_pct = cfg.get("SCALP_TP3_TRAIL_PCT", 1.5)  # 追踪止损：回撤1.5%触发
         exit_s    = "SELL" if pos.direction == "LONG" else "BUY"
         auto      = cfg.get("SCALP_AUTO_TRADE", False)
         is_paper  = pos.paper
@@ -461,31 +603,31 @@ class BinanceScalpBot:
             return (pos.direction == "LONG"  and price >= tp_price) or \
                    (pos.direction == "SHORT" and price <= tp_price)
 
+        # ── TP1：先锁一半利润，SL移至成本保本 ──────────────────────────
         if not pos.tp1_hit and _tp_hit(pos.tp1_price):
             pos.tp1_hit = True
             qty = pos.quantity * tp1_ratio
+            tp1_pnl = qty * abs(price - pos.entry_price)
             if is_paper:
                 pos.quantity_remaining -= qty
-                pos.realized_pnl += qty * abs(price - pos.entry_price)
-                pos.sl_price = pos.entry_price  # 移止损到成本价
+                pos.realized_pnl += tp1_pnl
+                pos.sl_price = pos.entry_price  # SL移至成本（保本）
             elif auto:
                 await self.trader.place_market_order(symbol, exit_s, qty)
                 pos.quantity_remaining -= qty
-                pos.realized_pnl += qty * abs(price - pos.entry_price)
-                # 取消原止损单，在成本价挂新止损（保本）
+                pos.realized_pnl += tp1_pnl
                 if pos.sl_order_id:
                     await self.trader.cancel_order(symbol, pos.sl_order_id)
-                new_sl = await self.trader.place_stop_loss_order(
-                    symbol, exit_s, pos.entry_price
-                )
+                new_sl = await self.trader.place_stop_loss_order(symbol, exit_s, pos.entry_price)
                 if new_sl and new_sl.get("orderId"):
                     pos.sl_order_id = new_sl["orderId"]
                     pos.sl_price    = pos.entry_price
-            pct = abs(price - pos.entry_price) / pos.entry_price * 100
-            logger.info("⚡ [%s] %sTP1 命中 @ %.6f (+%.2f%%) | 止损移至成本价 %.6f",
-                        symbol, tag, price, pct, pos.entry_price)
+            pct_margin = tp1_pnl / (pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)) * 100
+            logger.info("⚡ [%s] %s🟡 TP1 @ %.6f | 锁定50%%仓位 | 保证金+%.1f%% | SL已移至成本保本",
+                        symbol, tag, price, pct_margin)
             set_scalp_position(symbol, pos.to_dict())
 
+        # ── TP2：再锁30%，剩余20%开始追踪止损 ──────────────────────────
         elif pos.tp1_hit and not pos.tp2_hit and _tp_hit(pos.tp2_price):
             pos.tp2_hit = True
             qty = pos.quantity * tp2_ratio
@@ -503,24 +645,42 @@ class BinanceScalpBot:
                     await self.trader.place_trailing_stop_order(
                         symbol, exit_s, activ, trail_pct, pos.quantity_remaining,
                     )
-            pct = abs(price - pos.entry_price) / pos.entry_price * 100
-            logger.info("⚡ [%s] %sTP2 命中 @ %.6f (+%.2f%%) | 余仓追踪止损",
-                        symbol, tag, price, pct)
-            self._record_scalp_trade(pos, price, "TP2", tp2_pnl)
-            del self.open_positions[symbol]
-            set_scalp_position(symbol, None)
-            return
+            pos.trail_ref_price = price  # 从当前价开始追踪
+            pct_margin = (pos.realized_pnl + tp2_pnl) / (pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)) * 100
+            logger.info("⚡ [%s] %s🟢 TP2 @ %.6f | 再锁30%%仓位 | 累计保证金+%.1f%% | 剩余20%%追踪止损中",
+                        symbol, tag, price, pct_margin)
+            set_scalp_position(symbol, pos.to_dict())
 
+        # ── TP3：追踪止损更新（TP2命中后，跟随价格移动收紧止损）──────────
+        if pos.tp2_hit and pos.quantity_remaining > 0 and pos.trail_ref_price > 0:
+            if pos.direction == "SHORT" and price < pos.trail_ref_price:
+                pos.trail_ref_price = price
+                pos.sl_price = pos.trail_ref_price * (1 + trail_pct / 100)
+            elif pos.direction == "LONG" and price > pos.trail_ref_price:
+                pos.trail_ref_price = price
+                pos.sl_price = pos.trail_ref_price * (1 - trail_pct / 100)
+
+        # ── 止损检查（初始SL / 保本SL / TP3追踪SL 统一走这里）──────────
         sl_crossed = (pos.direction == "LONG"  and price <= pos.sl_price * 0.999) or \
                      (pos.direction == "SHORT" and price >= pos.sl_price * 1.001)
         if sl_crossed and symbol in self.open_positions:
-            sl_pnl = pos.quantity_remaining * (
+            close_pnl = pos.quantity_remaining * (
                 (price - pos.entry_price) if pos.direction == "LONG"
                 else (pos.entry_price - price)
             )
-            reason = "SL_保本" if pos.tp1_hit else "SL"
-            logger.info("⚡ [%s] %s%s 触发 @ %.6f", symbol, tag, reason, price)
-            self._record_scalp_trade(pos, price, reason, sl_pnl)
+            if pos.tp2_hit:
+                reason = "TP3"
+                logger.info("⚡ [%s] %s🏁 TP3追踪止损 @ %.6f | 剩余仓位锁利润平仓", symbol, tag, price)
+            elif pos.tp1_hit:
+                reason = "SL_保本"
+                logger.info("⚡ [%s] %s🔵 SL_保本 @ %.6f | 回到成本价，保本出场", symbol, tag, price)
+            else:
+                reason = "SL"
+                loss_margin_pct = abs(close_pnl + pos.realized_pnl) / \
+                                  (pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)) * 100
+                logger.info("⚡ [%s] %s🔴 SL @ %.6f | 保证金亏损 %.1f%%", symbol, tag, price, loss_margin_pct)
+                self.cooldown_symbols[symbol] = time.monotonic()  # 止损后冷却，防连续踩坑
+            self._record_scalp_trade(pos, price, reason, close_pnl)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
 
@@ -530,7 +690,7 @@ class BinanceScalpBot:
         await asyncio.sleep(30)  # 启动后稍等，让 WS 先连上
         while self.running:
             cfg        = self.cfg
-            buffered   = sum(1 for b in self.kline_buffer.values() if len(b) >= cfg.get("SCALP_WINDOW_MINUTES", 3))
+            buffered   = sum(1 for b in self.kline_buffer.values() if len(b) >= 20)
             positions  = len(self.open_positions)
             paper_cnt  = sum(1 for p in self.open_positions.values() if p.paper)
             real_cnt   = positions - paper_cnt
@@ -541,12 +701,14 @@ class BinanceScalpBot:
             mode_str = "自动下单" if auto else ("模拟开仓" if paper_mode else "仅信号")
             logger.info(
                 "⚡ 超短线心跳 | 策略%s | 监控%d个 | 已就绪%d个 | "
-                "活跃仓位%d个(真实%d/模拟%d) | 触发阈值%.1f%% %dm | 模式:%s",
+                "活跃仓位%d个(真实%d/模拟%d) | "
+                "回调阈值%.1f%% 反转阈值%.1f%% 活跃振幅%.1f%% | 模式:%s",
                 "开启" if enabled else "关闭",
                 len(self.monitored_symbols), buffered,
                 positions, real_cnt, paper_cnt,
-                cfg.get("SCALP_TRIGGER_PCT", 4.0),
-                cfg.get("SCALP_WINDOW_MINUTES", 3),
+                cfg.get("SCALP_PULLBACK_PCT", 2.5),
+                cfg.get("SCALP_MEAN_REVERT_PCT", 7.0),
+                cfg.get("SCALP_ACTIVE_RANGE_PCT", 6.0),
                 mode_str,
             )
             await asyncio.sleep(300)  # 每 5 分钟
