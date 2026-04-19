@@ -418,18 +418,32 @@
 
             <p class="text-xs text-orange-800 uppercase tracking-widest pt-1">选币 & 策略参数</p>
             <div class="grid grid-cols-3 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">活跃振幅 % (15分钟)</label>
-                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_ACTIVE_RANGE_PCT" :value="cfg.SCALP_ACTIVE_RANGE_PCT??6"></div>
-              <div><label class="text-xs text-gray-500">回调阈值 % (趋势跟随)</label>
-                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_PULLBACK_PCT" :value="cfg.SCALP_PULLBACK_PCT??2.5"></div>
-              <div><label class="text-xs text-gray-500">反转阈值 % (均线偏离)</label>
-                <input class="inp inp-o mt-1" type="number" step="0.5" name="SCALP_MEAN_REVERT_PCT" :value="cfg.SCALP_MEAN_REVERT_PCT??7"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">活跃振幅 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">15分钟内最高最低价差须超过此值，才认为该币"有行情"。越小=筛选越宽，信号越多但质量略低。过滤统计中<b>振幅不足</b>率高时降低此值。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_ACTIVE_RANGE_PCT" :value="cfg.SCALP_ACTIVE_RANGE_PCT??3"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">回调阈值 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">趋势跟随策略的入场条件：价格从近期高/低点回调超过此%才入场。越小=更灵敏但更容易假信号。过滤统计中<b>无入场信号</b>率高时降低此值。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_PULLBACK_PCT" :value="cfg.SCALP_PULLBACK_PCT??1.5"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">反转阈值 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">均线反转策略：价格偏离MA20超过此%时做反转。横盘震荡行情适用。越小=更频繁触发，越大=只抓极端超买超卖。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_MEAN_REVERT_PCT" :value="cfg.SCALP_MEAN_REVERT_PCT??4.5"></div>
             </div>
-            <div class="grid grid-cols-2 gap-3 mt-3">
-              <div><label class="text-xs text-gray-500">Taker比例下限 (0~1)</label>
-                <input class="inp inp-o mt-1" type="number" step="0.01" name="SCALP_TAKER_RATIO_MIN" :value="cfg.SCALP_TAKER_RATIO_MIN??0.55"></div>
-              <div><label class="text-xs text-gray-500">触发窗口 (分钟)</label>
-                <input class="inp inp-o mt-1" type="number" name="SCALP_WINDOW_MINUTES" :value="cfg.SCALP_WINDOW_MINUTES"></div>
+            <div class="grid grid-cols-3 gap-3 mt-3">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">Taker比例下限</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">做多时要求主动买单占比≥此值（0.55=55%）。越高=要求更强买盘确认，信号更少但质量高。过滤统计中<b>Taker</b>拦截多时降低。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="SCALP_TAKER_RATIO_MIN" :value="cfg.SCALP_TAKER_RATIO_MIN??0.55"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">VWAP最大偏离 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">做多时价格偏离VWAP超过此%则拒绝追高（防止顶部入场）。过滤统计中<b>VWAP追高</b>拦截多时调高。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_VWAP_MAX_DEV" :value="cfg.SCALP_VWAP_MAX_DEV??5"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">触发窗口 (分钟)</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">实时检测窗口：N分钟内涨跌超过触发%才进行精细分析。建议2~5分钟。</div>
+                <input class="inp inp-o" type="number" name="SCALP_WINDOW_MINUTES" :value="cfg.SCALP_WINDOW_MINUTES"></div>
             </div>
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">交易方向 & 控制</p>
@@ -447,30 +461,49 @@
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">风控参数</p>
             <div class="grid grid-cols-4 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">最大仓位</label>
-                <input class="inp inp-o mt-1" type="number" name="SCALP_MAX_POSITIONS" :value="cfg.SCALP_MAX_POSITIONS"></div>
-              <div><label class="text-xs text-gray-500">单笔USDT</label>
-                <input class="inp inp-o mt-1" type="number" name="SCALP_POSITION_USDT" :value="cfg.SCALP_POSITION_USDT"></div>
-              <div><label class="text-xs text-gray-500">杠杆 x</label>
-                <input class="inp inp-o mt-1" type="number" name="SCALP_LEVERAGE" :value="cfg.SCALP_LEVERAGE"></div>
-              <div><label class="text-xs text-gray-500">止损 %</label>
-                <input class="inp inp-o mt-1" type="number" step="0.1" name="SCALP_STOP_LOSS_PCT" :value="cfg.SCALP_STOP_LOSS_PCT"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">最大同时仓位</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">最多同时持有N笔仓位，超过则暂停新信号。建议3~5。</div>
+                <input class="inp inp-o" type="number" name="SCALP_MAX_POSITIONS" :value="cfg.SCALP_MAX_POSITIONS"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">单笔保证金 USDT</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">每笔交易投入的保证金（名义价值=保证金×杠杆）。</div>
+                <input class="inp inp-o" type="number" name="SCALP_POSITION_USDT" :value="cfg.SCALP_POSITION_USDT"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">杠杆倍数</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">越高=盈亏放大越多，风险越大。新手建议5~10倍。</div>
+                <input class="inp inp-o" type="number" name="SCALP_LEVERAGE" :value="cfg.SCALP_LEVERAGE"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">止损 % (保证金)</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">亏损保证金的N%时止损出场。如1.2%=亏损0.6U(50U仓×10倍)时止损。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SCALP_STOP_LOSS_PCT" :value="cfg.SCALP_STOP_LOSS_PCT"></div>
             </div>
 
-            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">止盈设置 (三档分批)</p>
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">止盈设置 (三档分批平仓)</p>
+            <div class="text-xs text-gray-600 mb-2">三档设计: TP1快速锁定小利润→SL移至中点保护; TP2让主仓跑趋势; TP3追踪止损吃尾行情</div>
             <div class="grid grid-cols-4 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">TP1 %</label>
-                <input class="inp inp-o mt-1" type="number" step="0.1" name="SCALP_TP1_PCT" :value="cfg.SCALP_TP1_PCT"></div>
-              <div><label class="text-xs text-gray-500">TP1 比例</label>
-                <input class="inp inp-o mt-1" type="number" step="0.05" name="SCALP_TP1_RATIO" :value="cfg.SCALP_TP1_RATIO"></div>
-              <div><label class="text-xs text-gray-500">TP2 %</label>
-                <input class="inp inp-o mt-1" type="number" step="0.1" name="SCALP_TP2_PCT" :value="cfg.SCALP_TP2_PCT"></div>
-              <div><label class="text-xs text-gray-500">TP2 比例</label>
-                <input class="inp inp-o mt-1" type="number" step="0.05" name="SCALP_TP2_RATIO" :value="cfg.SCALP_TP2_RATIO"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TP1触发 % (保证金)</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">赚到N%保证金时触发第一档平仓。越小=越快锁利，防反转。建议0.8~1.5%。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP1_PCT" :value="cfg.SCALP_TP1_PCT"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TP1平仓比例</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP1触发时平掉多少仓位(0~1)。0.3=平30%，保留70%继续跑趋势。</div>
+                <input class="inp inp-o" type="number" step="0.05" name="SCALP_TP1_RATIO" :value="cfg.SCALP_TP1_RATIO"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TP2触发 % (保证金)</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">赚到N%保证金时触发第二档平仓。趋势行情建议5~8%，震荡建议3~5%。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP2_PCT" :value="cfg.SCALP_TP2_PCT"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TP2平仓比例</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP2触发时再平掉多少仓位。剩余仓位(1-TP1-TP2)进入追踪止损(TP3)。</div>
+                <input class="inp inp-o" type="number" step="0.05" name="SCALP_TP2_RATIO" :value="cfg.SCALP_TP2_RATIO"></div>
             </div>
             <div class="grid grid-cols-2 gap-3 mt-3">
-              <div><label class="text-xs text-gray-500">追踪止损 % (TP3剩余)</label>
-                <input class="inp inp-o mt-1" type="number" step="0.1" name="SCALP_TP3_TRAIL_PCT" :value="cfg.SCALP_TP3_TRAIL_PCT"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TP3追踪止损回撤 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP2命中后剩余仓位进入追踪：价格从最高点回撤N%时平仓。越小=越紧，越大=让利润跑得更远。建议1~2%。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP3_TRAIL_PCT" :value="cfg.SCALP_TP3_TRAIL_PCT"></div>
             </div>
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">监控列表</p>

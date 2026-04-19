@@ -35,6 +35,7 @@ class ScalpPosition:
     tp1_hit:            bool       = False
     tp2_hit:            bool       = False
     trail_ref_price:    float      = 0.0   # TP2命中后追踪基准价
+    signal_label:       str        = ""    # 信号类型：回调/反弹=顺势单，反转=逆势单
     paper:              bool       = False
     entry_time:         str        = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     sl_order_id:        int | None = None
@@ -551,6 +552,7 @@ class BinanceScalpBot:
                 tp1_price          = tp1_price,
                 tp2_price          = tp2_price,
                 current_price      = entry_price,
+                signal_label       = signal_label,
                 paper              = True,
             )
             self.open_positions[symbol] = pos
@@ -593,6 +595,7 @@ class BinanceScalpBot:
             tp2_price          = tp2_price,
             sl_order_id        = sl_order_id,
             current_price      = entry_price,
+            signal_label       = signal_label,
             paper              = False,
         )
         self.open_positions[symbol] = pos
@@ -653,15 +656,24 @@ class BinanceScalpBot:
             return (pos.direction == "LONG"  and price >= tp_price) or \
                    (pos.direction == "SHORT" and price <= tp_price)
 
-        # ── TP1：先锁一半利润，SL移至成本保本 ──────────────────────────
+        # ── TP1：先锁第一档利润，SL移位逻辑 ────────────────────────────
+        # 顺势单(回调买/反弹空): SL移至入场价与TP1价格的中点 → 让趋势继续跑
+        # 逆势单(均线反转):     SL移至成本价保本 → 严格风控
         if not pos.tp1_hit and _tp_hit(pos.tp1_price):
             pos.tp1_hit = True
             qty = pos.quantity * tp1_ratio
             tp1_pnl = qty * abs(price - pos.entry_price)
+            is_trend_trade = "回调" in pos.signal_label or "反弹" in pos.signal_label
+            if is_trend_trade:
+                # 顺势单：SL移至入场价与TP1之间的中点，给利润空间
+                new_sl = (pos.entry_price + pos.tp1_price) / 2
+            else:
+                # 逆势单：严格保本
+                new_sl = pos.entry_price
             if is_paper:
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += tp1_pnl
-                pos.sl_price = pos.entry_price  # SL移至成本（保本）
+                pos.sl_price = new_sl
             elif auto:
                 await self.trader.place_market_order(symbol, exit_s, qty)
                 pos.quantity_remaining -= qty
@@ -671,10 +683,11 @@ class BinanceScalpBot:
                 new_sl = await self.trader.place_stop_loss_order(symbol, exit_s, pos.entry_price)
                 if new_sl and new_sl.get("orderId"):
                     pos.sl_order_id = new_sl["orderId"]
-                    pos.sl_price    = pos.entry_price
+                    pos.sl_price    = new_sl
             pct_margin = tp1_pnl / (pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)) * 100
-            logger.info("⚡ [%s] %s🟡 TP1 @ %.6f | 锁定50%%仓位 | 保证金+%.1f%% | SL已移至成本保本",
-                        symbol, tag, price, pct_margin)
+            sl_desc = "SL→中点保护" if is_trend_trade else "SL→成本保本"
+            logger.info("⚡ [%s] %s🟡 TP1 @ %.6f | 锁定%.0f%%仓位 | 保证金+%.1f%% | %s",
+                        symbol, tag, price, tp1_ratio * 100, pct_margin, sl_desc)
             set_scalp_position(symbol, pos.to_dict())
 
         # ── TP2：再锁30%，剩余20%开始追踪止损 ──────────────────────────
@@ -738,21 +751,56 @@ class BinanceScalpBot:
     # ─── 心跳日志（每 5 分钟汇报一次运行状态）────────────────────────────────
 
     def _maybe_print_fstat(self) -> None:
-        """每5分钟输出一次过滤统计，帮助调参"""
+        """每5分钟输出详细过滤统计，显示各层拦截率并给出调参建议"""
         now = time.monotonic()
         if now - self._fstat_ts < 300:
             return
         self._fstat_ts = now
-        s = self._fstat
-        total = s["checked"] or 1
-        logger.info(
-            "⚡ 过滤统计(5min) | 检测%d次 → 活跃不足%.0f%% | 无信号%.0f%% | "
-            "BTC过滤%d | Taker%d | VWAP%d | Hub%d | 通过%d",
-            s["checked"],
-            s["no_active"] / total * 100,
-            s["no_signal"] / total * 100,
-            s["btc_guard"], s["taker"], s["vwap"], s["hub"], s["passed"],
+        s   = self._fstat
+        cfg = self.cfg
+        n   = s["checked"] or 1
+
+        def pct(k): return s[k] / n * 100
+
+        # 判断哪一层是主要瓶颈
+        bottleneck = max(
+            ("no_active", pct("no_active")),
+            ("no_signal", pct("no_signal")),
+            key=lambda x: x[1]
+        )[0]
+
+        tip_active = (
+            f"可降低 活跃振幅(当前{cfg.get('SCALP_ACTIVE_RANGE_PCT',3)}%)"
+            if bottleneck == "no_active" else ""
         )
+        tip_signal = (
+            f"可降低 回调阈值(当前{cfg.get('SCALP_PULLBACK_PCT',1.5)}%) 或 "
+            f"反转阈值(当前{cfg.get('SCALP_MEAN_REVERT_PCT',4.5)}%)"
+            if bottleneck == "no_signal" else ""
+        )
+
+        lines = [
+            f"⚡ 超短线过滤统计 (最近5分钟) ─────────────────────────────────",
+            f"  总检测次数: {n}  (≈{n//300}次/秒, {len(self.monitored_symbols)}币)",
+            f"  ❌ 振幅不足: {s['no_active']:>5}次 ({pct('no_active'):5.1f}%)"
+            + (f"  ◄ 主瓶颈! {tip_active}" if tip_active else ""),
+            f"  ❌ 无入场信号: {s['no_signal']:>4}次 ({pct('no_signal'):5.1f}%)"
+            + (f"  ◄ 主瓶颈! {tip_signal}" if tip_signal else ""),
+            f"  ❌ BTC大盘过滤: {s['btc_guard']:>3}次"
+            + (f"  [可降低 BTC_GUARD_PCT(当前{cfg.get('BTC_GUARD_PCT',2)}%)]"
+               if s["btc_guard"] > 3 else ""),
+            f"  ❌ Taker比例: {s['taker']:>5}次"
+            + (f"  [可降低 Taker下限(当前{cfg.get('SCALP_TAKER_RATIO_MIN',0.55)})]"
+               if s["taker"] > 5 else ""),
+            f"  ❌ VWAP追高: {s['vwap']:>5}次"
+            + (f"  [可调高 VWAP_MAX_DEV(当前{cfg.get('SCALP_VWAP_MAX_DEV',5)}%)]"
+               if s["vwap"] > 5 else ""),
+            f"  ❌ Hub市场过滤: {s['hub']:>3}次",
+            f"  ✅ 通过→触发开仓: {s['passed']}次"
+            + (" ★" if s["passed"] > 0 else " (等待行情)"),
+            f"  ────────────────────────────────────────────────────────────",
+        ]
+        logger.info("\n".join(lines))
         for k in self._fstat:
             self._fstat[k] = 0
 
