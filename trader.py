@@ -49,8 +49,9 @@ class BinanceTrader:
             logger.warning("交易功能未开启：BINANCE_API_KEY 未配置。")
             return None
 
-        params["timestamp"] = int(time.time() * 1000)
-        params["signature"] = self._sign(params)
+        params["timestamp"]  = int(time.time() * 1000)
+        params["recvWindow"] = 10000   # 容忍最多10秒的服务器时钟偏差
+        params["signature"]  = self._sign(params)
         headers = {"X-MBX-APIKEY": self.api_key}
 
         try:

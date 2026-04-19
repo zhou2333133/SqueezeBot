@@ -999,7 +999,11 @@
           x-text="(scalpTotalPnl>=0?'+':'')+scalpTotalPnl.toFixed(2)+' U'"></span>
         <span class="text-xs text-gray-600" x-text="'胜率 '+scalpWinRate+'%'"></span>
       </div>
-      <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+      <div class="flex items-center gap-3">
+        <a href="/api/scalp/trades/csv" download class="text-xs text-gray-500 hover:text-orange-400 transition-colors" title="下载全部成交为 CSV">📥 CSV</a>
+        <button @click="copyScalpReport()" class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="生成策略分析报告并复制到剪贴板">📋 复制报告</button>
+        <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+      </div>
     </div>
     <div class="overflow-x-auto">
       <div x-show="scalpTrades.length===0" class="text-center text-gray-600 py-8 text-sm">暂无历史成交记录</div>
@@ -1945,6 +1949,16 @@ function app() {
 
     async loadBalance() {
       try { const d=await(await fetch('/api/account/balance')).json(); if(d.asset) this.balance=d } catch{}
+    },
+
+    async copyScalpReport() {
+      try {
+        const d = await(await fetch('/api/scalp/report')).json()
+        if (d.error) { this.showToast('❌ '+d.error, 'error'); return }
+        const text = JSON.stringify(d, null, 2)
+        await navigator.clipboard.writeText(text)
+        this.showToast('📋 分析报告已复制到剪贴板，可直接粘贴给 AI', 'success')
+      } catch(e) { this.showToast('❌ 复制失败: '+e, 'error') }
     },
 
     async loadSwingSignals() {

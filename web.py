@@ -1,12 +1,14 @@
 import asyncio
+import collections
 import csv
+import io
 import logging
 import os
 import queue as std_queue
 
 import aiohttp
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 import bot_state
@@ -252,6 +254,97 @@ async def get_scalp_trades(limit: int = 200):
 async def clear_scalp_trades():
     scalp_trade_history.clear()
     return JSONResponse({"status": "success", "message": "✅ 历史成交已清空"})
+
+
+@app.get("/api/scalp/trades/csv")
+async def export_scalp_trades_csv():
+    """下载全部超短线历史成交为 CSV 文件"""
+    trades = list(scalp_trade_history)
+    if not trades:
+        return JSONResponse({"message": "暂无成交记录"}, status_code=404)
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=trades[0].keys())
+    writer.writeheader()
+    writer.writerows(trades)
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=scalp_trades.csv"},
+    )
+
+
+@app.get("/api/scalp/report")
+async def get_scalp_report():
+    """返回策略分析摘要，供用户复制给 AI 分析"""
+    trades = list(scalp_trade_history)
+    cfg    = config_manager.settings
+    if not trades:
+        return JSONResponse({"error": "暂无成交记录"}, status_code=404)
+
+    total = len(trades)
+    wins  = sum(1 for t in trades if t.get("pnl_usdt", 0) > 0)
+    total_pnl = sum(t.get("pnl_usdt", 0) for t in trades)
+    win_pnls  = [t["pnl_usdt"] for t in trades if t.get("pnl_usdt", 0) > 0]
+    loss_pnls = [t["pnl_usdt"] for t in trades if t.get("pnl_usdt", 0) <= 0]
+
+    by_reason = dict(collections.Counter(t.get("close_reason", "?") for t in trades))
+    by_label  = dict(collections.Counter(t.get("signal_label", "?") for t in trades).most_common(10))
+    by_symbol = collections.Counter()
+    sym_pnl: dict[str, float] = {}
+    for t in trades:
+        s = t.get("symbol", "?")
+        by_symbol[s] += 1
+        sym_pnl[s] = sym_pnl.get(s, 0) + t.get("pnl_usdt", 0)
+
+    top5  = sorted(sym_pnl.items(), key=lambda x: x[1], reverse=True)[:5]
+    bot5  = sorted(sym_pnl.items(), key=lambda x: x[1])[:5]
+    best  = max(trades, key=lambda t: t.get("pnl_usdt", 0))
+    worst = min(trades, key=lambda t: t.get("pnl_usdt", 0))
+
+    report = {
+        "策略参数快照": {
+            "活跃振幅%":    cfg.get("SCALP_ACTIVE_RANGE_PCT"),
+            "回调阈值%":    cfg.get("SCALP_PULLBACK_PCT"),
+            "反转阈值%":    cfg.get("SCALP_MEAN_REVERT_PCT"),
+            "斜率阈值%/min": cfg.get("SCALP_SLOPE_THRESHOLD"),
+            "斜率回看K线":  cfg.get("SCALP_SLOPE_LOOKBACK"),
+            "右侧确认":     cfg.get("SCALP_CONFIRM_ENABLED"),
+            "止损%保证金":  cfg.get("SCALP_STOP_LOSS_PCT"),
+            "TP1%保证金":   cfg.get("SCALP_TP1_PCT"),
+            "TP2%保证金":   cfg.get("SCALP_TP2_PCT"),
+            "杠杆":         cfg.get("SCALP_LEVERAGE"),
+            "止损冷却min":  cfg.get("SCALP_SL_COOLDOWN_MINUTES"),
+        },
+        "整体统计": {
+            "总成交笔数":  total,
+            "盈利笔数":    wins,
+            "亏损笔数":    total - wins,
+            "胜率%":       round(wins / total * 100, 1),
+            "总盈亏USDT":  round(total_pnl, 4),
+            "平均盈利USDT": round(sum(win_pnls) / len(win_pnls), 4) if win_pnls else 0,
+            "平均亏损USDT": round(sum(loss_pnls) / len(loss_pnls), 4) if loss_pnls else 0,
+            "盈亏比":      round(
+                (sum(win_pnls) / len(win_pnls)) / abs(sum(loss_pnls) / len(loss_pnls)), 2
+            ) if win_pnls and loss_pnls else "N/A",
+        },
+        "最佳单笔": {
+            "品种": best.get("symbol"), "方向": best.get("direction"),
+            "信号": best.get("signal_label"), "盈亏USDT": best.get("pnl_usdt"),
+            "时间": best.get("entry_time"),
+        },
+        "最差单笔": {
+            "品种": worst.get("symbol"), "方向": worst.get("direction"),
+            "信号": worst.get("signal_label"), "盈亏USDT": worst.get("pnl_usdt"),
+            "时间": worst.get("entry_time"),
+        },
+        "平仓原因分布":   by_reason,
+        "信号类型分布":   by_label,
+        "盈利最多币种TOP5":  dict(top5),
+        "亏损最多币种TOP5":  dict(bot5),
+        "过滤统计快照":  _signals_mod.scalp_filter_stats or "（5分钟后刷新）",
+    }
+    return JSONResponse(report)
 
 
 @app.get("/api/scalp/paper/positions")
