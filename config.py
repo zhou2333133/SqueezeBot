@@ -60,6 +60,8 @@ class ConfigManager:
         "SCALP_TP2_PCT":          (0.1,    200.0),
         "SCALP_TP2_RATIO":        (0.1,    0.9),
         "SCALP_TP3_TRAIL_PCT":    (0.1,    5.0),
+        "SCALP_SLOPE_THRESHOLD":  (0.05,   5.0),
+        "SCALP_SLOPE_LOOKBACK":   (3,      30),
         # 一直做空
         "FADE_TRIGGER_PCT":       (1.0,    50.0),
         "FADE_MAX_POSITIONS":     (1,      20),
@@ -144,6 +146,9 @@ class ConfigManager:
             "SCALP_PULLBACK_PCT":      1.5,
             "SCALP_MEAN_REVERT_PCT":   4.5,
             "SCALP_PAPER_TRADE":       False,
+            "SCALP_SLOPE_THRESHOLD":   0.20,
+            "SCALP_SLOPE_LOOKBACK":    8,
+            "SCALP_CONFIRM_ENABLED":   True,
             # ── 一直做空策略 ──────────────────────────────────────────────────
             "FADE_ENABLED":            False,
             "FADE_AUTO_TRADE":         False,

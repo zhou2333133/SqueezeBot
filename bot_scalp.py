@@ -75,6 +75,8 @@ class BinanceScalpBot:
         self.kline_buffer:         dict[str, list]          = {}
         self.monitored_symbols:    list[str]                = []
         self.cooldown_symbols:     dict[str, float]         = {}  # 止损冷却（默认关闭）
+        self.slope_at_cooldown:    dict[str, float]         = {}  # 止损时记录斜率方向，用于提前解冻
+        self.pending_entries:      dict[str, dict]          = {}  # 等待右侧K线确认的信号
         self.last_realtime_check:  dict[str, float]         = {}  # 实时检测防抖（每5秒最多触发一次）
         self.running:              bool                     = False
         self.session:              aiohttp.ClientSession | None = None
@@ -198,7 +200,7 @@ class BinanceScalpBot:
                 set_scalp_position(symbol, self.open_positions[symbol].to_dict())
                 await self._check_tp_sl(symbol, close_price)
             # 实时动量检测：不等K线关闭，每5秒触发一次（快速抓波动）
-            elif self.cfg.get("SCALP_ENABLED", False):
+            elif self.cfg.get("SCALP_ENABLED", False) and symbol not in self.pending_entries:
                 now = time.monotonic()
                 last = self.last_realtime_check.get(symbol, 0)
                 if now - last >= 5:
@@ -222,9 +224,30 @@ class BinanceScalpBot:
             if len(buf) > 60:
                 buf.pop(0)
             self.last_realtime_check.pop(symbol, None)  # K线关闭后重置，让下根K线重新实时检测
+            # 优先检查待确认信号；无论结果如何，本K线不重复触发动量扫描
+            if symbol in self.pending_entries and symbol not in self.open_positions:
+                await self._check_pending_entry(symbol, buf)
+                return
             await self._check_momentum(symbol)
 
     # ─── 辅助：VWAP ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _calc_slope(closes: list[float], n: int = 8) -> float:
+        """
+        计算最近 n 根K线收盘价的线性回归斜率（归一化为均价的%/根）
+        正值=上升，负值=下降，绝对值越大趋势越陡峭（瀑布/火箭判断依据）
+        """
+        if len(closes) < n:
+            return 0.0
+        pts = closes[-n:]
+        x_mean = (n - 1) / 2.0
+        y_mean = sum(pts) / n
+        if y_mean == 0:
+            return 0.0
+        num = sum((i - x_mean) * (pts[i] - y_mean) for i in range(n))
+        den = sum((i - x_mean) ** 2 for i in range(n))
+        return (num / den) / y_mean * 100 if den > 0 else 0.0
 
     @staticmethod
     def _calc_vwap(buf: list) -> float:
@@ -266,20 +289,26 @@ class BinanceScalpBot:
 
     def _detect_trend(self, buf: list) -> str:
         """
-        第二层：用均线排列判断趋势方向
-        MA5 > MA10 > MA20 → 上行趋势（UP）
-        MA5 < MA10 < MA20 → 下行趋势（DOWN）
-        其他 → 震荡横盘（FLAT）
+        第二层：用均线排列 + 斜率判断趋势方向
+        MA5 > MA10 > MA20 + 斜率陡峭 → 单边飙升（WATERFALL_UP）
+        MA5 > MA10 > MA20             → 上行趋势（UP）
+        MA5 < MA10 < MA20 + 斜率陡峭 → 单边瀑布（WATERFALL_DOWN）
+        MA5 < MA10 < MA20             → 下行趋势（DOWN）
+        其他                           → 震荡横盘（FLAT）
         """
         if len(buf) < 20:
             return "FLAT"
-        ma5  = sum(k["c"] for k in buf[-5:])  / 5
-        ma10 = sum(k["c"] for k in buf[-10:]) / 10
-        ma20 = sum(k["c"] for k in buf[-20:]) / 20
+        closes = [k["c"] for k in buf]
+        ma5  = sum(closes[-5:])  / 5
+        ma10 = sum(closes[-10:]) / 10
+        ma20 = sum(closes[-20:]) / 20
+        n       = self.cfg.get("SCALP_SLOPE_LOOKBACK",  8)
+        thresh  = self.cfg.get("SCALP_SLOPE_THRESHOLD", 0.20)
+        slope   = self._calc_slope(closes, n=n)
         if ma5 > ma10 > ma20:
-            return "UP"
+            return "WATERFALL_UP"   if slope >  thresh else "UP"
         if ma5 < ma10 < ma20:
-            return "DOWN"
+            return "WATERFALL_DOWN" if slope < -thresh else "DOWN"
         return "FLAT"
 
     def _get_signal(self, buf: list, cp: float, trend: str) -> tuple[str | None, float, str]:
@@ -287,59 +316,55 @@ class BinanceScalpBot:
         第三层：根据趋势决定入场信号
         返回 (direction, trigger_pct, signal_label)
 
-        ── 上行趋势：等回调买入（逢低做多）────────────────────────────────
-          价格从近期高点回落 pullback_pct% → LONG
-          逻辑：趋势向上，短暂回调是买入机会，反转策略与顺势策略双重确认
+        WATERFALL_UP / UP   → 回调买多（顺势）
+        WATERFALL_DOWN / DOWN → 反弹做空（顺势）
+        FLAT                → 偏离均线做反转
 
-        ── 下行趋势：等反弹做空（逢高做空）────────────────────────────────
-          价格从近期低点反弹 pullback_pct% → SHORT
-          逻辑：趋势向下，短暂反弹是做空机会，双重确认
-
-        ── 横盘震荡：偏离均线做反转────────────────────────────────────────
-          价格偏离MA20超过 mean_revert_pct% → 超涨做空 / 超跌做多
-          逻辑：无趋势时价格回归均值概率高
+        瀑布状态（WATERFALL_*）：只允许顺势方向，禁止逆势。
         """
         cfg = self.cfg
+        # 统一处理瀑布与普通趋势：瀑布只是信号标签不同
+        is_waterfall    = trend.startswith("WATERFALL")
+        effective_trend = trend.replace("WATERFALL_UP", "UP").replace("WATERFALL_DOWN", "DOWN")
+
         pullback_pct    = cfg.get("SCALP_PULLBACK_PCT",    2.5)
         mean_revert_pct = cfg.get("SCALP_MEAN_REVERT_PCT", 7.0)
 
-        if trend == "UP":
+        if effective_trend == "UP":
             if not cfg.get("SCALP_ENABLE_LONG", True):
                 return None, 0.0, ""
-            # 近5根K线的最高收盘价作为"近期高点"
             local_high = max(k["c"] for k in buf[-5:])
             if local_high <= 0:
                 return None, 0.0, ""
             drop_pct = (local_high - cp) / local_high * 100
             if drop_pct < pullback_pct:
                 return None, 0.0, ""
-            # 回调量能应小于上涨量能（卖方力量弱，回调是洗盘而非趋势反转）
             if len(buf) >= 7:
-                vol_recent  = sum(k["q"] for k in buf[-2:]) / 2
-                vol_upmove  = sum(k["q"] for k in buf[-7:-2]) / 5
+                vol_recent = sum(k["q"] for k in buf[-2:]) / 2
+                vol_upmove = sum(k["q"] for k in buf[-7:-2]) / 5
                 if vol_upmove > 0 and vol_recent > vol_upmove * 1.8:
-                    return None, 0.0, ""  # 回调量能过大，可能真反转，跳过
-            return "LONG", drop_pct, "上行回调买"
+                    return None, 0.0, ""
+            label = "飞升追多" if is_waterfall else "上行回调买"
+            return "LONG", drop_pct, label
 
-        if trend == "DOWN":
+        if effective_trend == "DOWN":
             if not cfg.get("SCALP_ENABLE_SHORT", True):
                 return None, 0.0, ""
-            # 近5根K线的最低收盘价作为"近期低点"
             local_low = min(k["c"] for k in buf[-5:])
             if local_low <= 0:
                 return None, 0.0, ""
             rise_pct = (cp - local_low) / local_low * 100
             if rise_pct < pullback_pct:
                 return None, 0.0, ""
-            # 反弹量能应小于下跌量能（买方力量弱，反弹是死猫弹）
             if len(buf) >= 7:
                 vol_recent   = sum(k["q"] for k in buf[-2:]) / 2
                 vol_downmove = sum(k["q"] for k in buf[-7:-2]) / 5
                 if vol_downmove > 0 and vol_recent > vol_downmove * 1.8:
-                    return None, 0.0, ""  # 反弹量能过大，可能真反转，跳过
-            return "SHORT", rise_pct, "下行反弹空"
+                    return None, 0.0, ""
+            label = "瀑布追空" if is_waterfall else "下行反弹空"
+            return "SHORT", rise_pct, label
 
-        # FLAT：均线偏离做反转
+        # FLAT：均线偏离做反转（瀑布状态不会到达这里）
         if len(buf) < 20:
             return None, 0.0, ""
         ma20 = sum(k["c"] for k in buf[-20:]) / 20
@@ -366,13 +391,21 @@ class BinanceScalpBot:
             return
 
         # 冷却（默认关闭；SCALP_SL_COOLDOWN_MINUTES > 0 时启用）
+        # 额外：若斜率方向完全反转，可提前解冻（避免错过真正的趋势转换机会）
         cooldown_mins = cfg.get("SCALP_SL_COOLDOWN_MINUTES", 0)
         if symbol in self.cooldown_symbols:
             if cooldown_mins > 0:
                 elapsed = (time.monotonic() - self.cooldown_symbols[symbol]) / 60
                 if elapsed < cooldown_mins:
-                    return
+                    closes      = [k["c"] for k in buf]
+                    cur_slope   = self._calc_slope(closes)
+                    saved_slope = self.slope_at_cooldown.get(symbol, 0.0)
+                    slope_reversed = (saved_slope < 0 < cur_slope) or (cur_slope < 0 < saved_slope)
+                    if not slope_reversed:
+                        return
+                    logger.info("⚡ [%s] 斜率反转 (%.3f→%.3f)，提前解除冷却", symbol, saved_slope, cur_slope)
             del self.cooldown_symbols[symbol]
+            self.slope_at_cooldown.pop(symbol, None)
 
         if len(self.open_positions) >= cfg.get("SCALP_MAX_POSITIONS", 3):
             return
@@ -479,7 +512,81 @@ class BinanceScalpBot:
         src = "实时" if is_realtime else ""
         logger.info("⚡ [%s] %s[%s|%s趋势] %.2f%% → %s | Taker%.0f%%",
                     symbol, src, label, trend, trigger_pct, direction, taker_ratio * 100)
-        await self._execute_entry(symbol, direction, trigger_pct, label)
+
+        # 瀑布趋势：高置信度顺势信号，直接入场
+        # 实时信号：无法等待K线关闭，直接入场
+        # 右侧确认关闭：直接入场
+        is_waterfall    = trend.startswith("WATERFALL")
+        confirm_enabled = cfg.get("SCALP_CONFIRM_ENABLED", True)
+
+        if is_waterfall or is_realtime or not confirm_enabled:
+            await self._execute_entry(symbol, direction, trigger_pct, label)
+        elif symbol not in self.pending_entries:
+            self.pending_entries[symbol] = {
+                "direction":      direction,
+                "trigger_pct":    trigger_pct,
+                "label":          label,
+                "ref_price":      cp,
+                "candles_waited": 0,
+            }
+            logger.info("⚡ [%s] 📋 [%s] 触发阈值，等待右侧K线确认...", symbol, label)
+
+    # ─── 右侧确认 ─────────────────────────────────────────────────────────────
+
+    async def _check_pending_entry(self, symbol: str, buf: list) -> None:
+        """
+        右侧入场确认（每根闭合K线调用一次）
+        确认条件（满足任一即可）：
+          A. 价格未创新低/高（止跌/止涨） 且 Taker 买卖方向改善
+          B. 当前收盘价站上/站下 EMA5（均线确认方向）
+        超过 3 根K线未确认 → 信号作废
+        """
+        if symbol in self.open_positions:
+            self.pending_entries.pop(symbol, None)
+            return
+
+        pending = self.pending_entries.get(symbol)
+        if not pending:
+            return
+
+        pending["candles_waited"] = pending.get("candles_waited", 0) + 1
+        if pending["candles_waited"] > 3:
+            logger.debug("⚡ [%s] 右侧确认超时 (3根K线内未满足条件)，信号作废", symbol)
+            del self.pending_entries[symbol]
+            return
+
+        if len(buf) < 5:
+            return
+
+        cp        = buf[-1]["c"]
+        direction = pending["direction"]
+        ref_price = pending["ref_price"]
+
+        ema5 = sum(k["c"] for k in buf[-5:]) / 5
+
+        # Taker 趋势：比较最近两根已闭合K线
+        if len(buf) >= 3:
+            taker_prev = buf[-3]["Q"] / (buf[-3]["q"] or 1)
+            taker_curr = buf[-2]["Q"] / (buf[-2]["q"] or 1)
+        else:
+            taker_prev = taker_curr = 0.5
+
+        if direction == "LONG":
+            no_new_low      = cp >= ref_price * 0.997       # 未创新低
+            taker_improving = taker_curr > taker_prev       # 买盘回升
+            above_ema5      = cp >= ema5                    # 站上 EMA5
+            confirmed = (no_new_low and taker_improving) or above_ema5
+        else:
+            no_new_high     = cp <= ref_price * 1.003       # 未创新高
+            taker_improving = taker_curr < taker_prev       # 卖盘回升
+            below_ema5      = cp <= ema5                    # 站下 EMA5
+            confirmed = (no_new_high and taker_improving) or below_ema5
+
+        if confirmed:
+            logger.info("⚡ [%s] ✅ 右侧确认 [%s] (第%d根K线)",
+                        symbol, pending["label"], pending["candles_waited"])
+            del self.pending_entries[symbol]
+            await self._execute_entry(symbol, direction, pending["trigger_pct"], pending["label"])
 
     # ─── 开仓 ──────────────────────────────────────────────────────────────────
 
@@ -745,6 +852,8 @@ class BinanceScalpBot:
                                   (pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)) * 100
                 logger.info("⚡ [%s] %s🔴 SL @ %.6f | 保证金亏损 %.1f%%", symbol, tag, price, loss_margin_pct)
                 self.cooldown_symbols[symbol] = time.monotonic()  # 止损后冷却，防连续踩坑
+                closes = [k["c"] for k in self.kline_buffer.get(symbol, [])]
+                self.slope_at_cooldown[symbol] = self._calc_slope(closes)
             self._record_scalp_trade(pos, price, reason, close_pnl)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
