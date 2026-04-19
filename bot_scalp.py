@@ -77,6 +77,12 @@ class BinanceScalpBot:
         self.running:              bool                     = False
         self.session:              aiohttp.ClientSession | None = None
         self.trader:               BinanceTrader | None         = None
+        # ── 过滤统计（每5分钟输出一次，帮助调参）─────────────────────────
+        self._fstat:               dict[str, int]           = {
+            "checked": 0, "no_active": 0, "no_signal": 0,
+            "btc_guard": 0, "taker": 0, "vwap": 0, "hub": 0, "passed": 0,
+        }
+        self._fstat_ts:            float                    = 0.0
 
     @property
     def cfg(self) -> dict:
@@ -376,8 +382,12 @@ class BinanceScalpBot:
         is_realtime = realtime_price is not None
         cp = realtime_price if is_realtime else buf[-1]["c"]
 
+        self._fstat["checked"] += 1
+
         # ── 第一层：这币活跃吗？──────────────────────────────────────────
         if not self._is_coin_active(buf, cp):
+            self._fstat["no_active"] += 1
+            self._maybe_print_fstat()
             return
 
         # ── 第二层：当前趋势方向？────────────────────────────────────────
@@ -386,15 +396,17 @@ class BinanceScalpBot:
         # ── 第三层：有没有入场信号？──────────────────────────────────────
         direction, trigger_pct, label = self._get_signal(buf, cp, trend)
         if not direction:
+            self._fstat["no_signal"] += 1
+            self._maybe_print_fstat()
             return
 
         # ── BTC 大盘方向过滤 ──────────────────────────────────────────────
         if not self._btc_guard(direction):
+            self._fstat["btc_guard"] += 1
+            self._maybe_print_fstat()
             return
 
         # ── Taker 比例过滤 ────────────────────────────────────────────────
-        # 趋势回调入场：Taker 门槛适当放宽（回调本身就是短暂的反向Taker）
-        # 均线反转入场：用标准门槛
         base_min  = cfg.get("SCALP_TAKER_RATIO_MIN", 0.55)
         taker_min = (base_min - 0.08) if "回调" in label or "反弹" in label else base_min
         taker_min = max(0.42, taker_min)
@@ -405,14 +417,18 @@ class BinanceScalpBot:
         taker_ratio = total_qb / total_q if total_q > 0 else 0.5
 
         if direction == "LONG" and taker_ratio < taker_min:
+            self._fstat["taker"] += 1
             if not is_realtime:
                 logger.info("⚡ [%s] [%s] Taker买入%.0f%% 不足(需>%.0f%%)，跳过",
                             symbol, label, taker_ratio * 100, taker_min * 100)
+            self._maybe_print_fstat()
             return
         if direction == "SHORT" and taker_ratio > (1 - taker_min):
+            self._fstat["taker"] += 1
             if not is_realtime:
                 logger.info("⚡ [%s] [%s] Taker卖出%.0f%% 不足，跳过",
                             symbol, label, (1 - taker_ratio) * 100)
+            self._maybe_print_fstat()
             return
 
         # ── VWAP 过度追高防护（仅对非均线反转的做多生效）────────────────
@@ -421,32 +437,43 @@ class BinanceScalpBot:
             dev_pct = (cp - vwap) / vwap * 100 if vwap > 0 else 0
             vwap_max = cfg.get("SCALP_VWAP_MAX_DEV", 5.0)
             if dev_pct > vwap_max:
+                self._fstat["vwap"] += 1
                 if not is_realtime:
                     logger.info("⚡ [%s] 价格偏离VWAP +%.1f%%，拒绝追高", symbol, dev_pct)
+                self._maybe_print_fstat()
                 return
 
         # ── MarketHub: 基差过滤 + Taker趋势辅助确认 ─────────────────────
         basis_pct = hub.basis(symbol)
         if direction == "LONG" and basis_pct > 2.0:
+            self._fstat["hub"] += 1
             if not is_realtime:
                 logger.info("⚡ [%s] 基差+%.2f%% 升水过高，拒绝追多", symbol, basis_pct)
+            self._maybe_print_fstat()
             return
         if direction == "SHORT" and basis_pct < -1.5:
+            self._fstat["hub"] += 1
             if not is_realtime:
                 logger.info("⚡ [%s] 基差%.2f%% 贴水过深，空头已拥挤，跳过", symbol, basis_pct)
+            self._maybe_print_fstat()
             return
 
         hub_taker = hub.taker(symbol)
         hub_trend = hub.taker_trend(symbol)
         if direction == "LONG" and hub_taker > 0 and hub_taker < 0.40 and hub_trend == "falling":
+            self._fstat["hub"] += 1
             if not is_realtime:
                 logger.info("⚡ [%s] Hub Taker买入仅%.0f%%且趋势下降，跳过多单", symbol, hub_taker * 100)
+            self._maybe_print_fstat()
             return
         if direction == "SHORT" and hub_taker > 0 and hub_taker > 0.60 and hub_trend == "rising":
+            self._fstat["hub"] += 1
             if not is_realtime:
                 logger.info("⚡ [%s] Hub Taker买入%.0f%%且趋势上升，跳过空单", symbol, hub_taker * 100)
+            self._maybe_print_fstat()
             return
 
+        self._fstat["passed"] += 1
         src = "实时" if is_realtime else ""
         logger.info("⚡ [%s] %s[%s|%s趋势] %.2f%% → %s | Taker%.0f%%",
                     symbol, src, label, trend, trigger_pct, direction, taker_ratio * 100)
@@ -710,6 +737,25 @@ class BinanceScalpBot:
 
     # ─── 心跳日志（每 5 分钟汇报一次运行状态）────────────────────────────────
 
+    def _maybe_print_fstat(self) -> None:
+        """每5分钟输出一次过滤统计，帮助调参"""
+        now = time.monotonic()
+        if now - self._fstat_ts < 300:
+            return
+        self._fstat_ts = now
+        s = self._fstat
+        total = s["checked"] or 1
+        logger.info(
+            "⚡ 过滤统计(5min) | 检测%d次 → 活跃不足%.0f%% | 无信号%.0f%% | "
+            "BTC过滤%d | Taker%d | VWAP%d | Hub%d | 通过%d",
+            s["checked"],
+            s["no_active"] / total * 100,
+            s["no_signal"] / total * 100,
+            s["btc_guard"], s["taker"], s["vwap"], s["hub"], s["passed"],
+        )
+        for k in self._fstat:
+            self._fstat[k] = 0
+
     async def _heartbeat_loop(self) -> None:
         await asyncio.sleep(30)  # 启动后稍等，让 WS 先连上
         while self.running:
@@ -730,9 +776,9 @@ class BinanceScalpBot:
                 "开启" if enabled else "关闭",
                 len(self.monitored_symbols), buffered,
                 positions, real_cnt, paper_cnt,
-                cfg.get("SCALP_PULLBACK_PCT", 2.5),
-                cfg.get("SCALP_MEAN_REVERT_PCT", 7.0),
-                cfg.get("SCALP_ACTIVE_RANGE_PCT", 6.0),
+                cfg.get("SCALP_PULLBACK_PCT", 1.5),
+                cfg.get("SCALP_MEAN_REVERT_PCT", 4.5),
+                cfg.get("SCALP_ACTIVE_RANGE_PCT", 3.0),
                 mode_str,
             )
             await asyncio.sleep(300)  # 每 5 分钟
