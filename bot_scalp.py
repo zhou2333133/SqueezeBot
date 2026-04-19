@@ -646,7 +646,8 @@ class BinanceScalpBot:
                         symbol, exit_s, activ, trail_pct, pos.quantity_remaining,
                     )
             pos.trail_ref_price = price  # 从当前价开始追踪
-            pct_margin = (pos.realized_pnl + tp2_pnl) / (pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)) * 100
+            margin_base = pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)
+            pct_margin = (pos.realized_pnl + tp2_pnl) / margin_base * 100 if margin_base > 0 else 0.0
             logger.info("⚡ [%s] %s🟢 TP2 @ %.6f | 再锁30%%仓位 | 累计保证金+%.1f%% | 剩余20%%追踪止损中",
                         symbol, tag, price, pct_margin)
             set_scalp_position(symbol, pos.to_dict())

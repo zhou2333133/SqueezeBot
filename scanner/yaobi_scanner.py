@@ -135,7 +135,6 @@ class YaobiScanner:
                         fut_enrich += 1
                     else:
                         # Create new candidate from futures data
-                        from scanner.candidates import Candidate
                         c = Candidate(
                             symbol=sym,
                             name=sym,
