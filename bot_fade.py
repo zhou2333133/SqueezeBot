@@ -16,6 +16,7 @@ from datetime import datetime
 import aiohttp
 
 from config import config_manager
+from market_hub import hub
 from signals import add_fade_signal, set_fade_position, add_fade_trade
 from trader import BinanceTrader
 
@@ -259,6 +260,22 @@ class BinanceFadeBot:
 
         # ── BTC 方向过滤 ────────────────────────────────────────────────────
         if not self._btc_guard_short():
+            return
+
+        # ── MarketHub: 散户拥挤多头 + Taker衰竭确认 ────────────────────────
+        # 散户极度看多时做空胜率更高；Taker买入趋势仍上升则等待衰竭
+        hub_taker_trend = hub.taker_trend(symbol)
+        hub_retail_long = hub.retail_long(symbol)
+        hub_basis = hub.basis(symbol)
+
+        # 基差过深贴水 → 空头已拥挤，跳过
+        if hub_basis < -1.5:
+            logger.info("📉 [%s] 基差%.2f%% 贴水过深，空头已拥挤，跳过", symbol, hub_basis)
+            return
+
+        # Taker还在加速上升 + 散户未偏多 → 信号不成熟，等待
+        if hub_taker_trend == "rising" and hub_retail_long < 0.60:
+            logger.debug("📉 [%s] Taker仍在上升且散户未极端偏多，等待衰竭", symbol)
             return
 
         # ── REST 精确验证 (15m K 线 + VWAP + MTF) ──────────────────────────

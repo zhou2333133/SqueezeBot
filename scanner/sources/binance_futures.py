@@ -14,6 +14,8 @@ import logging
 
 import aiohttp
 
+from market_hub import hub
+
 logger = logging.getLogger(__name__)
 
 _BASE = "https://fapi.binance.com"
@@ -135,6 +137,13 @@ async def _analyze_symbol(
             long_pct = ls / (1 + ls) * 100
             result["whale_long_ratio"] = round(long_pct / 100, 3)
             result["short_crowd_pct"]  = round(100 - long_pct, 1)
+            hub.update_smart_ls(symbol, result["whale_long_ratio"])
+
+        # ── 更新 Hub OI ──────────────────────────────────────────────────────
+        if isinstance(oi_hist_4h, list) and oi_hist_4h:
+            oi_usdt_now = float(oi_hist_4h[-1].get("sumOpenInterestValue", 0) or 0)
+            if oi_usdt_now > 0:
+                hub.update_bnc_oi(symbol, oi_usdt_now)
 
         # ── 信号生成 & 分类 ──────────────────────────────────────────────────
         sigs: list[str] = []

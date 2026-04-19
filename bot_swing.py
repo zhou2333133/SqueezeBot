@@ -7,6 +7,7 @@ import aiohttp
 import pandas as pd
 
 from config import config_manager, DATA_DIR, MAX_CONCURRENT_REQUESTS, SURF_API_KEY
+from market_hub import hub
 from okx_client import OKXOnChainClient
 from signals import add_signal, signals_history
 from trader import BinanceTrader
@@ -289,14 +290,17 @@ class BinanceSqueezeBot:
         is_smart_money_short = (whale_ls  and whale_ls  <= cfg["RETAIL_LS_MAX"]) and \
                                (retail_ls and retail_ls >= cfg["WHALE_LS_MIN"])
 
+        hub_basis = hub.basis(symbol)
         basic_filter_long  = (is_cap_valid and is_smart_money_long
                                and last_funding_rate <= 0.0005
                                and price_change > btc_change
-                               and oi_surge_ratio > cfg["OI_SURGE_RATIO"])
+                               and oi_surge_ratio > cfg["OI_SURGE_RATIO"]
+                               and hub_basis < 2.0)       # 基差<2% 避免过热追多
         basic_filter_short = (is_cap_valid and is_smart_money_short
                                and last_funding_rate >= -0.0005
                                and price_change < btc_change
-                               and oi_surge_ratio > cfg["OI_SURGE_RATIO"])
+                               and oi_surge_ratio > cfg["OI_SURGE_RATIO"]
+                               and hub_basis > -1.5)      # 基差>-1.5% 避免空头拥挤
 
         signal_direction = None
         if cfg.get("ENABLE_LONG_STRATEGY", True)  and basic_filter_long:
@@ -382,14 +386,19 @@ class BinanceSqueezeBot:
         ai_score = 100
         if cfg.get("ENABLE_AI_AGENT", True) and SURF_API_KEY and SURF_API_KEY != "YOUR_SURF_API_KEY":
             ai_score = 0  # fail closed — 必须从 API 获取实际分数
+            hub_m = hub.get(symbol)
+            hub_sig = hub_m.signal_str()
             ai_context = (
                 f"Price Change 24h: {price_change:.2f}% (BTC: {btc_change:.2f}%) | "
                 f"Funding: {last_funding_rate*100:.4f}% | "
                 f"OI: ${latest_oi/1e6:.2f}M (surge {oi_surge_ratio:.2f}x) | "
                 f"Flow: ${flow_data['total_flow']/1e6:.2f}M ({flow_ratio*100:.2f}% of OI) | "
                 f"Whales L/S={whale_ls}, Retail L/S={retail_ls} | "
+                f"Hub[Taker1h={hub_m.taker_buy_pct_1h*100:.0f}%{hub_m.taker_buy_trend[:1].upper()} "
+                f"LS-div={hub_m.ls_divergence*100:+.0f}% Basis={hub_m.basis_pct:+.2f}%] | "
                 f"News: {news_context} | Liq: {liq_context} | "
                 f"MTF: {timing_reason} | OKX: {okx_context}"
+                + (f" | Market: {hub_sig}" if hub_sig else "")
             )
             prompt = (
                 f"Crypto analyst: evaluate a {signal_direction} trade for {symbol}. "

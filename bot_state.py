@@ -1,5 +1,8 @@
 import asyncio
 
+# 全局市场数据中心
+hub_task: asyncio.Task | None = None
+
 # 超短线机器人全局状态（run.py 初始化，web.py 读写）
 scalp_task: asyncio.Task | None = None
 scalp_bot = None  # BinanceScalpBot 实例

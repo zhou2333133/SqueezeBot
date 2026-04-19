@@ -7,6 +7,7 @@ import bot_state
 from bot_swing import BinanceSqueezeBot
 from config import config_manager, LOGS_DIR
 from log_manager import setup_logging
+from market_hub import hub
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,10 @@ async def main() -> None:
     logger.info("⏳ 正在启动 SqueezeBot...")
 
     swing_bot = BinanceSqueezeBot()
+
+    # 启动全局市场数据中心 (所有机器人共享)
+    bot_state.hub_task = asyncio.create_task(hub.run())
+    logger.info("📡 MarketHub 已作为后台任务启动")
 
     # 若配置已启用超短线，自动拉起
     if config_manager.settings.get("SCALP_ENABLED", False):

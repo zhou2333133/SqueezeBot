@@ -12,6 +12,7 @@ from datetime import datetime
 import aiohttp
 
 from config import config_manager
+from market_hub import hub
 from signals import add_scalp_signal, set_scalp_position, add_scalp_trade
 from trader import BinanceTrader
 
@@ -423,6 +424,28 @@ class BinanceScalpBot:
                 if not is_realtime:
                     logger.info("⚡ [%s] 价格偏离VWAP +%.1f%%，拒绝追高", symbol, dev_pct)
                 return
+
+        # ── MarketHub: 基差过滤 + Taker趋势辅助确认 ─────────────────────
+        basis_pct = hub.basis(symbol)
+        if direction == "LONG" and basis_pct > 2.0:
+            if not is_realtime:
+                logger.info("⚡ [%s] 基差+%.2f%% 升水过高，拒绝追多", symbol, basis_pct)
+            return
+        if direction == "SHORT" and basis_pct < -1.5:
+            if not is_realtime:
+                logger.info("⚡ [%s] 基差%.2f%% 贴水过深，空头已拥挤，跳过", symbol, basis_pct)
+            return
+
+        hub_taker = hub.taker(symbol)
+        hub_trend = hub.taker_trend(symbol)
+        if direction == "LONG" and hub_taker > 0 and hub_taker < 0.40 and hub_trend == "falling":
+            if not is_realtime:
+                logger.info("⚡ [%s] Hub Taker买入仅%.0f%%且趋势下降，跳过多单", symbol, hub_taker * 100)
+            return
+        if direction == "SHORT" and hub_taker > 0 and hub_taker > 0.60 and hub_trend == "rising":
+            if not is_realtime:
+                logger.info("⚡ [%s] Hub Taker买入%.0f%%且趋势上升，跳过空单", symbol, hub_taker * 100)
+            return
 
         src = "实时" if is_realtime else ""
         logger.info("⚡ [%s] %s[%s|%s趋势] %.2f%% → %s | Taker%.0f%%",
