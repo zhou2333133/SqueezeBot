@@ -4,7 +4,6 @@ import logging
 import uvicorn
 
 import bot_state
-from bot_swing import BinanceSqueezeBot
 from config import config_manager, LOGS_DIR
 from log_manager import setup_logging
 from market_hub import hub
@@ -15,8 +14,6 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     setup_logging(log_dir=LOGS_DIR)
     logger.info("⏳ 正在启动 SqueezeBot...")
-
-    swing_bot = BinanceSqueezeBot()
 
     # 启动全局市场数据中心 (所有机器人共享)
     bot_state.hub_task = asyncio.create_task(hub.run())
@@ -46,7 +43,7 @@ async def main() -> None:
     server = uvicorn.Server(uvi_config)
 
     logger.info("🌐 Web 控制台: http://localhost:8000")
-    await asyncio.gather(swing_bot.run(), server.serve())
+    await server.serve()
 
 
 if __name__ == "__main__":

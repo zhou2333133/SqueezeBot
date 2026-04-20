@@ -127,6 +127,50 @@ async def get_token_price_info(
     return None
 
 
+async def get_token_trades(
+    session: aiohttp.ClientSession,
+    chain_index: str,
+    token_address: str,
+    limit: int = 100,
+) -> dict:
+    """获取近期成交记录，返回大单(>$5K)占比，用于识别机构吸筹。"""
+    if not _enabled():
+        return {"large_trade_pct": 0.0, "total_usd": 0.0, "trade_count": 0}
+    import json as _json
+    body_dict = {
+        "chainIndex":           chain_index,
+        "tokenContractAddress": token_address,
+        "limit":                str(limit),
+    }
+    body_str = _json.dumps(body_dict)
+    path     = "/api/v5/dex/aggregator/trade-records"
+    try:
+        async with session.post(
+            _BASE + path,
+            data=body_str,
+            headers=_headers_post(path, body_str),
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data.get("code") == "0":
+                    trades = data.get("data", {}).get("tradeList", [])
+                    if not trades:
+                        return {"large_trade_pct": 0.0, "total_usd": 0.0, "trade_count": 0}
+                    total_usd   = sum(float(t.get("usdValue", 0) or 0) for t in trades)
+                    large_usd   = sum(float(t.get("usdValue", 0) or 0) for t in trades
+                                      if float(t.get("usdValue", 0) or 0) >= 5000)
+                    large_pct   = large_usd / total_usd if total_usd > 0 else 0.0
+                    return {
+                        "large_trade_pct": round(large_pct, 4),
+                        "total_usd":       round(total_usd, 2),
+                        "trade_count":     len(trades),
+                    }
+    except Exception as e:
+        logger.debug("OKX trade-records 异常: %s", e)
+    return {"large_trade_pct": 0.0, "total_usd": 0.0, "trade_count": 0}
+
+
 def _parse_token_list(items: list) -> list[dict]:
     results = []
     for t in items:

@@ -64,6 +64,27 @@ class Candidate:
     whale_long_ratio:  float = 0.5   # 大户多头比例 (0~1)
     short_crowd_pct:   float = 50.0  # 空头拥挤度%
 
+    # ── Surf 新闻 & AI 审查 ──────────────────────────────────────────────────
+    surf_news_sentiment: str  = ""    # positive / negative / neutral
+    surf_news_titles:    list = field(default_factory=list)
+    surf_ai_risk_level:  str  = ""    # HIGH / MEDIUM / LOW
+    surf_ai_reason:      str  = ""
+    surf_ai_score:       int  = 0     # 0-100
+
+    # ── OKX 增强 ──────────────────────────────────────────────────────────────
+    okx_chain_count:     int   = 0
+    okx_chains_found:    list  = field(default_factory=list)
+    okx_large_trade_pct: float = 0.0  # 大单(>$5K)成交占比
+
+    # ── 币安合约增强 ──────────────────────────────────────────────────────────
+    funding_rate_pct:  float = 0.0    # 当前资金费率%
+    fr_extreme_short:  bool  = False  # 资金费率 < -0.05%
+    retail_short_pct:  float = 0.0    # 全局账户多空比空头侧%
+
+    # ── 链上交易加速 ──────────────────────────────────────────────────────────
+    txs_5m:       int   = 0
+    txs_5m_accel: float = 0.0         # 近5分钟 vs 前5分钟交易数倍数
+
     # ── 分类 ──────────────────────────────────────────────────────────────────
     category: str = ""   # 启动预警 / 蓄势观察 / 风险
 
@@ -116,6 +137,19 @@ class Candidate:
             "volume_ratio":       round(self.volume_ratio, 1),
             "whale_long_ratio":   round(self.whale_long_ratio, 3),
             "short_crowd_pct":    round(self.short_crowd_pct, 1),
+            "surf_news_sentiment": self.surf_news_sentiment,
+            "surf_news_titles":   self.surf_news_titles[:3],
+            "surf_ai_risk_level": self.surf_ai_risk_level,
+            "surf_ai_reason":     self.surf_ai_reason,
+            "surf_ai_score":      self.surf_ai_score,
+            "okx_chain_count":    self.okx_chain_count,
+            "okx_chains_found":   self.okx_chains_found,
+            "okx_large_trade_pct": round(self.okx_large_trade_pct, 3),
+            "funding_rate_pct":   round(self.funding_rate_pct, 4),
+            "fr_extreme_short":   self.fr_extreme_short,
+            "retail_short_pct":   round(self.retail_short_pct, 1),
+            "txs_5m":             self.txs_5m,
+            "txs_5m_accel":       round(self.txs_5m_accel, 2),
             "category":           self.category,
             "score":              self.score,
             "score_breakdown":    self.score_breakdown,

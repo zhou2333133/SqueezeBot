@@ -13,13 +13,10 @@ from fastapi.templating import Jinja2Templates
 
 import bot_state
 from config import config_manager, DATA_DIR
-from log_manager import log_queue, swing_log_queue, scalp_log_queue, fade_log_queue
+from log_manager import log_queue, scalp_log_queue
 import signals as _signals_mod
 from signals import (
-    signal_queue, signals_history,
     scalp_signal_queue, scalp_signals_history, scalp_positions, scalp_trade_history,
-    fade_signal_queue, fade_signals_history, fade_positions, fade_trade_history,
-    swing_paper_positions, swing_paper_trade_history,
 )
 from scanner.candidates import (
     candidates_queue, get_sorted_candidates, clear_candidates, scan_status,
@@ -84,7 +81,7 @@ async def manual_trade(request: Request):
     try:
         async with aiohttp.ClientSession(trust_env=True) as session:
             trader   = BinanceTrader(session)
-            leverage = config_manager.settings.get("LEVERAGE", 5)
+            leverage = config_manager.settings.get("SCALP_LEVERAGE", 10)
             await trader.set_leverage(symbol, leverage)
             res = await trader.place_market_order(symbol, side, quantity)
         if res:
@@ -109,34 +106,6 @@ async def get_account_balance():
     except Exception as e:
         logger.error("查询余额异常: %s", e)
         return JSONResponse({"error": str(e)}, status_code=500)
-
-
-# ─── 中线状态 & 信号 ──────────────────────────────────────────────────────────
-
-@app.get("/api/status")
-async def get_status():
-    cfg = config_manager.settings
-    return JSONResponse({
-        "status":           "running",
-        "auto_trade":       cfg.get("AUTO_TRADE_ENABLED",   False),
-        "long_enabled":     cfg.get("ENABLE_LONG_STRATEGY", True),
-        "short_enabled":    cfg.get("ENABLE_SHORT_STRATEGY", False),
-        "interval_minutes": cfg.get("INTERVAL_MINUTES",     5),
-        "leverage":         cfg.get("LEVERAGE",             5),
-        "position_usdt":    cfg.get("POSITION_SIZE_USDT",  20),
-    })
-
-
-@app.get("/api/signals")
-async def get_signals(limit: int = 50):
-    return JSONResponse({"signals": signals_history[-limit:][::-1], "total": len(signals_history)})
-
-
-@app.delete("/api/signals")
-async def clear_signals():
-    signals_history.clear()
-    logger.info("中线信号历史已清空")
-    return JSONResponse({"status": "success", "message": "✅ 信号历史已清空"})
 
 
 # ─── CSV 数据 API ─────────────────────────────────────────────────────────────
@@ -258,7 +227,6 @@ async def clear_scalp_trades():
 
 @app.get("/api/scalp/trades/csv")
 async def export_scalp_trades_csv():
-    """下载全部超短线历史成交为 CSV 文件"""
     trades = list(scalp_trade_history)
     if not trades:
         return JSONResponse({"message": "暂无成交记录"}, status_code=404)
@@ -276,7 +244,6 @@ async def export_scalp_trades_csv():
 
 @app.get("/api/scalp/report")
 async def get_scalp_report():
-    """返回策略分析摘要，供用户复制给 AI 分析"""
     trades = list(scalp_trade_history)
     cfg    = config_manager.settings
     if not trades:
@@ -317,7 +284,6 @@ async def get_scalp_report():
             "候选池上限":       cfg.get("SCALP_CANDIDATE_LIMIT"),
             "OI轮询秒":         cfg.get("OI_POLL_INTERVAL"),
             "信号冷却秒":       cfg.get("SIGNAL_COOLDOWN_SECONDS"),
-            "BTC守卫%":         cfg.get("BTC_GUARD_PCT"),
             "轧空OI阈值-大币%": cfg.get("SQUEEZE_OI_DROP_MAJOR"),
             "轧空OI阈值-中币%": cfg.get("SQUEEZE_OI_DROP_MID"),
             "轧空OI阈值-Meme%": cfg.get("SQUEEZE_OI_DROP_MEME"),
@@ -385,48 +351,9 @@ async def get_scalp_filter_stats():
     return JSONResponse(_signals_mod.scalp_filter_stats or {})
 
 
-# ─── 中线模拟仓 ───────────────────────────────────────────────────────────────
-
-@app.get("/api/swing/paper/positions")
-async def get_swing_paper_positions():
-    total_pnl = sum(v.get("pnl_usdt", 0) for v in swing_paper_positions.values() if v.get("status") != "open")
-    return JSONResponse({
-        "positions": dict(swing_paper_positions),
-        "count":     len(swing_paper_positions),
-        "total_pnl": round(total_pnl, 4),
-    })
-
-
-@app.delete("/api/swing/paper/positions")
-async def clear_swing_paper_positions():
-    swing_paper_positions.clear()
-    logger.info("📋 中线模拟仓位已全部清除")
-    return JSONResponse({"status": "success", "message": "✅ 中线模拟仓位已清除"})
-
-
-@app.get("/api/swing/paper/trades")
-async def get_swing_paper_trades():
-    trades = swing_paper_trade_history[::-1]
-    wins   = sum(1 for t in swing_paper_trade_history if t.get("pnl_usdt", 0) > 0)
-    total  = len(swing_paper_trade_history)
-    return JSONResponse({
-        "trades":    trades,
-        "total":     total,
-        "total_pnl": round(sum(t.get("pnl_usdt", 0) for t in swing_paper_trade_history), 4),
-        "win_rate":  round(wins / total * 100, 1) if total > 0 else 0,
-    })
-
-
-@app.delete("/api/swing/paper/trades")
-async def clear_swing_paper_trades():
-    swing_paper_trade_history.clear()
-    return JSONResponse({"status": "success", "message": "✅ 中线模拟历史已清除"})
-
-
 # ─── WebSocket ────────────────────────────────────────────────────────────────
 
 async def _ws_pump(websocket: WebSocket, q: std_queue.Queue, sleep: float = 0.1):
-    """通用 WebSocket 日志/信号推送"""
     await websocket.accept()
     try:
         while True:
@@ -449,143 +376,14 @@ async def ws_log_all(websocket: WebSocket):
     await _ws_pump(websocket, log_queue)
 
 
-@app.websocket("/ws/log/swing")
-async def ws_log_swing(websocket: WebSocket):
-    await _ws_pump(websocket, swing_log_queue)
-
-
 @app.websocket("/ws/log/scalp")
 async def ws_log_scalp(websocket: WebSocket):
     await _ws_pump(websocket, scalp_log_queue)
 
 
-@app.websocket("/ws/signals")
-async def ws_signals(websocket: WebSocket):
-    await _ws_pump(websocket, signal_queue, sleep=0.5)
-
-
 @app.websocket("/ws/scalp/signals")
 async def ws_scalp_signals(websocket: WebSocket):
     await _ws_pump(websocket, scalp_signal_queue, sleep=0.3)
-
-
-# ─── 一直做空控制 API ─────────────────────────────────────────────────────────
-
-@app.get("/api/fade/status")
-async def fade_status():
-    is_running = bool(bot_state.fade_task and not bot_state.fade_task.done())
-    sym_count  = 0
-    if bot_state.fade_bot and bot_state.fade_bot.monitored_symbols:
-        sym_count = len(bot_state.fade_bot.monitored_symbols)
-    return JSONResponse({
-        "running":         is_running,
-        "positions_count": len(fade_positions),
-        "signals_count":   len(fade_signals_history),
-        "symbols_count":   sym_count,
-    })
-
-
-@app.post("/api/fade/start")
-async def fade_start():
-    if bot_state.fade_task and not bot_state.fade_task.done():
-        return JSONResponse({"status": "already_running", "message": "📉 已在运行中"})
-    from bot_fade import BinanceFadeBot
-    bot_state.fade_bot  = BinanceFadeBot()
-    bot_state.fade_task = asyncio.create_task(bot_state.fade_bot.run())
-    logger.info("📉 一直做空机器人通过 Web 面板启动")
-    return JSONResponse({"status": "started", "message": "📉 一直做空机器人已启动"})
-
-
-@app.post("/api/fade/stop")
-async def fade_stop():
-    if bot_state.fade_bot:
-        bot_state.fade_bot.running = False
-    if bot_state.fade_task and not bot_state.fade_task.done():
-        bot_state.fade_task.cancel()
-        try:
-            await asyncio.wait_for(asyncio.shield(bot_state.fade_task), timeout=3)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
-    bot_state.fade_task = None
-    bot_state.fade_bot  = None
-    fade_positions.clear()
-    logger.info("📉 一直做空机器人通过 Web 面板停止")
-    return JSONResponse({"status": "stopped", "message": "📉 一直做空机器人已停止"})
-
-
-@app.post("/api/fade/refresh")
-async def fade_refresh_symbols():
-    if bot_state.fade_bot and bot_state.fade_bot.running:
-        await bot_state.fade_bot.refresh_symbols()
-        return JSONResponse({
-            "status":  "success",
-            "message": f"✅ 已刷新，监控 {len(bot_state.fade_bot.monitored_symbols)} 个币种",
-        })
-    return JSONResponse({"status": "error", "message": "❌ 机器人未运行"}, status_code=400)
-
-
-@app.get("/api/fade/positions")
-async def get_fade_positions():
-    return JSONResponse({"positions": dict(fade_positions)})
-
-
-@app.get("/api/fade/signals")
-async def get_fade_signals(limit: int = 50):
-    return JSONResponse({"signals": fade_signals_history[-limit:][::-1], "total": len(fade_signals_history)})
-
-
-@app.delete("/api/fade/signals")
-async def clear_fade_signals():
-    fade_signals_history.clear()
-    logger.info("一直做空信号历史已清空")
-    return JSONResponse({"status": "success", "message": "✅ 做空信号已清空"})
-
-
-@app.get("/api/fade/trades")
-async def get_fade_trades(limit: int = 200):
-    trades = fade_trade_history[-limit:][::-1]
-    wins  = sum(1 for t in fade_trade_history if t.get("pnl_usdt", 0) > 0)
-    total = len(fade_trade_history)
-    return JSONResponse({
-        "trades": trades,
-        "total": total,
-        "total_pnl": round(sum(t.get("pnl_usdt", 0) for t in fade_trade_history), 4),
-        "win_rate": round(wins / total * 100, 1) if total > 0 else 0,
-    })
-
-
-@app.delete("/api/fade/trades")
-async def clear_fade_trades():
-    fade_trade_history.clear()
-    return JSONResponse({"status": "success", "message": "✅ 历史成交已清空"})
-
-
-@app.get("/api/fade/paper/positions")
-async def get_fade_paper_positions():
-    paper = {k: v for k, v in fade_positions.items() if v.get("paper")}
-    total_pnl = sum(v.get("realized_pnl", 0) for v in paper.values())
-    return JSONResponse({"positions": paper, "count": len(paper), "total_realized_pnl": round(total_pnl, 4)})
-
-
-@app.delete("/api/fade/paper/positions")
-async def clear_fade_paper_positions():
-    paper_keys = [k for k, v in fade_positions.items() if v.get("paper")]
-    for k in paper_keys:
-        fade_positions.pop(k, None)
-        if bot_state.fade_bot:
-            bot_state.fade_bot.open_positions.pop(k, None)
-    logger.info("📉 模拟仓位已全部清除 (%d 个)", len(paper_keys))
-    return JSONResponse({"status": "success", "message": f"✅ 已清除 {len(paper_keys)} 个模拟仓位"})
-
-
-@app.websocket("/ws/fade/signals")
-async def ws_fade_signals(websocket: WebSocket):
-    await _ws_pump(websocket, fade_signal_queue, sleep=0.3)
-
-
-@app.websocket("/ws/log/fade")
-async def ws_log_fade(websocket: WebSocket):
-    await _ws_pump(websocket, fade_log_queue)
 
 
 # ─── 妖币扫描器 API ───────────────────────────────────────────────────────────
@@ -633,7 +431,6 @@ async def yaobi_stop():
 
 @app.post("/api/yaobi/scan")
 async def yaobi_scan_now():
-    """触发单次立即扫描（不影响定时循环）"""
     if scan_status.get("scanning"):
         return JSONResponse({"status": "busy", "message": "⏳ 正在扫描中，请稍候"})
     from scanner.yaobi_scanner import YaobiScanner

@@ -116,7 +116,36 @@ def score(c: Candidate) -> Candidate:
         oi_pts += 5
     bd["OI信号"] = min(oi_pts, 55)
 
-    # ── 9. 风险扣分 ──────────────────────────────────────────────────────────
+    # ── 9. API 增强加分 (最高 58) ────────────────────────────────────────────
+    api_pts = 0
+
+    # Surf 正面新闻
+    if c.surf_news_sentiment == "positive":
+        api_pts += 10; sigs.append("Surf正面新闻")
+
+    # OKX 多链验证
+    if c.okx_chain_count >= 2:
+        api_pts += 8; sigs.append(f"OKX多链验证({c.okx_chain_count}链)")
+
+    # OKX 机构大单流入
+    if c.okx_large_trade_pct >= 0.30:
+        api_pts += 15; sigs.append(f"机构大单{c.okx_large_trade_pct*100:.0f}%")
+
+    # 资金费率极端做空 (轧空前兆)
+    if c.fr_extreme_short:
+        api_pts += 12; sigs.append(f"FR极端做空{c.funding_rate_pct:.3f}%")
+
+    # 散户拥挤做空
+    if c.retail_short_pct >= 65.0:
+        api_pts += 8; sigs.append(f"散户空头拥挤{c.retail_short_pct:.0f}%")
+
+    # 链上交易加速
+    if c.txs_5m_accel >= 1.5:
+        api_pts += 5; sigs.append(f"链上Tx加速{c.txs_5m_accel:.1f}x")
+
+    bd["API增强"] = min(api_pts, 58)
+
+    # ── 10. 风险扣分 ─────────────────────────────────────────────────────────
     deduct = 0
     # 流动性扣分只针对链上代币，合约品种(无链)不适用
     is_onchain = bool(c.chain or c.address)
@@ -149,6 +178,11 @@ def score(c: Candidate) -> Candidate:
     # 庄家出货 (OI↓ 价格↑)
     if c.oi_change_24h_pct < -15 and c.price_change_24h > 10:
         deduct += 20; sigs.append("⚠ OI↓价格↑(庄家出货)")
+
+    # Surf AI 高风险裁决
+    if c.surf_ai_risk_level == "HIGH":
+        deduct += 30; sigs.append(f"⚠ SurfAI高风险: {c.surf_ai_reason}")
+
     bd["风险扣分"] = -deduct
 
     # ── 汇总 ─────────────────────────────────────────────────────────────────

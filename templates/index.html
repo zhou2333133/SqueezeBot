@@ -65,10 +65,6 @@
 
     <!-- Mode Tabs -->
     <div class="flex items-center gap-1 bg-[#0c0c1e] border border-[#1c1c38] rounded-xl p-1">
-      <button @click="mode='swing'" :class="mode==='swing'?'tab-sw-on':'tab-off'"
-        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
-        📊 中线策略
-      </button>
       <button @click="mode='scalp'" :class="mode==='scalp'?'tab-sc-on':'tab-off'"
         class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
         ⚡ 超短线
@@ -77,17 +73,13 @@
         class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
         🔍 妖币扫描
       </button>
-      <button @click="mode='fade'" :class="mode==='fade'?'tab-fd-on':'tab-off'"
-        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
-        📉 一直做空
-      </button>
     </div>
 
     <div class="flex-1"></div>
 
     <!-- WS indicators -->
     <div class="hidden sm:flex items-center gap-3 text-xs">
-      <template x-for="[k,lb] in [['swingLog','中线日志'],['scalpLog','超短线日志'],['fadeSig','做空信号'],['swingSig','中线信号'],['scalpSig','超短线信号'],['yaobiCand','妖币扫描']]" :key="k">
+      <template x-for="[k,lb] in [['scalpLog','超短线日志'],['scalpSig','超短线信号'],['yaobiCand','妖币扫描']]" :key="k">
         <div class="flex items-center gap-1.5">
           <span class="w-2 h-2 rounded-full flex-shrink-0" :class="wsStatus[k]==='open'?'bg-green-500 shadow-[0_0_5px_#22c55e]':'bg-gray-700'"></span>
           <span class="text-gray-600" x-text="lb"></span>
@@ -110,435 +102,6 @@
 </nav>
 
 <main class="max-w-screen-2xl mx-auto px-4 py-5 space-y-5">
-
-<!-- ═══════════ SWING TAB ════════════════════════════════════════════════════ -->
-<div x-show="mode==='swing'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
-
-  <!-- Stats + Control Bar -->
-  <div class="card glow-blue px-5 py-4 flex flex-wrap items-center gap-4 mb-5">
-    <div class="flex items-center gap-3 flex-1 min-w-0">
-      <span class="text-blue-400 font-bold text-sm">📊 中线策略</span>
-      <span class="text-xs text-gray-600 border border-[#1c1c38] rounded px-2 py-0.5"
-        x-text="'扫描间隔 '+(cfg.INTERVAL_MINUTES??5)+' min'"></span>
-      <span class="text-xs px-2 py-0.5 rounded"
-        :class="cfg.AUTO_TRADE_ENABLED?'bg-green-900/40 text-green-400':'bg-gray-800 text-gray-500'"
-        x-text="cfg.AUTO_TRADE_ENABLED?'🤖 自动交易':'手动模式'"></span>
-      <span class="text-xs px-2 py-0.5 rounded bg-cyan-900/30 text-cyan-400" x-show="cfg.SWING_PAPER_TRADE">📋 模拟仓开启</span>
-    </div>
-    <div class="flex flex-wrap gap-4">
-      <div class="text-center">
-        <div class="text-lg font-bold text-blue-400" x-text="swingSignals.length"></div>
-        <div class="text-[10px] text-gray-600">累计信号</div>
-      </div>
-      <div class="text-center">
-        <div class="text-lg font-bold text-yellow-400" x-text="cfg.AI_AGENT_SCORE_MIN??'—'"></div>
-        <div class="text-[10px] text-gray-600">AI最低分</div>
-      </div>
-      <div class="text-center">
-        <div class="text-lg font-bold" :class="swingPaperTotalPnl>=0?'text-green-400':'text-red-400'"
-          x-text="(swingPaperTotalPnl>=0?'+':'')+'$'+swingPaperTotalPnl.toFixed(2)"></div>
-        <div class="text-[10px] text-gray-600">模拟盈亏</div>
-      </div>
-      <div class="text-center">
-        <div class="text-lg font-bold text-violet-400" x-text="swingPaperWinRate+'%'"></div>
-        <div class="text-[10px] text-gray-600">模拟胜率</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="grid grid-cols-12 gap-5">
-
-    <!-- Settings col -->
-    <div class="col-span-12 lg:col-span-5 space-y-4">
-
-      <div class="card glow-blue">
-        <button @click="swingOpen=!swingOpen" class="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-blue-400">
-          <span>⚙️ 中线策略参数</span>
-          <span class="text-gray-600 text-xs" x-text="swingOpen?'▲':'▼'"></span>
-        </button>
-        <div x-show="swingOpen" class="px-5 pb-5 space-y-3">
-          <form @submit.prevent="saveSwingConfig()" id="swingForm">
-
-            <!-- ── 基础扫描 ─────────────────────── -->
-            <p class="section-hd">基础扫描</p>
-            <div class="grid grid-cols-3 gap-3 mt-2">
-              <div>
-                <label class="text-xs text-gray-400 font-medium">扫描间隔 (分钟)</label>
-                <div class="param-desc">每隔多少分钟扫描一次全市场。越小=响应快但API消耗多。建议5~15分钟。</div>
-                <input class="inp" type="number" name="INTERVAL_MINUTES" :value="cfg.INTERVAL_MINUTES">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">RSI 周期</label>
-                <div class="param-desc">计算RSI的K线数量。默认14，越小越灵敏，越大越稳定。</div>
-                <input class="inp" type="number" name="RSI_PERIOD" :value="cfg.RSI_PERIOD">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">RSI 超买上限</label>
-                <div class="param-desc">RSI超过此值时拒绝做多，防止追高。默认75，越低越保守。</div>
-                <input class="inp" type="number" name="RSI_MAX_ENTRY" :value="cfg.RSI_MAX_ENTRY">
-              </div>
-            </div>
-
-            <!-- ── 仓位 & 风控 ─────────────────── -->
-            <p class="section-hd mt-3">仓位 & 风控</p>
-            <div class="grid grid-cols-3 gap-3 mt-2">
-              <div>
-                <label class="text-xs text-gray-400 font-medium">杠杆倍数</label>
-                <div class="param-desc">实际仓位 = 保证金 × 杠杆。中线建议5~10倍。</div>
-                <input class="inp" type="number" name="LEVERAGE" :value="cfg.LEVERAGE">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">保证金 USDT</label>
-                <div class="param-desc">每笔投入保证金，名义仓位 = 保证金 × 杠杆。</div>
-                <input class="inp" type="number" name="POSITION_SIZE_USDT" :value="cfg.POSITION_SIZE_USDT">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">AI 最低评分</label>
-                <div class="param-desc">综合评分低于此值的信号被过滤。0=关闭，建议60~85。</div>
-                <input class="inp" type="number" name="AI_AGENT_SCORE_MIN" :value="cfg.AI_AGENT_SCORE_MIN">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">止损 %</label>
-                <div class="param-desc">入场价亏损超过此%止损。中线建议3~8%，勿设太小。</div>
-                <input class="inp" type="number" step="0.1" name="STOP_LOSS_PERCENT" :value="cfg.STOP_LOSS_PERCENT">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">止盈目标 %</label>
-                <div class="param-desc">不开追踪止损时的固定止盈，建议设止损的1.5~2倍。</div>
-                <input class="inp" type="number" step="0.1" name="TAKE_PROFIT_PERCENT" :value="cfg.TAKE_PROFIT_PERCENT">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">TSL 激活点 %</label>
-                <div class="param-desc">盈利达到此%时激活追踪止损。需开启「追踪止损」。</div>
-                <input class="inp" type="number" step="0.1" name="TSL_ACTIVATION_PERCENT" :value="cfg.TSL_ACTIVATION_PERCENT">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">TSL 回调 %</label>
-                <div class="param-desc">激活后，价格从最高点回撤超过此%时平仓锁利。</div>
-                <input class="inp" type="number" step="0.1" name="TSL_CALLBACK_PERCENT" :value="cfg.TSL_CALLBACK_PERCENT">
-              </div>
-            </div>
-
-            <!-- ── OI & 流量过滤 ───────────────── -->
-            <p class="section-hd mt-3">OI & 流量过滤</p>
-            <div class="grid grid-cols-3 gap-3 mt-2">
-              <div>
-                <label class="text-xs text-gray-400 font-medium">OI 激增倍数</label>
-                <div class="param-desc">OI相比基准激增超过此倍才触发。1.5=增加50%。</div>
-                <input class="inp" type="number" step="0.1" name="OI_SURGE_RATIO" :value="cfg.OI_SURGE_RATIO">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">OI 下限 (USDT)</label>
-                <div class="param-desc">合约总持仓须超过此值，过滤流动性差的小币。建议5M~20M。</div>
-                <input class="inp" type="number" name="MIN_OI_USDT" :value="cfg.MIN_OI_USDT">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">OI 上限 (USDT)</label>
-                <div class="param-desc">过滤OI过大的品种（如BTC）。聚焦中小市值合约。</div>
-                <input class="inp" type="number" name="MAX_OI_USDT" :value="cfg.MAX_OI_USDT">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">资金流量比</label>
-                <div class="param-desc">净流入/OI比值须超过此值。0.05=流入≥OI的5%。</div>
-                <input class="inp" type="number" step="0.001" name="FLOW_OI_RATIO" :value="cfg.FLOW_OI_RATIO">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">大户多空比下限</label>
-                <div class="param-desc">大户多/空比须超过此值才做多。1.05=大户略偏多。</div>
-                <input class="inp" type="number" step="0.01" name="WHALE_LS_MIN" :value="cfg.WHALE_LS_MIN">
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">散户多空比上限</label>
-                <div class="param-desc">散户多/空比须低于此值。散户过多=危险，反向信号。</div>
-                <input class="inp" type="number" step="0.01" name="RETAIL_LS_MAX" :value="cfg.RETAIL_LS_MAX">
-              </div>
-            </div>
-
-            <!-- ── 资金费率反转（仅开关打开时显示）── -->
-            <div x-show="cfg.ENABLE_FUNDING_REVERSAL" x-transition>
-              <p class="section-hd-p section-hd mt-3">资金费率反转参数</p>
-              <div class="grid grid-cols-2 gap-3 mt-2">
-                <div>
-                  <label class="text-xs text-gray-400 font-medium">OI 激增 %（FR）</label>
-                  <div class="param-desc">FR反转信号要求短时间内OI增加此%。15=增加15%代表新资金涌入。</div>
-                  <input class="inp" type="number" step="1" name="FR_OI_SURGE_PCT" :value="cfg.FR_OI_SURGE_PCT">
-                </div>
-                <div>
-                  <label class="text-xs text-gray-400 font-medium">资金费率阈值</label>
-                  <div class="param-desc">资金费率低于此值（负数）时认为做空拥挤，触发反转。-0.001=-0.1%/8h。</div>
-                  <input class="inp" type="number" step="0.0001" name="FR_FUNDING_THRESHOLD" :value="cfg.FR_FUNDING_THRESHOLD">
-                </div>
-              </div>
-            </div>
-
-            <!-- ── 功能开关 ─────────────────────── -->
-            <p class="section-hd mt-3">功能开关</p>
-            <div class="grid grid-cols-2 gap-y-2 mt-2">
-              <template x-for="f in swingFilters" :key="f.key">
-                <label class="flex items-start gap-2 cursor-pointer select-none">
-                  <label class="toggle mt-0.5 shrink-0">
-                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$event.target.checked">
-                    <span class="ttrack"></span>
-                  </label>
-                  <div>
-                    <div class="text-sm text-gray-300" x-text="f.label"></div>
-                    <div class="param-desc" x-text="f.desc||''"></div>
-                  </div>
-                </label>
-              </template>
-            </div>
-
-            <!-- ── 交易方向 & 控制 ─────────────── -->
-            <p class="section-hd mt-3">交易方向 & 控制</p>
-            <div class="grid grid-cols-2 gap-y-2 mt-2">
-              <template x-for="f in swingToggles" :key="f.key">
-                <label class="flex items-center gap-2 cursor-pointer select-none">
-                  <label class="toggle">
-                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$event.target.checked">
-                    <span class="ttrack"></span>
-                  </label>
-                  <span class="text-sm" :class="f.color" x-text="f.label"></span>
-                </label>
-              </template>
-            </div>
-
-            <button type="submit" class="mt-4 w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors">
-              💾 保存中线参数
-            </button>
-          </form>
-        </div>
-      </div>
-
-      <!-- Manual Trade -->
-      <div class="card">
-        <button @click="manualOpen=!manualOpen" class="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-gray-400">
-          <span>🖱️ 手动下单</span>
-          <span class="text-xs text-gray-600" x-text="manualOpen?'▲':'▼'"></span>
-        </button>
-        <div x-show="manualOpen" class="px-5 pb-5 space-y-3">
-          <input class="inp" x-model="manual.symbol" placeholder="合约代码 (BTCUSDT)">
-          <div class="grid grid-cols-2 gap-3">
-            <select class="inp" x-model="manual.side">
-              <option value="BUY">BUY 做多</option>
-              <option value="SELL">SELL 做空</option>
-            </select>
-            <input class="inp" type="number" x-model="manual.quantity" placeholder="数量">
-          </div>
-          <button @click="submitManual()" class="w-full py-2.5 rounded-xl bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold transition-colors">
-            📤 提交订单
-          </button>
-        </div>
-      </div>
-
-    </div><!-- end left col -->
-
-    <!-- Right: Signals -->
-    <div class="col-span-12 lg:col-span-7">
-      <div class="card h-full">
-        <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-semibold text-blue-400">🚨 中线信号历史</span>
-            <span class="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full" x-text="swingSignals.length + ' 条'"></span>
-          </div>
-          <button @click="clearSwingSignals()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
-        </div>
-        <div class="p-4 space-y-3 overflow-y-auto" style="max-height:600px">
-          <div x-show="swingSignals.length===0" class="text-center text-gray-600 py-16 text-sm">暂无中线信号，等待扫描...</div>
-          <template x-for="(sig,i) in swingSignals" :key="i">
-            <div class="rounded-xl border border-[#1c1c38] bg-[#090918] p-4 hover:border-blue-500/20 transition-all slide-in">
-              <div class="flex items-start justify-between gap-3">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span class="font-bold text-white text-sm" x-text="sig.symbol"></span>
-                  <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="sig.direction==='LONG'?'badge-long':'badge-short'"
-                    x-text="sig.direction==='LONG'?'做多 ▲':'做空 ▼'"></span>
-                  <span class="text-xs text-gray-500 font-mono" x-text="'$'+(sig.mark_price>1?Number(sig.mark_price).toFixed(2):Number(sig.mark_price).toFixed(6))"></span>
-                </div>
-                <div class="text-right flex-shrink-0">
-                  <div class="text-xs text-gray-600" x-text="(sig.timestamp||'').slice(11,19)"></div>
-                  <div class="text-sm font-bold mt-0.5"
-                    :class="(sig.ai_score||0)>=80?'text-green-400':(sig.ai_score||0)>=60?'text-yellow-400':'text-gray-500'"
-                    x-text="'AI '+(sig.ai_score??'—')"></div>
-                </div>
-              </div>
-              <!-- Score bar -->
-              <div class="mt-3 h-1 bg-[#18183a] rounded-full overflow-hidden">
-                <div class="h-full rounded-full score-fill"
-                  :class="(sig.ai_score||0)>=80?'bg-green-500':(sig.ai_score||0)>=60?'bg-yellow-500':'bg-gray-600'"
-                  :style="'width:'+(sig.ai_score||0)+'%'"></div>
-              </div>
-              <!-- Metrics -->
-              <div class="mt-3 grid grid-cols-3 gap-x-4 gap-y-1 text-xs text-gray-500">
-                <span>资金费 <span class="text-gray-300" x-text="sig.funding_rate+'%'"></span></span>
-                <span>OI <span class="text-gray-300" x-text="sig.oi_usdt+'M'"></span></span>
-                <span>OI倍 <span class="text-gray-300" x-text="sig.oi_surge_ratio+'x'"></span></span>
-                <span>RSI <span class="text-gray-300" x-text="sig.rsi"></span></span>
-                <span>大户 <span class="text-gray-300" x-text="sig.whale_ls"></span></span>
-                <span>散户 <span class="text-gray-300" x-text="sig.retail_ls"></span></span>
-              </div>
-              <!-- Filter badges -->
-              <div class="mt-3 flex flex-wrap gap-1.5" x-show="sig.filters">
-                <template x-for="[k,lb] in [['ta','TA'],['news','新闻'],['liq','清算'],['mtf','MTF'],['okx','OKX链上']]" :key="k">
-                  <span class="px-2 py-0.5 rounded text-xs" :class="sig.filters&&sig.filters[k]?'fbadge-ok':'fbadge-fail'"
-                    x-text="(sig.filters&&sig.filters[k]?'✓ ':'✗ ')+lb"></span>
-                </template>
-                <span x-show="sig.trade&&sig.trade.order_id" class="px-2 py-0.5 rounded text-xs bg-violet-500/20 text-violet-400">已自动开仓</span>
-              </div>
-              <!-- Expandable details -->
-              <div x-show="sig.details||(sig.trade&&sig.trade.order_id)">
-                <button @click="sig._open=!sig._open" class="mt-2 text-xs text-gray-600 hover:text-gray-400 transition-colors"
-                  x-text="sig._open?'▲ 收起':'▼ 详情'"></button>
-                <div x-show="sig._open" class="mt-2 space-y-1 text-xs text-gray-500">
-                  <div x-show="sig.details&&sig.details.news"><span class="text-gray-600">新闻: </span><span class="text-gray-400" x-text="sig.details?.news"></span></div>
-                  <div x-show="sig.details&&sig.details.liq"><span class="text-gray-600">清算: </span><span class="text-gray-400" x-text="sig.details?.liq"></span></div>
-                  <div x-show="sig.details&&sig.details.mtf"><span class="text-gray-600">MTF: </span><span class="text-gray-400" x-text="sig.details?.mtf"></span></div>
-                  <div x-show="sig.details&&sig.details.okx"><span class="text-gray-600">OKX: </span><span class="text-gray-400" x-text="sig.details?.okx"></span></div>
-                  <div x-show="sig.trade&&sig.trade.order_id" class="pt-2 border-t border-[#1c1c38] grid grid-cols-2 gap-x-4 gap-y-1">
-                    <span>杠杆 <span class="text-violet-400" x-text="sig.trade?.leverage+'x'"></span></span>
-                    <span>仓位 <span class="text-violet-400" x-text="'$'+sig.trade?.margin_usdt"></span></span>
-                    <span>止损 <span class="text-red-400" x-text="sig.trade?.sl_price"></span></span>
-                    <span>止盈 <span class="text-green-400" x-text="sig.trade?.tp_price||sig.trade?.tp_strategy"></span></span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-    </div>
-  </div><!-- end grid -->
-
-  <!-- CSV Viewer -->
-  <div class="card">
-    <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
-      <span class="text-sm font-semibold text-gray-300">📊 历史数据查看器</span>
-      <div class="flex items-center gap-2">
-        <select class="inp text-xs py-1 px-2 w-44" x-model="csvSymbol" @change="loadCsvData()">
-          <option value="">— 选择币种 —</option>
-          <template x-for="s in csvSymbols" :key="s"><option :value="s" x-text="s"></option></template>
-        </select>
-        <button @click="loadCsvData()" class="text-xs text-blue-400 hover:text-blue-300 px-2 transition-colors">↻</button>
-      </div>
-    </div>
-    <div class="overflow-x-auto">
-      <table class="w-full text-xs">
-        <thead><tr class="border-b border-[#1c1c38] text-gray-500 text-left">
-          <th class="py-2 px-4 font-medium">时间</th>
-          <th class="py-2 px-4 font-medium text-right">标记价</th>
-          <th class="py-2 px-4 font-medium text-right">OI</th>
-          <th class="py-2 px-4 font-medium text-right">资金费</th>
-          <th class="py-2 px-4 font-medium text-right">涨跌%</th>
-          <th class="py-2 px-4 font-medium text-right">大户L/S</th>
-          <th class="py-2 px-4 font-medium text-right">散户L/S</th>
-        </tr></thead>
-        <tbody>
-          <tr x-show="csvData.length===0"><td colspan="7" class="text-center py-8 text-gray-600">选择币种后加载</td></tr>
-          <template x-for="(r,i) in csvData" :key="i">
-            <tr class="border-b border-[#0e0e20] hover:bg-[#0d0d20] transition-colors">
-              <td class="py-2 px-4 text-gray-400 font-mono" x-text="(r.timestamp||'').slice(5)"></td>
-              <td class="py-2 px-4 text-right text-white font-mono" x-text="Number(r.mark_price).toFixed(4)"></td>
-              <td class="py-2 px-4 text-right text-gray-300" x-text="r.oi?'$'+(Number(r.oi)/1e6).toFixed(1)+'M':'—'"></td>
-              <td class="py-2 px-4 text-right font-mono" :class="Number(r.last_funding_rate)>0?'text-red-400':'text-green-400'"
-                x-text="r.last_funding_rate?(Number(r.last_funding_rate)*100).toFixed(4)+'%':'—'"></td>
-              <td class="py-2 px-4 text-right font-mono" :class="Number(r.price_change_percent)>0?'text-green-400':'text-red-400'"
-                x-text="r.price_change_percent?Number(r.price_change_percent).toFixed(2)+'%':'—'"></td>
-              <td class="py-2 px-4 text-right text-gray-300" x-text="r.top_trader_position_ls_ratio||'—'"></td>
-              <td class="py-2 px-4 text-right text-gray-300" x-text="r.long_short_account_ratio||'—'"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Swing Paper Positions -->
-  <div class="card" style="border-color:rgba(96,165,250,.15)" x-show="Object.keys(swingPaperPositions).length>0 || swingPaperTrades.length>0">
-    <div class="px-5 py-3 border-b border-blue-900/30 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="text-sm font-semibold text-blue-300">📋 中线模拟仓</span>
-        <span class="text-xs bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded-full"
-          x-text="Object.keys(swingPaperPositions).length+' 持仓'"></span>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="text-xs text-blue-700">模拟P&L:
-          <span class="font-bold font-mono" :class="swingPaperTotalPnl>=0?'text-green-400':'text-red-400'"
-            x-text="(swingPaperTotalPnl>=0?'+':'')+'$'+swingPaperTotalPnl.toFixed(2)"></span>
-          <span class="text-gray-600 ml-1" x-text="'胜率'+swingPaperWinRate+'%'"></span>
-        </span>
-        <button @click="clearSwingPaperPositions()" class="text-xs px-3 py-1 rounded-lg bg-blue-900/30 hover:bg-blue-800/40 text-blue-400 transition-colors">🗑 清除</button>
-      </div>
-    </div>
-    <!-- Open positions -->
-    <div class="p-4 space-y-2" x-show="Object.keys(swingPaperPositions).length>0">
-      <div class="text-xs text-gray-600 uppercase tracking-widest mb-2">持仓中</div>
-      <template x-for="[sym,pos] in Object.entries(swingPaperPositions)" :key="sym">
-        <div class="rounded-xl border border-blue-900/30 bg-[#040a18] p-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="font-bold text-white text-sm" x-text="pos.symbol"></span>
-              <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="pos.direction==='LONG'?'badge-long':'badge-short'"
-                x-text="pos.direction==='LONG'?'做多 ▲':'做空 ▼'"></span>
-              <span class="text-xs text-gray-600" x-text="pos.leverage+'x'"></span>
-            </div>
-            <div class="text-right">
-              <div class="font-bold text-sm" :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'"
-                x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
-              <div class="text-[10px] text-gray-600" x-text="pos.entry_time.slice(11,19)"></div>
-            </div>
-          </div>
-          <div class="mt-2 grid grid-cols-4 gap-x-3 text-xs text-gray-500">
-            <span>入场 <span class="text-gray-300 font-mono" x-text="Number(pos.entry_price).toFixed(4)"></span></span>
-            <span>现价 <span class="text-blue-300 font-mono" x-text="Number(pos.current_price||pos.entry_price).toFixed(4)"></span></span>
-            <span>止损 <span class="text-red-400 font-mono" x-text="Number(pos.sl_price).toFixed(4)"></span></span>
-            <span>止盈 <span class="text-green-400 font-mono" x-text="Number(pos.tp_price).toFixed(4)"></span></span>
-          </div>
-        </div>
-      </template>
-    </div>
-    <!-- Trade history -->
-    <div class="p-4 pt-0 space-y-1" x-show="swingPaperTrades.length>0">
-      <div class="text-xs text-gray-600 uppercase tracking-widest mb-2">历史成交 (最近10笔)</div>
-      <template x-for="(t,i) in swingPaperTrades.slice(0,10)" :key="i">
-        <div class="flex items-center justify-between text-xs rounded-lg px-3 py-1.5"
-          :class="t.outcome==='tp'?'bg-green-900/20':'bg-red-900/20'">
-          <div class="flex items-center gap-2">
-            <span x-text="t.outcome==='tp'?'✅':'❌'"></span>
-            <span class="font-bold text-white" x-text="t.symbol"></span>
-            <span :class="t.direction==='LONG'?'text-green-400':'text-red-400'" x-text="t.direction==='LONG'?'多':'空'"></span>
-          </div>
-          <div class="flex items-center gap-3 text-right">
-            <span class="text-gray-500" x-text="t.exit_time.slice(11,16)"></span>
-            <span class="font-bold" :class="t.pnl_usdt>=0?'text-green-400':'text-red-400'"
-              x-text="(t.pnl_usdt>=0?'+':'')+'$'+t.pnl_usdt.toFixed(2)+'('+t.pnl_pct.toFixed(1)+'%)'"></span>
-          </div>
-        </div>
-      </template>
-    </div>
-  </div>
-
-  <!-- Swing Paper Trade toggle -->
-  <div class="card" x-show="!cfg.SWING_PAPER_TRADE && !cfg.AUTO_TRADE_ENABLED" style="border-color:rgba(96,165,250,.08)">
-    <div class="px-5 py-3 flex items-center justify-between">
-      <span class="text-xs text-gray-600">💡 开启「中线模拟仓」可在不真实交易的情况下追踪策略效果</span>
-      <button @click="quickToggleSwingPaper()" class="text-xs px-3 py-1.5 rounded-lg bg-blue-900/30 hover:bg-blue-700/40 text-blue-400 transition-colors">开启模拟仓</button>
-    </div>
-  </div>
-
-  <!-- Swing Log -->
-  <div class="card">
-    <div class="flex items-center justify-between px-5 py-3 border-b border-[#1c1c38]">
-      <span class="text-sm font-semibold text-gray-400">📋 中线日志</span>
-      <button @click="swingLogs=[]" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
-    </div>
-    <div id="swingLog" class="terminal p-4 h-56 overflow-y-auto bg-[#040410] rounded-b-xl">
-      <div x-show="swingLogs.length===0" class="text-gray-700">等待日志...</div>
-      <template x-for="(ln,i) in swingLogs" :key="i">
-        <div :class="logColor(ln)" x-text="ln"></div>
-      </template>
-    </div>
-  </div>
-
-</div><!-- /swing -->
-
 
 <!-- ═══════════ SCALP TAB ═════════════════════════════════════════════════════ -->
 <div x-show="mode==='scalp'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
@@ -1062,307 +625,6 @@
 </div><!-- /scalp -->
 
 
-<!-- ═══════════ FADE TAB ══════════════════════════════════════════════════════ -->
-<div x-show="mode==='fade'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
-
-  <!-- Control Bar -->
-  <div class="card px-5 py-4 flex flex-wrap items-center gap-4" style="border-color:rgba(239,68,68,.25)">
-    <div class="flex items-center gap-3">
-      <span class="w-2.5 h-2.5 rounded-full" :class="fadeRunning?'bg-red-400 shadow-[0_0_8px_#f87171] animate-pulse':'bg-gray-600'"></span>
-      <span class="font-semibold" :class="fadeRunning?'text-red-300':'text-gray-500'"
-        x-text="fadeRunning?'📉 运行中':'● 已停止'"></span>
-      <span class="text-xs text-gray-600" x-text="'监控 '+(fadeStatus.symbols_count||0)+' 个'"></span>
-      <span x-show="fadeStatus.positions_count>0"
-        class="px-2.5 py-0.5 rounded-lg text-xs font-bold"
-        style="background:rgba(239,68,68,.15);color:#f87171"
-        x-text="fadeStatus.positions_count+' 个仓位'"></span>
-    </div>
-    <div class="flex items-center gap-2 ml-auto">
-      <button @click="refreshFadeSymbols()" :disabled="!fadeRunning"
-        class="px-3 py-1.5 rounded-xl bg-[#2a0a0f] hover:bg-[#3d1015] text-red-400 text-xs font-medium transition-colors disabled:opacity-40">
-        ↻ 刷新列表
-      </button>
-      <!-- 策略扫描开关 -->
-      <button x-show="fadeRunning" @click="toggleFadeEnabled()"
-        :class="cfg.FADE_ENABLED?'bg-red-600 hover:bg-red-500 text-white':'bg-gray-700 hover:bg-gray-600 text-gray-300'"
-        class="px-4 py-2 rounded-xl text-sm font-bold transition-colors flex items-center gap-1.5">
-        <span x-text="cfg.FADE_ENABLED?'🔴 策略开启':'⚫ 策略关闭'"></span>
-      </button>
-      <button @click="fadeRunning?stopFade():startFade()"
-        :class="fadeRunning?'bg-red-900 hover:bg-red-800':'bg-red-700 hover:bg-red-600'"
-        class="px-6 py-2 rounded-xl text-white text-sm font-bold transition-colors">
-        <span x-text="fadeRunning?'■ 停止':'▶ 启动'"></span>
-      </button>
-    </div>
-  </div>
-
-  <div class="grid grid-cols-12 gap-5">
-
-    <!-- Left: Config -->
-    <div class="col-span-12 lg:col-span-5 space-y-4">
-      <div class="card" style="border-color:rgba(239,68,68,.2)">
-        <button @click="fadeOpen=!fadeOpen" class="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-red-400">
-          <span>⚙️ 策略参数</span>
-          <span class="text-gray-600 text-xs" x-text="fadeOpen?'▲':'▼'"></span>
-        </button>
-        <div x-show="fadeOpen" class="px-5 pb-5 space-y-4">
-          <form @submit.prevent="saveFadeConfig()" id="fadeForm">
-
-            <p class="text-xs text-red-900 uppercase tracking-widest pt-1">触发条件</p>
-            <div class="grid grid-cols-2 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">15m 涨幅触发 %</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" step="0.5" name="FADE_TRIGGER_PCT" :value="cfg.FADE_TRIGGER_PCT"></div>
-              <div><label class="text-xs text-gray-500">最大仓位数</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" name="FADE_MAX_POSITIONS" :value="cfg.FADE_MAX_POSITIONS"></div>
-            </div>
-
-            <p class="text-xs text-red-900 uppercase tracking-widest mt-4 pt-1">交易控制</p>
-            <div class="flex flex-wrap gap-4 mt-2">
-              <template x-for="f in fadeToggles" :key="f.key">
-                <label class="flex items-center gap-2 cursor-pointer select-none">
-                  <label class="toggle" style="--track-on:#ef4444">
-                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$event.target.checked">
-                    <span class="ttrack" style=""></span>
-                  </label>
-                  <span class="text-sm" :class="f.color" x-text="f.label"></span>
-                </label>
-              </template>
-            </div>
-
-            <p class="text-xs text-red-900 uppercase tracking-widest mt-4 pt-1">风控参数</p>
-            <div class="grid grid-cols-3 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">单笔 USDT</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" name="FADE_POSITION_USDT" :value="cfg.FADE_POSITION_USDT"></div>
-              <div><label class="text-xs text-gray-500">杠杆 x</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" name="FADE_LEVERAGE" :value="cfg.FADE_LEVERAGE"></div>
-              <div><label class="text-xs text-gray-500">止损 %</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" step="0.1" name="FADE_STOP_LOSS_PCT" :value="cfg.FADE_STOP_LOSS_PCT"></div>
-            </div>
-
-            <p class="text-xs text-red-900 uppercase tracking-widest mt-4 pt-1">止盈 (两档)</p>
-            <div class="grid grid-cols-4 gap-3 mt-2">
-              <div><label class="text-xs text-gray-500">TP1 %</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" step="0.1" name="FADE_TP1_PCT" :value="cfg.FADE_TP1_PCT"></div>
-              <div><label class="text-xs text-gray-500">TP1 比例</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" step="0.05" name="FADE_TP1_RATIO" :value="cfg.FADE_TP1_RATIO"></div>
-              <div><label class="text-xs text-gray-500">TP2 %</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" step="0.1" name="FADE_TP2_PCT" :value="cfg.FADE_TP2_PCT"></div>
-              <div><label class="text-xs text-gray-500">TP2 比例</label>
-                <input class="inp mt-1" style="border-color:#3a1018" onfocus="this.style.borderColor='#f87171'" onblur="this.style.borderColor='#3a1018'"
-                  type="number" step="0.05" name="FADE_TP2_RATIO" :value="cfg.FADE_TP2_RATIO"></div>
-            </div>
-
-            <p class="text-xs text-red-900 uppercase tracking-widest mt-4 pt-1">监控列表</p>
-            <div class="mt-2">
-              <label class="text-xs text-gray-500">自定义币种 (留空 = 全部USDT永续合约)</label>
-              <textarea class="inp mt-1 h-16 resize-none text-xs" style="border-color:#3a1018"
-                name="FADE_WATCHLIST" :value="cfg.FADE_WATCHLIST"
-                placeholder="BTCUSDT,ETHUSDT,..."></textarea>
-            </div>
-            <label class="flex items-center gap-2 cursor-pointer select-none mt-3">
-              <label class="toggle">
-                <input type="checkbox" name="FADE_ENABLED" :checked="cfg.FADE_ENABLED" @change="cfg.FADE_ENABLED=$event.target.checked">
-                <span class="ttrack"></span>
-              </label>
-              <span class="text-sm text-gray-400">启动时自动开启策略</span>
-            </label>
-
-            <button type="submit" class="mt-5 w-full py-2.5 rounded-xl bg-red-700 hover:bg-red-600 text-white text-sm font-bold transition-colors">
-              💾 保存参数
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-
-    <!-- Right: Positions + Signals -->
-    <div class="col-span-12 lg:col-span-7 space-y-4">
-
-      <!-- Real Positions -->
-      <div class="card" x-show="Object.values(fadePositions).some(p=>!p.paper)">
-        <div class="px-5 py-4 border-b border-[#1c1c38]">
-          <span class="text-sm font-semibold text-red-400">📌 真实做空仓位</span>
-        </div>
-        <div class="p-4 space-y-3">
-          <template x-for="[sym,pos] in Object.entries(fadePositions).filter(([,p])=>!p.paper)" :key="sym">
-            <div class="rounded-xl border border-red-500/20 bg-[#0f0505] p-4">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span class="font-bold text-white" x-text="pos.symbol"></span>
-                  <span class="px-2 py-0.5 rounded text-xs font-semibold badge-short">SHORT</span>
-                </div>
-                <div class="font-bold text-xl" :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'"
-                  x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
-              </div>
-              <div class="mt-3 grid grid-cols-3 gap-x-4 text-xs text-gray-500">
-                <span>入场 <span class="text-gray-300 font-mono" x-text="pos.entry_price"></span></span>
-                <span>现价 <span class="text-red-300 font-mono" x-text="pos.current_price"></span></span>
-                <span>止损 <span class="text-red-400 font-mono" x-text="pos.sl_price"></span></span>
-                <span>TP1 <span :class="pos.tp1_hit?'text-green-400':'text-gray-400'" x-text="pos.tp1_price+(pos.tp1_hit?' ✓':'')"></span></span>
-                <span>TP2 <span :class="pos.tp2_hit?'text-green-400':'text-gray-400'" x-text="pos.tp2_price+(pos.tp2_hit?' ✓':'')"></span></span>
-                <span>已实现 <span class="text-violet-400" x-text="'$'+pos.realized_pnl"></span></span>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <!-- Paper Positions -->
-      <div class="card" style="border-color:rgba(239,68,68,.15)" x-show="Object.values(fadePositions).some(p=>p.paper)">
-        <div class="px-5 py-4 border-b border-red-900/30 flex items-center justify-between">
-          <span class="text-sm font-semibold text-red-300">📋 模拟做空仓位</span>
-          <div class="flex items-center gap-3">
-            <span class="text-xs text-red-800">累计模拟盈亏:
-              <span class="text-red-300 font-mono font-bold"
-                x-text="'$'+Object.values(fadePositions).filter(p=>p.paper).reduce((s,p)=>s+p.realized_pnl,0).toFixed(4)"></span>
-            </span>
-            <button @click="clearFadePaperPositions()" class="text-xs px-3 py-1 rounded-lg bg-red-900/30 hover:bg-red-800/40 text-red-400 transition-colors">🗑 清除</button>
-          </div>
-        </div>
-        <div class="p-4 space-y-3">
-          <template x-for="[sym,pos] in Object.entries(fadePositions).filter(([,p])=>p.paper)" :key="sym">
-            <div class="rounded-xl border border-red-500/15 bg-[#0f0505] p-4">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-red-900/50 text-red-400 font-bold">模拟</span>
-                  <span class="font-bold text-white" x-text="pos.symbol"></span>
-                  <span class="px-2 py-0.5 rounded text-xs font-semibold badge-short">SHORT</span>
-                </div>
-                <div class="font-bold text-xl" :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'"
-                  x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
-              </div>
-              <div class="mt-3 grid grid-cols-3 gap-x-4 text-xs text-gray-500">
-                <span>入场 <span class="text-gray-300 font-mono" x-text="pos.entry_price"></span></span>
-                <span>现价 <span class="text-red-300 font-mono" x-text="pos.current_price"></span></span>
-                <span>止损 <span class="text-red-400 font-mono" x-text="pos.sl_price"></span></span>
-                <span>TP1 <span :class="pos.tp1_hit?'text-green-400':'text-gray-400'" x-text="pos.tp1_price+(pos.tp1_hit?' ✓':'')"></span></span>
-                <span>TP2 <span :class="pos.tp2_hit?'text-green-400':'text-gray-400'" x-text="pos.tp2_price+(pos.tp2_hit?' ✓':'')"></span></span>
-                <span>已实现 <span class="text-violet-400" x-text="'$'+pos.realized_pnl"></span></span>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <!-- Fade Signals -->
-      <div class="card">
-        <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-semibold text-red-400">📉 做空信号</span>
-            <span class="text-xs bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full" x-text="fadeSignals.length+'条'"></span>
-          </div>
-          <button @click="clearFadeSignals()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
-        </div>
-        <div class="p-4 space-y-2 overflow-y-auto" style="max-height:380px">
-          <div x-show="fadeSignals.length===0" class="text-center text-gray-600 py-10 text-sm">暂无做空信号...</div>
-          <template x-for="(sig,i) in fadeSignals" :key="i">
-            <div class="rounded-xl border border-[#1c1c38] bg-[#0f0505] p-3 hover:border-red-500/20 transition-all slide-in">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <span class="font-bold text-sm text-white" x-text="sig.symbol"></span>
-                  <span class="px-2 py-0.5 rounded text-xs font-semibold badge-short">SHORT</span>
-                  <span class="text-xs font-bold text-red-400"
-                    x-text="'+'+sig.trigger_pct+'% 触发'"></span>
-                  <span x-show="sig.paper" class="text-[10px] px-1 py-0.5 rounded bg-red-900/40 text-red-400 font-bold">模拟</span>
-                </div>
-                <div class="text-right">
-                  <div class="text-xs text-gray-600" x-text="(sig.timestamp||'').slice(11,19)"></div>
-                  <div x-show="sig.auto_traded" class="text-xs text-red-400 font-semibold">已开仓</div>
-                </div>
-              </div>
-              <div class="mt-2 grid grid-cols-4 gap-x-3 text-xs text-gray-500">
-                <span>入 <span class="text-gray-300 font-mono" x-text="sig.entry_price"></span></span>
-                <span>SL <span class="text-red-400 font-mono" x-text="sig.sl_price"></span></span>
-                <span>TP1 <span class="text-green-400 font-mono" x-text="sig.tp1_price"></span></span>
-                <span>TP2 <span class="text-green-500 font-mono" x-text="sig.tp2_price"></span></span>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-
-    </div>
-  </div><!-- /grid -->
-
-  <!-- Fade Trade History -->
-  <div class="card">
-    <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
-      <div class="flex items-center gap-3">
-        <span class="text-sm font-semibold text-red-400">📋 历史成交</span>
-        <span class="text-xs bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full" x-text="fadeTradeTotal+'笔'"></span>
-        <span class="text-xs px-2 py-0.5 rounded-full" :class="fadeTotalPnl>=0?'bg-green-500/20 text-green-300':'bg-red-500/20 text-red-300'"
-          x-text="(fadeTotalPnl>=0?'+':'')+fadeTotalPnl.toFixed(2)+' U'"></span>
-        <span class="text-xs text-gray-600" x-text="'胜率 '+fadeWinRate+'%'"></span>
-      </div>
-      <button @click="clearFadeTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
-    </div>
-    <div class="overflow-x-auto">
-      <div x-show="fadeTrades.length===0" class="text-center text-gray-600 py-8 text-sm">暂无历史成交记录</div>
-      <table x-show="fadeTrades.length>0" class="w-full text-xs">
-        <thead>
-          <tr class="text-gray-600 border-b border-[#1c1c38]">
-            <th class="text-left px-4 py-2 font-medium">时间</th>
-            <th class="text-left px-4 py-2 font-medium">品种</th>
-            <th class="text-right px-4 py-2 font-medium">开仓价</th>
-            <th class="text-right px-4 py-2 font-medium">平仓价</th>
-            <th class="text-right px-4 py-2 font-medium">盈亏</th>
-            <th class="text-center px-4 py-2 font-medium">原因</th>
-            <th class="text-center px-4 py-2 font-medium">类型</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template x-for="(t,i) in fadeTrades" :key="i">
-            <tr class="border-b border-[#0d0d20] hover:bg-[#0a0508] transition-colors">
-              <td class="px-4 py-2 text-gray-500 font-mono" x-text="(t.exit_time||'').slice(5,16)"></td>
-              <td class="px-4 py-2 font-bold text-white" x-text="t.symbol?.replace('USDT','')"></td>
-              <td class="px-4 py-2 text-right font-mono text-gray-400" x-text="t.entry_price"></td>
-              <td class="px-4 py-2 text-right font-mono text-gray-300" x-text="t.exit_price"></td>
-              <td class="px-4 py-2 text-right font-bold">
-                <span :class="t.pnl_usdt>=0?'text-green-400':'text-red-400'"
-                  x-text="(t.pnl_usdt>=0?'+':'')+t.pnl_usdt.toFixed(3)+' U'"></span>
-                <span class="text-gray-600 ml-1" x-text="'('+t.pnl_pct+'%)'"></span>
-              </td>
-              <td class="px-4 py-2 text-center">
-                <span class="px-2 py-0.5 rounded text-xs font-semibold"
-                  :class="t.close_reason==='TP2'?'bg-green-500/20 text-green-300':t.close_reason==='SL_保本'?'bg-blue-500/20 text-blue-300':'bg-red-500/20 text-red-400'"
-                  x-text="t.close_reason"></span>
-              </td>
-              <td class="px-4 py-2 text-center">
-                <span class="text-xs px-1.5 py-0.5 rounded" :class="t.paper?'bg-gray-700 text-gray-400':'bg-red-900/40 text-red-400'"
-                  x-text="t.paper?'模拟':'真实'"></span>
-              </td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Fade Log -->
-  <div class="card">
-    <div class="flex items-center justify-between px-5 py-3 border-b border-[#1c1c38]">
-      <span class="text-sm font-semibold text-gray-400">📉 做空机器人日志</span>
-      <button @click="fadeLogs=[]" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
-    </div>
-    <div id="fadeLog" class="terminal p-4 h-56 overflow-y-auto bg-[#040410] rounded-b-xl">
-      <div x-show="fadeLogs.length===0" class="text-gray-700">等待日志...</div>
-      <template x-for="(ln,i) in fadeLogs" :key="i">
-        <div :class="logColor(ln)" x-text="ln"></div>
-      </template>
-    </div>
-  </div>
-
-</div><!-- /fade -->
-
-
 <!-- ═══════════ YAOBI TAB ═════════════════════════════════════════════════════ -->
 <div x-show="mode==='yaobi'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
 
@@ -1790,15 +1052,14 @@
 <script>
 function app() {
   return {
-    mode: 'swing',
+    mode: 'scalp',
     clock: '',
     toast: { show: false, msg: '', type: 'success' },
     cfg: {{ config | tojson }},
     balance: { balance: null, availableBalance: null, unrealizedProfit: null },
-    wsStatus: { swingLog:'closed', scalpLog:'closed', fadeSig:'closed', swingSig:'closed', scalpSig:'closed', yaobiCand:'closed' },
+    wsStatus: { scalpLog:'closed', scalpSig:'closed', yaobiCand:'closed' },
     _ws: {},
 
-    swingSignals: [], swingLogs: [], swingOpen: true,
     csvSymbols: [], csvSymbol: '', csvData: [],
     manualOpen: false,
     manual: { symbol:'', side:'BUY', quantity:'' },
@@ -1808,12 +1069,7 @@ function app() {
     scalpTrades: [], scalpTotalPnl: 0, scalpWinRate: 0, scalpTradeTotal: 0,
     scalpFilterStats: {},
 
-    swingPaperPositions: {}, swingPaperTrades: [], swingPaperTotalPnl: 0, swingPaperWinRate: 0,
 
-    fadeSignals: [], fadeLogs: [], fadeOpen: true,
-    fadePositions: {}, fadeRunning: false,
-    fadeStatus: { positions_count:0, signals_count:0, symbols_count:0 },
-    fadeTrades: [], fadeTotalPnl: 0, fadeWinRate: 0, fadeTradeTotal: 0,
 
     yaobiCandidates: [], yaobiRunning: false, yaobiOpen: true,
     yaobiStatus: { last_scan:null, scanning:false, total_scanned:0, scored:0, sources:{}, errors:[] },
@@ -1823,37 +1079,13 @@ function app() {
     yaobiPage: 1,
     filteredCandidates: [],
 
-    swingFilters: [
-      { key:'TA_CONFIRMATION_ENABLED', label:'TA 确认',     desc:'RSI/趋势等技术指标二次确认，过滤技术面弱势信号' },
-      { key:'ENABLE_NEWS_FILTER',      label:'Surf 新闻',   desc:'接入链上新闻情绪，正面消息增加做多权重' },
-      { key:'ENABLE_LIQ_FILTER',       label:'清算热图',    desc:'基于清算价格判断方向，做多需要空头被清算区域' },
-      { key:'ENABLE_MTF_FILTER',       label:'MTF 择时',    desc:'多时间框架过滤，确保大周期趋势方向一致' },
-      { key:'ENABLE_OKX_FILTER',       label:'OKX链上',     desc:'使用OKX合约基差和资金流向辅助判断' },
-      { key:'ENABLE_AI_AGENT',         label:'AI Agent',    desc:'AI综合评分，低于阈值的信号过滤掉' },
-      { key:'USE_TRAILING_STOP',       label:'追踪止损',    desc:'盈利达激活点后改用追踪止损，让利润奔跑' },
-      { key:'USE_DYNAMIC_SL',          label:'动态止损',    desc:'以近期高低点计算止损，更贴近市场结构' },
-      { key:'ENABLE_FUNDING_REVERSAL', label:'资金费率反转', desc:'扫描费率极负的合约，做多等待空头爆仓反转' },
-    ],
-    swingToggles: [
-      { key:'ENABLE_LONG_STRATEGY',  label:'做多',   color:'text-green-400' },
-      { key:'ENABLE_SHORT_STRATEGY', label:'做空',   color:'text-red-400'   },
-      { key:'AUTO_TRADE_ENABLED',    label:'自动交易', color:'text-blue-400' },
-      { key:'SWING_PAPER_TRADE',     label:'模拟仓',  color:'text-cyan-400'  },
-    ],
     scalpToggles: [
       { key:'SCALP_ENABLE_LONG',  label:'做多',   color:'text-green-400'  },
       { key:'SCALP_ENABLE_SHORT', label:'做空',   color:'text-red-400'    },
       { key:'SCALP_AUTO_TRADE',   label:'自动下单', color:'text-orange-400' },
       { key:'SCALP_PAPER_TRADE',  label:'模拟开仓', color:'text-yellow-400' },
     ],
-    fadeToggles: [
-      { key:'FADE_AUTO_TRADE',  label:'自动下单', color:'text-red-400'    },
-      { key:'FADE_PAPER_TRADE', label:'模拟开仓', color:'text-yellow-400' },
-    ],
 
-    get swingStats() {
-      return [
-        { label:'中线信号', value: this.swingSignals.length, color:'text-blue-400' },
         { label:'扫描间隔', value: (this.cfg.INTERVAL_MINUTES??'—')+' min', color:'text-white' },
         { label:'AI 最低分', value: this.cfg.AI_AGENT_SCORE_MIN??'—', color:'text-yellow-400' },
         { label:'自动交易', value: this.cfg.AUTO_TRADE_ENABLED?'开启':'关闭',
@@ -1864,29 +1096,20 @@ function app() {
     init() {
       this.startClock()
       this.connectAll()
-      this.loadSwingSignals()
       this.loadScalpSignals()
       this.loadScalpTrades()
       this.loadCsvSymbols()
       this.pollScalpStatus()
-      this.pollFadeStatus()
-      this.loadFadeSignals()
-      this.loadFadeTrades()
       this.pollYaobiStatus()
       this.loadYaobiCandidates()
       this.loadObsidianStatus()
       setInterval(() => this.loadScalpPositions(), 2000)
-      setInterval(() => this.loadFadePositions(), 2000)
       setInterval(() => this.loadScalpTrades(), 10000)
-      setInterval(() => this.loadFadeTrades(), 10000)
       setInterval(() => this.pollScalpStatus(), 5000)
-      setInterval(() => this.pollFadeStatus(), 5000)
       setInterval(() => this.pollYaobiStatus(), 8000)
       setInterval(() => this.loadScalpFilterStats(), 30000)
-      setInterval(() => this.loadSwingPaper(), 10000)
       setInterval(() => this.loadBalance(), 30000)
       this.loadScalpFilterStats()
-      this.loadSwingPaper()
       this.loadBalance()
     },
 
@@ -1896,12 +1119,8 @@ function app() {
     },
 
     connectAll() {
-      this.connectWs('swingLog',  '/ws/log/swing')
       this.connectWs('scalpLog',  '/ws/log/scalp')
-      this.connectWs('fadeLog',   '/ws/log/fade')
-      this.connectWs('swingSig',  '/ws/signals')
       this.connectWs('scalpSig',  '/ws/scalp/signals')
-      this.connectWs('fadeSig',   '/ws/fade/signals')
       this.connectWs('yaobiCand', '/ws/yaobi/candidates')
     },
 
@@ -1916,18 +1135,10 @@ function app() {
     },
 
     handleWsMsg(key, data) {
-      if (key === 'swingLog') {
-        this.swingLogs.unshift(data); if (this.swingLogs.length>400) this.swingLogs.pop()
-      } else if (key === 'scalpLog') {
+      if (key === 'scalpLog') {
         this.scalpLogs.unshift(data); if (this.scalpLogs.length>400) this.scalpLogs.pop()
-      } else if (key === 'fadeLog') {
-        this.fadeLogs.unshift(data); if (this.fadeLogs.length>400) this.fadeLogs.pop()
-      } else if (key === 'swingSig') {
-        try { const s=JSON.parse(data); this.swingSignals.unshift(s); if(this.swingSignals.length>200)this.swingSignals.pop() } catch{}
       } else if (key === 'scalpSig') {
         try { const s=JSON.parse(data); this.scalpSignals.unshift(s); if(this.scalpSignals.length>200)this.scalpSignals.pop(); this.loadScalpTrades() } catch{}
-      } else if (key === 'fadeSig') {
-        try { const s=JSON.parse(data); this.fadeSignals.unshift(s); if(this.fadeSignals.length>200)this.fadeSignals.pop(); this.loadFadeTrades() } catch{}
       } else if (key === 'yaobiCand') {
         try {
           const msg=JSON.parse(data)
@@ -1955,32 +1166,12 @@ function app() {
       } catch(e) { this.showToast('❌ 复制失败: '+e, 'error') }
     },
 
-    async loadSwingSignals() {
-      try { const d=await(await fetch('/api/signals?limit=100')).json(); this.swingSignals=d.signals||[] } catch{}
-    },
-    async clearSwingSignals() {
-      await fetch('/api/signals',{method:'DELETE'}); this.swingSignals=[]; this.showToast('✅ 中线信号已清空')
-    },
     async loadCsvSymbols() {
       try { const d=await(await fetch('/api/data/symbols')).json(); this.csvSymbols=d.symbols||[] } catch{}
     },
     async loadCsvData() {
       if (!this.csvSymbol) return
       try { const d=await(await fetch(`/api/data/${this.csvSymbol}?limit=60`)).json(); this.csvData=d.rows||[] } catch{}
-    },
-
-    async saveSwingConfig() {
-      const fd = new FormData(document.getElementById('swingForm'))
-      const bk = ['AUTO_TRADE_ENABLED','ENABLE_LONG_STRATEGY','ENABLE_SHORT_STRATEGY',
-        'TA_CONFIRMATION_ENABLED','ENABLE_NEWS_FILTER','ENABLE_LIQ_FILTER',
-        'ENABLE_MTF_FILTER','ENABLE_OKX_FILTER','ENABLE_AI_AGENT','USE_TRAILING_STOP','USE_DYNAMIC_SL',
-        'ENABLE_FUNDING_REVERSAL','SWING_PAPER_TRADE']
-      bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
-      try {
-        const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
-        this.showToast(d.message, d.status==='success'?'success':'error')
-        if (d.status==='success') { this.cfg=await(await fetch('/api/config')).json() }
-      } catch(e) { this.showToast('❌ 保存失败: '+e,'error') }
     },
 
     async saveScalpConfig() {
@@ -2030,34 +1221,6 @@ function app() {
     async loadScalpFilterStats() {
       try { const d=await(await fetch('/api/scalp/filter-stats')).json(); this.scalpFilterStats=d } catch{}
     },
-    async loadSwingPaper() {
-      try {
-        const [pd, td] = await Promise.all([
-          fetch('/api/swing/paper/positions').then(r=>r.json()),
-          fetch('/api/swing/paper/trades').then(r=>r.json()),
-        ])
-        this.swingPaperPositions = pd.positions||{}
-        this.swingPaperTrades    = td.trades||[]
-        this.swingPaperTotalPnl  = td.total_pnl||0
-        this.swingPaperWinRate   = td.win_rate||0
-      } catch{}
-    },
-    async clearSwingPaperPositions() {
-      try {
-        const d=await(await fetch('/api/swing/paper/positions',{method:'DELETE'})).json()
-        await fetch('/api/swing/paper/trades',{method:'DELETE'})
-        this.showToast(d.message, d.status==='success'?'success':'error')
-        await this.loadSwingPaper()
-      } catch(e){ this.showToast('❌ 清除失败: '+e,'error') }
-    },
-    async quickToggleSwingPaper() {
-      this.cfg.SWING_PAPER_TRADE = true
-      const fd = new FormData(); fd.set('SWING_PAPER_TRADE','true')
-      try {
-        await fetch('/api/config',{method:'POST',body:fd})
-        this.showToast('✅ 中线模拟仓已开启，下次信号触发时自动建仓','success')
-      } catch(e){ this.showToast('❌ 保存失败: '+e,'error') }
-    },
     async clearPaperPositions() {
       try {
         const d=await(await fetch('/api/scalp/paper/positions',{method:'DELETE'})).json()
@@ -2072,15 +1235,6 @@ function app() {
       try {
         await fetch('/api/config', {method:'POST', body:fd})
         this.showToast(this.cfg.SCALP_ENABLED ? '🟢 策略已开启，开始扫描信号' : '⚫ 策略已暂停', 'success')
-      } catch(e) { this.showToast('❌ 保存失败: '+e, 'error') }
-    },
-    async toggleFadeEnabled() {
-      this.cfg.FADE_ENABLED = !this.cfg.FADE_ENABLED
-      const fd = new FormData()
-      fd.set('FADE_ENABLED', this.cfg.FADE_ENABLED ? 'true' : 'false')
-      try {
-        await fetch('/api/config', {method:'POST', body:fd})
-        this.showToast(this.cfg.FADE_ENABLED ? '🔴 做空策略已开启' : '⚫ 做空策略已暂停', 'success')
       } catch(e) { this.showToast('❌ 保存失败: '+e, 'error') }
     },
     async startScalp() {
@@ -2104,70 +1258,6 @@ function app() {
       } catch{}
     },
 
-    async pollFadeStatus() {
-      try { const d=await(await fetch('/api/fade/status')).json(); this.fadeRunning=d.running; this.fadeStatus=d } catch{}
-    },
-    async loadFadeSignals() {
-      try { const d=await(await fetch('/api/fade/signals?limit=100')).json(); this.fadeSignals=d.signals||[] } catch{}
-    },
-    async clearFadeSignals() {
-      await fetch('/api/fade/signals',{method:'DELETE'}); this.fadeSignals=[]; this.showToast('✅ 做空信号已清空')
-    },
-    async loadFadeTrades() {
-      try {
-        const d = await(await fetch('/api/fade/trades?limit=200')).json()
-        this.fadeTrades    = d.trades    || []
-        this.fadeTotalPnl  = d.total_pnl || 0
-        this.fadeWinRate   = d.win_rate  || 0
-        this.fadeTradeTotal = d.total    || 0
-      } catch{}
-    },
-    async clearFadeTrades() {
-      await fetch('/api/fade/trades',{method:'DELETE'})
-      this.fadeTrades=[]; this.fadeTotalPnl=0; this.fadeWinRate=0; this.fadeTradeTotal=0
-      this.showToast('✅ 历史成交已清空')
-    },
-    async loadFadePositions() {
-      if (!this.fadeRunning) return
-      try { const d=await(await fetch('/api/fade/positions')).json(); this.fadePositions=d.positions||{} } catch{}
-    },
-    async clearFadePaperPositions() {
-      try {
-        const d=await(await fetch('/api/fade/paper/positions',{method:'DELETE'})).json()
-        this.showToast(d.message, d.status==='success'?'success':'error')
-        await this.loadFadePositions()
-      } catch(e){ this.showToast('❌ 清除失败: '+e,'error') }
-    },
-    async startFade() {
-      try {
-        const d=await(await fetch('/api/fade/start',{method:'POST'})).json()
-        this.showToast(d.message, d.status==='started'||d.status==='already_running'?'success':'error')
-        await this.pollFadeStatus()
-      } catch(e){ this.showToast('❌ 启动失败: '+e,'error') }
-    },
-    async stopFade() {
-      try {
-        const d=await(await fetch('/api/fade/stop',{method:'POST'})).json()
-        this.showToast(d.message); this.fadeRunning=false; this.fadePositions={}
-      } catch(e){ this.showToast('❌ 停止失败: '+e,'error') }
-    },
-    async refreshFadeSymbols() {
-      try {
-        const d=await(await fetch('/api/fade/refresh',{method:'POST'})).json()
-        this.showToast(d.message, d.status==='success'?'success':'error')
-        await this.pollFadeStatus()
-      } catch{}
-    },
-    async saveFadeConfig() {
-      const fd=new FormData(document.getElementById('fadeForm'))
-      const bk=['FADE_ENABLED','FADE_AUTO_TRADE','FADE_PAPER_TRADE']
-      bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
-      try {
-        const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
-        this.showToast(d.message,d.status==='success'?'success':'error')
-        if(d.status==='success'){ this.cfg=await(await fetch('/api/config')).json() }
-      } catch(e){ this.showToast('❌ 保存失败: '+e,'error') }
-    },
 
     async pollYaobiStatus() {
       try {

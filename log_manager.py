@@ -2,7 +2,7 @@
 日志路由系统
 - 控制台输出
 - 主内存队列 (全部日志)
-- 模式专属队列: swing_log_queue / scalp_log_queue
+- 模式专属队列: scalp_log_queue
 - 按天轮转文件日志 (7 天保留)
 """
 import logging
@@ -11,9 +11,7 @@ import os
 import queue
 
 log_queue:       queue.Queue = queue.Queue(maxsize=1000)
-swing_log_queue: queue.Queue = queue.Queue(maxsize=500)
 scalp_log_queue: queue.Queue = queue.Queue(maxsize=500)
-fade_log_queue:  queue.Queue = queue.Queue(maxsize=500)
 
 _LOG_FORMAT      = "[%(asctime)s] [%(levelname)-8s] %(message)s"
 _FILE_LOG_FORMAT = "[%(asctime)s] [%(levelname)-8s] [%(name)s] %(message)s"
@@ -41,10 +39,6 @@ class _RoutingQueueHandler(logging.Handler):
             name = record.name.lower()
             if "scalp" in name:
                 _put(scalp_log_queue, msg)
-            elif "fade" in name:
-                _put(fade_log_queue, msg)
-            else:
-                _put(swing_log_queue, msg)
         except Exception:
             self.handleError(record)
 

@@ -73,10 +73,12 @@ async def _analyze_symbol(
     ticker_index: dict,
 ) -> dict:
     try:
-        oi_hist_4h, klines_1d, trader_ratio = await asyncio.gather(
+        oi_hist_4h, klines_1d, trader_ratio, funding_rate, ls_ratio = await asyncio.gather(
             _get_oi_hist(session, symbol, period="4h", limit=120),
             _get_klines(session, symbol, interval="1d", limit=10),
             _get_top_trader_ratio(session, symbol),
+            _get_funding_rate(session, symbol),
+            _get_global_ls_ratio(session, symbol),
             return_exceptions=True,
         )
 
@@ -99,6 +101,9 @@ async def _analyze_symbol(
             "price_change_24h":   0.0,
             "signals":            [],
             "category":           "",
+            "funding_rate_pct":   0.0,
+            "fr_extreme_short":   False,
+            "retail_short_pct":   50.0,
         }
 
         # ── OI 日增% (24h = 6 个 4h 周期) ───────────────────────────────────
@@ -138,6 +143,15 @@ async def _analyze_symbol(
             result["whale_long_ratio"] = round(long_pct / 100, 3)
             result["short_crowd_pct"]  = round(100 - long_pct, 1)
             hub.update_smart_ls(symbol, result["whale_long_ratio"])
+
+        # ── 资金费率 & 全局多空比 ────────────────────────────────────────────
+        if isinstance(funding_rate, float):
+            fr_pct = round(funding_rate * 100, 4)
+            result["funding_rate_pct"] = fr_pct
+            result["fr_extreme_short"] = fr_pct < -0.05
+
+        if isinstance(ls_ratio, float):
+            result["retail_short_pct"] = round(ls_ratio * 100, 1)
 
         # ── 更新 Hub OI ──────────────────────────────────────────────────────
         if isinstance(oi_hist_4h, list) and oi_hist_4h:
@@ -295,6 +309,42 @@ async def _get_klines(session, symbol, interval="1d", limit=10) -> list:
     except Exception:
         pass
     return []
+
+
+async def _get_funding_rate(session: aiohttp.ClientSession, symbol: str) -> float:
+    """获取当前资金费率，返回浮点数如 -0.0006 表示 -0.06%"""
+    try:
+        async with session.get(
+            f"{_BASE}/fapi/v1/premiumIndex",
+            params={"symbol": symbol},
+            headers=_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return float(data.get("lastFundingRate", 0) or 0)
+    except Exception:
+        pass
+    return 0.0
+
+
+async def _get_global_ls_ratio(session: aiohttp.ClientSession, symbol: str) -> float:
+    """获取全局账户多空比，返回空头侧占比(0~1)，如 0.68 表示68%账户持空"""
+    try:
+        async with session.get(
+            f"{_BASE}/futures/data/globalLongShortAccountRatio",
+            params={"symbol": symbol, "period": "5m", "limit": 1},
+            headers=_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data and isinstance(data, list):
+                    long_ratio = float(data[0].get("longAccount", 0.5) or 0.5)
+                    return round(1.0 - long_ratio, 4)
+    except Exception:
+        pass
+    return 0.5
 
 
 async def _get_top_trader_ratio(session, symbol) -> list:
