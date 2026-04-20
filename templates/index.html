@@ -1086,13 +1086,6 @@ function app() {
       { key:'SCALP_PAPER_TRADE',  label:'模拟开仓', color:'text-yellow-400' },
     ],
 
-        { label:'扫描间隔', value: (this.cfg.INTERVAL_MINUTES??'—')+' min', color:'text-white' },
-        { label:'AI 最低分', value: this.cfg.AI_AGENT_SCORE_MIN??'—', color:'text-yellow-400' },
-        { label:'自动交易', value: this.cfg.AUTO_TRADE_ENABLED?'开启':'关闭',
-          color: this.cfg.AUTO_TRADE_ENABLED?'text-green-400':'text-gray-500' },
-      ]
-    },
-
     init() {
       this.startClock()
       this.connectAll()
