@@ -45,6 +45,7 @@ class ConfigManager:
         "SQUEEZE_WICK_PCT":            (0.3,    5.0),
         "SQUEEZE_TAKER_MIN":           (0.5,    0.9),
         "BREAKOUT_TAKER_MIN":          (0.4,    0.9),
+        "BREAKOUT_MIN_PCT":            (0.01,   5.0),
         "SIGNAL_COOLDOWN_SECONDS":     (1,      60),
         "OI_POLL_INTERVAL":            (5,      60),
         # 妖币扫描器
@@ -83,7 +84,8 @@ class ConfigManager:
             "SQUEEZE_WICK_PCT":          1.0,
             "SQUEEZE_TAKER_MIN":         0.65,
             # ── V3.0 动能突破参数 ─────────────────────────────────────────────
-            "BREAKOUT_TAKER_MIN":        0.55,
+            "BREAKOUT_TAKER_MIN":        0.60,
+            "BREAKOUT_MIN_PCT":          0.05,
             "SIGNAL_COOLDOWN_SECONDS":   5,
             "OI_POLL_INTERVAL":          10,
             # ── 妖币扫描器 ────────────────────────────────────────────────────

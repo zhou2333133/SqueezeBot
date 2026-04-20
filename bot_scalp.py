@@ -101,6 +101,8 @@ class BinanceScalpBot:
         self._signal_cooldown:  dict[str, float]         = {}
         # 平均K线成交量（用于Taker比率噪声过滤）
         self._avg_vol:          dict[str, float]         = {}
+        # OI暖机截止时间（首轮OI就绪后静默60秒，防信号井喷）
+        self._oi_warmup_until:  float                    = 0.0
         # 过滤统计（每5分钟输出）
         self._fstat:            dict[str, int]           = {
             "checked": 0, "no_candidate": 0, "oi_miss": 0,
@@ -209,6 +211,8 @@ class BinanceScalpBot:
 
         for i, t in enumerate(usdt[:limit]):
             sym    = t["symbol"]
+            if not sym.isascii() or not sym.endswith("USDT"):
+                continue
             change = float(t.get("priceChangePercent", 0))
             vol    = float(t.get("quoteVolume", 0))
 
@@ -408,6 +412,13 @@ class BinanceScalpBot:
             await asyncio.sleep(interval)
             if self.candidate_symbols:
                 await asyncio.gather(*[_poll_one(s) for s in self.candidate_symbols])
+                # 首轮OI就绪后启动60秒暖机静默，防止OI缓存从空→满时信号井喷
+                if self._oi_warmup_until == 0.0:
+                    ready = sum(1 for s in self.candidate_symbols if self._oi_cache.get(s))
+                    if ready >= len(self.candidate_symbols) * 0.8:
+                        self._oi_warmup_until = time.monotonic() + 60
+                        logger.info("⚡ OI暖机完成(%d/%d), 静默60秒防信号井喷",
+                                    ready, len(self.candidate_symbols))
 
     # ─── Surf 新闻扫描 + 急救平仓 ─────────────────────────────────────────────
 
@@ -668,14 +679,20 @@ class BinanceScalpBot:
         return (newest_oi - oldest_oi) / oldest_oi * 100
 
     def _get_squeeze_oi_threshold(self, symbol: str) -> float:
-        """按币种分层返回轧空触发所需的最小OI降幅%"""
+        """按币种分层返回轧空触发所需的最小OI降幅%;FR极负时保守降低门槛×0.5"""
         cfg = self.cfg
         if symbol in _MAJOR_SYMBOLS:
-            return cfg.get("SQUEEZE_OI_DROP_MAJOR", 0.5)
-        vol = self.candidate_meta.get(symbol, {}).get("volume_24h", 0.0)
-        if vol >= 500_000_000:  # 24h成交量≥5亿→中型
-            return cfg.get("SQUEEZE_OI_DROP_MID", 1.0)
-        return cfg.get("SQUEEZE_OI_DROP_MEME", 1.5)
+            base = cfg.get("SQUEEZE_OI_DROP_MAJOR", 0.5)
+        else:
+            vol = self.candidate_meta.get(symbol, {}).get("volume_24h", 0.0)
+            if vol >= 500_000_000:
+                base = cfg.get("SQUEEZE_OI_DROP_MID", 1.0)
+            else:
+                base = cfg.get("SQUEEZE_OI_DROP_MEME", 1.5)
+        # FR < -0.1% 意味着空头积累严重，OI需降幅可放宽一半
+        if self.candidate_meta.get(symbol, {}).get("fr_squeeze", False):
+            return base * 0.5
+        return base
 
     # ─── 观察模式（止损后60分钟冷却）──────────────────────────────────────────
 
@@ -729,6 +746,10 @@ class BinanceScalpBot:
         if len(buf) < 20:
             return
 
+        # OI暖机期静默，防首轮OI就绪引爆10+信号
+        if time.monotonic() < self._oi_warmup_until:
+            return
+
         news        = meta.get("news_sentiment", "neutral")
         taker_ratio = self._get_taker_ratio(symbol)
         if taker_ratio is None:
@@ -741,6 +762,9 @@ class BinanceScalpBot:
 
             if oi_change_pct is not None and oi_change_pct <= -oi_threshold:
                 wick_pct   = cfg.get("SQUEEZE_WICK_PCT", 1.0)
+                # FR极负时同步放宽wick门槛，提高轧空信号灵敏度
+                if meta.get("fr_squeeze", False):
+                    wick_pct *= 0.5
                 sq_taker   = cfg.get("SQUEEZE_TAKER_MIN", 0.65)
                 recent_3   = buf[-3:] if len(buf) >= 3 else buf
                 recent_low  = min(k["l"] for k in recent_3)
@@ -790,14 +814,15 @@ class BinanceScalpBot:
             self._maybe_print_fstat()
             return
 
-        closes   = [k["c"] for k in buf]
-        ma5      = sum(closes[-5:])  / 5
-        ma10     = sum(closes[-10:]) / 10
-        ma20     = sum(closes[-20:]) / 20
-        prev     = buf[-1]  # 最近闭合K线
-        bo_taker = cfg.get("BREAKOUT_TAKER_MIN", 0.55)
+        closes     = [k["c"] for k in buf]
+        ma5        = sum(closes[-5:])  / 5
+        ma10       = sum(closes[-10:]) / 10
+        ma20       = sum(closes[-20:]) / 20
+        prev       = buf[-1]  # 最近闭合K线
+        bo_taker   = cfg.get("BREAKOUT_TAKER_MIN", 0.60)
+        bo_min_pct = cfg.get("BREAKOUT_MIN_PCT", 0.05)
 
-        if allow_long and ma5 > ma10 > ma20 and price > prev["h"] and taker_ratio >= bo_taker:
+        if allow_long and ma5 > ma10 > ma20 and price > prev["h"] * (1 + bo_min_pct / 100) and taker_ratio >= bo_taker:
             if self._btc_guard("LONG"):
                 self._fstat["breakout"] += 1
                 self._breakout_fired[symbol] = True
@@ -809,7 +834,7 @@ class BinanceScalpBot:
             else:
                 self._fstat["btc_guard"] += 1
 
-        if allow_short and ma5 < ma10 < ma20 and price < prev["l"] and (1 - taker_ratio) >= bo_taker:
+        if allow_short and ma5 < ma10 < ma20 and price < prev["l"] * (1 - bo_min_pct / 100) and (1 - taker_ratio) >= bo_taker:
             if self._btc_guard("SHORT"):
                 self._fstat["breakout"] += 1
                 self._breakout_fired[symbol] = True
