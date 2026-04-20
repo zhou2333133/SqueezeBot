@@ -606,8 +606,9 @@
         <span class="text-xs text-gray-500 uppercase tracking-wider">策略参数</span>
       </div>
       <div class="text-sm font-bold text-orange-300"
-        x-text="'回调'+cfg.SCALP_PULLBACK_PCT+'% | 反转'+cfg.SCALP_MEAN_REVERT_PCT+'%'"></div>
-      <div class="text-xs text-gray-600 mt-1" x-text="'振幅阈值 '+cfg.SCALP_ACTIVE_RANGE_PCT+'%'"></div>
+        x-text="'OI轮询 '+(cfg.OI_POLL_INTERVAL??10)+'s | 冷却 '+(cfg.SIGNAL_COOLDOWN_SECONDS??5)+'s'"></div>
+      <div class="text-xs text-gray-600 mt-1"
+        x-text="'SQ Taker≥'+Math.round((cfg.SQUEEZE_TAKER_MIN??0.65)*100)+'% | BO Taker≥'+Math.round((cfg.BREAKOUT_TAKER_MIN??0.55)*100)+'%'"></div>
     </div>
   </div>
 
@@ -623,37 +624,7 @@
         <div x-show="scalpOpen" class="px-5 pb-5 space-y-4">
           <form @submit.prevent="saveScalpConfig()" id="scalpForm">
 
-            <p class="text-xs text-orange-800 uppercase tracking-widest pt-1">选币 & 策略参数</p>
-            <div class="grid grid-cols-3 gap-3 mt-2">
-              <div>
-                <label class="text-xs text-gray-400 font-medium">活跃振幅 %</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">15分钟内最高最低价差须超过此值，才认为该币"有行情"。越小=筛选越宽，信号越多但质量略低。过滤统计中<b>振幅不足</b>率高时降低此值。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_ACTIVE_RANGE_PCT" :value="cfg.SCALP_ACTIVE_RANGE_PCT??3"></div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">回调阈值 %</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">趋势跟随策略的入场条件：价格从近期高/低点回调超过此%才入场。越小=更灵敏但更容易假信号。过滤统计中<b>无入场信号</b>率高时降低此值。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_PULLBACK_PCT" :value="cfg.SCALP_PULLBACK_PCT??1.5"></div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">反转阈值 %</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">均线反转策略：价格偏离MA20超过此%时做反转。横盘震荡行情适用。越小=更频繁触发，越大=只抓极端超买超卖。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_MEAN_REVERT_PCT" :value="cfg.SCALP_MEAN_REVERT_PCT??4.5"></div>
-            </div>
-            <div class="grid grid-cols-3 gap-3 mt-3">
-              <div>
-                <label class="text-xs text-gray-400 font-medium">Taker比例下限</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">做多时要求主动买单占比≥此值（0.55=55%）。越高=要求更强买盘确认，信号更少但质量高。过滤统计中<b>Taker</b>拦截多时降低。</div>
-                <input class="inp inp-o" type="number" step="0.01" name="SCALP_TAKER_RATIO_MIN" :value="cfg.SCALP_TAKER_RATIO_MIN??0.55"></div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">VWAP最大偏离 %</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">做多时价格偏离VWAP超过此%则拒绝追高（防止顶部入场）。过滤统计中<b>VWAP追高</b>拦截多时调高。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_VWAP_MAX_DEV" :value="cfg.SCALP_VWAP_MAX_DEV??5"></div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">触发窗口 (分钟)</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">实时检测窗口：N分钟内涨跌超过触发%才进行精细分析。建议2~5分钟。</div>
-                <input class="inp inp-o" type="number" name="SCALP_WINDOW_MINUTES" :value="cfg.SCALP_WINDOW_MINUTES"></div>
-            </div>
-
-            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">交易方向 & 控制</p>
+            <p class="text-xs text-orange-800 uppercase tracking-widest pt-1">交易方向 & 执行模式</p>
             <div class="flex flex-wrap gap-4 mt-2">
               <template x-for="f in scalpToggles" :key="f.key">
                 <label class="flex items-center gap-2 cursor-pointer select-none">
@@ -666,7 +637,27 @@
               </template>
             </div>
 
-            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">风控参数</p>
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">候选池 & 调度</p>
+            <div class="grid grid-cols-4 gap-3 mt-2">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">候选池上限</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">按24h成交额排序后，最多保留前 N 个币做 V3 信号计算。默认 80。</div>
+                <input class="inp inp-o" type="number" name="SCALP_CANDIDATE_LIMIT" :value="cfg.SCALP_CANDIDATE_LIMIT??80"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">OI轮询秒数</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">Binance OI 用 REST 轮询。默认 10 秒，80 币约 480 req/min。</div>
+                <input class="inp inp-o" type="number" name="OI_POLL_INTERVAL" :value="cfg.OI_POLL_INTERVAL??10"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">信号冷却秒</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">同一币发出一次信号后，N 秒内不再重复入场，防 Tick 连续触发。</div>
+                <input class="inp inp-o" type="number" name="SIGNAL_COOLDOWN_SECONDS" :value="cfg.SIGNAL_COOLDOWN_SECONDS??5"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">BTC 守卫 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">BTC 5 分钟急跌时禁做多，急涨时禁做空，避免逆着大盘开仓。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="BTC_GUARD_PCT" :value="cfg.BTC_GUARD_PCT??2"></div>
+            </div>
+
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">仓位 & 风控</p>
             <div class="grid grid-cols-4 gap-3 mt-2">
               <div>
                 <label class="text-xs text-gray-400 font-medium">最大同时仓位</label>
@@ -708,8 +699,38 @@
               </div>
             </div>
 
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">Squeeze Hunter 参数</p>
+            <div class="grid grid-cols-4 gap-3 mt-2">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">大币 OI 阈值 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">BTC/ETH/SOL 等大币 3 分钟 OI 至少下降多少，才认定为爆仓踩踏。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SQUEEZE_OI_DROP_MAJOR" :value="cfg.SQUEEZE_OI_DROP_MAJOR??0.5"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">中币 OI 阈值 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">主流山寨的 OI 降幅阈值，默认 1.0%。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SQUEEZE_OI_DROP_MID" :value="cfg.SQUEEZE_OI_DROP_MID??1.0"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">Meme OI 阈值 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">高波动 Meme 币的 OI 降幅阈值，默认 1.5%。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SQUEEZE_OI_DROP_MEME" :value="cfg.SQUEEZE_OI_DROP_MEME??1.5"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">反弹/回落确认 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">从最近极值回抽多少才允许挤压猎杀入场，过滤一路单边砸盘。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SQUEEZE_WICK_PCT" :value="cfg.SQUEEZE_WICK_PCT??1.0"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">挤压 Taker 阈值</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">Squeeze Hunter 的资金确认阈值。0.65 表示主动买/卖至少占 65%。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="SQUEEZE_TAKER_MIN" :value="cfg.SQUEEZE_TAKER_MIN??0.65"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">突破 Taker 阈值</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">Trend Breakout 的成交确认阈值。0.55 表示买/卖盘优势需要达到 55%。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_TAKER_MIN" :value="cfg.BREAKOUT_TAKER_MIN??0.55"></div>
+            </div>
+
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">止盈设置 (三档分批平仓)</p>
-            <div class="text-xs text-gray-600 mb-2">动态止损模式：TP1/TP2由SL距离×倍数决定（自动适配波动率）；固定止损模式：使用下方保证金%设置</div>
+            <div class="text-xs text-gray-600 mb-2">V3 统一使用结构止损 / 硬帽止损反推 RR 止盈，不再保留旧的固定动量回调和 FLAT 反转参数。</div>
             <div class="grid grid-cols-4 gap-3 mt-2">
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP1 Risk:Reward倍数</label>
@@ -733,60 +754,6 @@
                 <label class="text-xs text-gray-400 font-medium">TP3 EMA5追踪缓冲 %</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">TP3使用EMA5作为追踪止损基准，此值为EMA5缓冲（防毛刺）。同时保留固定%作为兜底。建议1~2%。</div>
                 <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP3_TRAIL_PCT" :value="cfg.SCALP_TP3_TRAIL_PCT"></div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">TP1触发 % (固定止损专用)</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">仅在<b>关闭动态止损</b>时使用。赚到N%保证金时触发TP1。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP1_PCT" :value="cfg.SCALP_TP1_PCT"></div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">TP2触发 % (固定止损专用)</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">仅在<b>关闭动态止损</b>时使用。赚到N%保证金时触发TP2。</div>
-                <input class="inp inp-o" type="number" step="1" name="SCALP_TP2_PCT" :value="cfg.SCALP_TP2_PCT"></div>
-            </div>
-            <div class="grid grid-cols-2 gap-3 mt-3">
-              <div class="flex items-start">
-                <label class="flex items-center gap-2 cursor-pointer select-none">
-                  <label class="toggle to-toggle">
-                    <input type="checkbox" name="SCALP_FLAT_ENABLED" :checked="cfg.SCALP_FLAT_ENABLED===true" @change="cfg.SCALP_FLAT_ENABLED=$event.target.checked">
-                    <span class="ttrack"></span>
-                  </label>
-                  <div>
-                    <span class="text-sm text-orange-300">均线反转信号（高风险）</span>
-                    <div class="text-xs text-gray-600 mt-0.5">开启FLAT震荡行情的逆势反转单。1m级别4.5%偏离通常是突破而非超买超卖，<b>建议关闭</b>。</div>
-                  </div>
-                </label>
-              </div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">反转触发阈值 %（FLAT模式）</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">开启FLAT反转时，偏离MA20超过此%才触发。建议1.5~2.5%，且需Taker衰竭配合。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_FLAT_THRESHOLD" :value="cfg.SCALP_FLAT_THRESHOLD??2.0"></div>
-            </div>
-
-            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">动能识别 & 右侧确认</p>
-            <div class="grid grid-cols-3 gap-3 mt-2">
-              <div>
-                <label class="text-xs text-gray-400 font-medium">斜率回看K线数</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">用最近N根<b>1分钟</b>K线计算线性回归斜率（默认8根=看近8分钟的趋势陡峭程度）。越大=越平滑，越小=越敏感。</div>
-                <input class="inp inp-o" type="number" step="1" name="SCALP_SLOPE_LOOKBACK" :value="cfg.SCALP_SLOPE_LOOKBACK??8"></div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">瀑布斜率阈值 %/分钟</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">每根<b>1分钟</b>K线平均涨跌超过此%视为"单边瀑布/飞升"，只允许顺势方向入场，禁止逆势接刀。0.20=每分钟均价变动0.2%。</div>
-                <input class="inp inp-o" type="number" step="0.05" name="SCALP_SLOPE_THRESHOLD" :value="cfg.SCALP_SLOPE_THRESHOLD??0.20"></div>
-              <div>
-                <label class="text-xs text-gray-400 font-medium">止损冷却时间 (分钟)</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">同币种触发止损后，冷却N分钟内不再入场（0=关闭）。若斜率方向发生反转则提前解冻，防错过真正的趋势转换。</div>
-                <input class="inp inp-o" type="number" step="5" name="SCALP_SL_COOLDOWN_MINUTES" :value="cfg.SCALP_SL_COOLDOWN_MINUTES??30"></div>
-            </div>
-            <div class="mt-3">
-              <label class="flex items-center gap-2 cursor-pointer select-none">
-                <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_CONFIRM_ENABLED" :checked="cfg.SCALP_CONFIRM_ENABLED!==false" @change="cfg.SCALP_CONFIRM_ENABLED=$event.target.checked">
-                  <span class="ttrack"></span>
-                </label>
-                <div>
-                  <span class="text-sm text-orange-300">右侧K线确认（防接飞刀）</span>
-                  <div class="text-xs text-gray-600 mt-0.5">开启后：信号触发时不立即入场，等下一根1分钟K线验证止跌/止涨信号再开仓。瀑布顺势信号和实时信号不受影响，直接入场。</div>
-                </div>
-              </label>
             </div>
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">监控列表</p>
@@ -827,14 +794,12 @@
               <div class="text-[10px] text-gray-600">总检测</div>
             </div>
             <div class="text-center">
-              <div class="text-lg font-bold" :class="(scalpFilterStats.no_active/Math.max(scalpFilterStats.checked,1)*100)>50?'text-red-400':'text-yellow-400'"
-                x-text="(scalpFilterStats.no_active/Math.max(scalpFilterStats.checked,1)*100).toFixed(0)+'%'"></div>
-              <div class="text-[10px] text-gray-600">振幅不足</div>
+              <div class="text-lg font-bold text-orange-300" x-text="scalpFilterStats.squeeze??0"></div>
+              <div class="text-[10px] text-gray-600">轧空信号</div>
             </div>
             <div class="text-center">
-              <div class="text-lg font-bold" :class="(scalpFilterStats.no_signal/Math.max(scalpFilterStats.checked,1)*100)>30?'text-red-400':'text-yellow-400'"
-                x-text="(scalpFilterStats.no_signal/Math.max(scalpFilterStats.checked,1)*100).toFixed(0)+'%'"></div>
-              <div class="text-[10px] text-gray-600">无信号</div>
+              <div class="text-lg font-bold text-yellow-300" x-text="scalpFilterStats.breakout??0"></div>
+              <div class="text-[10px] text-gray-600">突破信号</div>
             </div>
             <div class="text-center">
               <div class="text-lg font-bold" :class="scalpFilterStats.passed>0?'text-green-400':'text-gray-600'"
@@ -843,65 +808,42 @@
             </div>
           </div>
           <div class="space-y-1.5 text-xs">
-            <!-- Active range bar -->
             <div class="flex items-center gap-2">
-              <span class="text-gray-500 w-20 shrink-0">振幅不足</span>
+              <span class="text-gray-500 w-20 shrink-0">非候选币</span>
               <div class="flex-1 h-2 bg-[#1a1a30] rounded-full overflow-hidden">
-                <div class="h-full rounded-full transition-all"
-                  :class="scalpFilterStats.bottleneck==='no_active'?'bg-red-500':'bg-orange-700/60'"
-                  :style="'width:'+Math.min((scalpFilterStats.no_active/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+                <div class="h-full bg-orange-700/60 rounded-full transition-all"
+                  :style="'width:'+Math.min((scalpFilterStats.no_candidate/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
               </div>
-              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.no_active"></span>
-              <span x-show="scalpFilterStats.bottleneck==='no_active'" class="text-red-400 font-bold">◄主瓶颈</span>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.no_candidate??0"></span>
             </div>
-            <!-- No signal bar -->
             <div class="flex items-center gap-2">
-              <span class="text-gray-500 w-20 shrink-0">无入场信号</span>
+              <span class="text-gray-500 w-20 shrink-0">OI未就绪</span>
               <div class="flex-1 h-2 bg-[#1a1a30] rounded-full overflow-hidden">
-                <div class="h-full rounded-full transition-all"
-                  :class="scalpFilterStats.bottleneck==='no_signal'?'bg-red-500':'bg-orange-700/60'"
-                  :style="'width:'+Math.min((scalpFilterStats.no_signal/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+                <div class="h-full bg-blue-700/60 rounded-full transition-all"
+                  :style="'width:'+Math.min((scalpFilterStats.oi_miss/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
               </div>
-              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.no_signal"></span>
-              <span x-show="scalpFilterStats.bottleneck==='no_signal'" class="text-red-400 font-bold">◄主瓶颈</span>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.oi_miss??0"></span>
             </div>
-            <!-- BTC guard / Taker / VWAP / Hub -->
+            <div class="flex items-center gap-2">
+              <span class="text-gray-500 w-20 shrink-0">信号冷却</span>
+              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
+                <div class="h-full bg-yellow-700/60 rounded-full"
+                  :style="'width:'+Math.min((scalpFilterStats.cooldown/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+              </div>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.cooldown??0"></span>
+            </div>
             <div class="flex items-center gap-2">
               <span class="text-gray-500 w-20 shrink-0">BTC大盘</span>
               <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
-                <div class="h-full bg-blue-700/60 rounded-full" :style="'width:'+Math.min((scalpFilterStats.btc_guard/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+                <div class="h-full bg-red-700/60 rounded-full"
+                  :style="'width:'+Math.min((scalpFilterStats.btc_guard/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
               </div>
-              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.btc_guard"></span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-gray-500 w-20 shrink-0">Taker比例</span>
-              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
-                <div class="h-full bg-blue-700/60 rounded-full" :style="'width:'+Math.min((scalpFilterStats.taker/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
-              </div>
-              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.taker"></span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-gray-500 w-20 shrink-0">VWAP追高</span>
-              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
-                <div class="h-full bg-blue-700/60 rounded-full" :style="'width:'+Math.min((scalpFilterStats.vwap/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
-              </div>
-              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.vwap"></span>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-gray-500 w-20 shrink-0">Hub市场</span>
-              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
-                <div class="h-full bg-blue-700/60 rounded-full" :style="'width:'+Math.min((scalpFilterStats.hub/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
-              </div>
-              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.hub"></span>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.btc_guard??0"></span>
             </div>
           </div>
-          <!-- Bottleneck tip -->
-          <div class="mt-2 p-2 rounded-lg bg-[#0e0a05] text-xs" x-show="scalpFilterStats.bottleneck">
-            <span class="text-orange-400 font-semibold">💡 调参建议: </span>
-            <span x-show="scalpFilterStats.bottleneck==='no_active'" class="text-gray-300"
-              x-text="'振幅不足是主瓶颈 → 降低「活跃振幅」(当前'+scalpFilterStats.cfg_active_pct+'%)'"></span>
-            <span x-show="scalpFilterStats.bottleneck==='no_signal'" class="text-gray-300"
-              x-text="'无入场信号是主瓶颈 → 降低「回调阈值」(当前'+scalpFilterStats.cfg_pullback_pct+'%) 或「反转阈值」(当前'+scalpFilterStats.cfg_revert_pct+'%)'"></span>
+          <div class="mt-3 p-2 rounded-lg bg-[#0e0a05] text-xs text-gray-300">
+            <span class="text-orange-400 font-semibold">当前阈值: </span>
+            <span x-text="'SQ OI大币 '+(scalpFilterStats.cfg_sq_oi_major??0.5)+'% / 中币 '+(scalpFilterStats.cfg_sq_oi_mid??1.0)+'% / Meme '+(scalpFilterStats.cfg_sq_oi_meme??1.5)+'% | SQ Taker≥'+Math.round((scalpFilterStats.cfg_sq_taker??0.65)*100)+'% | BO Taker≥'+Math.round((scalpFilterStats.cfg_bo_taker??0.55)*100)+'%'"></span>
           </div>
         </div>
       </div>
@@ -1015,13 +957,17 @@
                 <div class="flex items-center gap-2">
                   <span class="font-bold text-sm text-white" x-text="sig.symbol"></span>
                   <span class="px-2 py-0.5 rounded text-xs font-semibold" :class="sig.direction==='LONG'?'badge-long':'badge-short'" x-text="sig.direction"></span>
-                  <span class="text-xs font-bold" :class="sig.trigger_pct>=0?'text-green-400':'text-red-400'"
-                    x-text="(sig.trigger_pct>0?'+':'')+sig.trigger_pct+'%'"></span>
+                  <span class="text-xs px-2 py-0.5 rounded bg-orange-500/10 text-orange-300" x-text="sig.signal_label||'V3信号'"></span>
                 </div>
                 <div class="text-right">
                   <div class="text-xs text-gray-600" x-text="(sig.timestamp||'').slice(11,19)"></div>
                   <div x-show="sig.auto_traded" class="text-xs text-orange-400 font-semibold">已开仓</div>
                 </div>
+              </div>
+              <div class="mt-2 text-xs text-gray-500">
+                <span>触发强度 </span>
+                <span class="font-bold" :class="sig.direction==='LONG'?'text-green-400':'text-red-400'"
+                  x-text="'+'+(sig.trigger_pct??0)+'%'"></span>
               </div>
               <div class="mt-2 grid grid-cols-4 gap-x-3 text-xs text-gray-500">
                 <span>入 <span class="text-gray-300 font-mono" x-text="sig.entry_price"></span></span>
@@ -2039,7 +1985,7 @@ function app() {
 
     async saveScalpConfig() {
       const fd = new FormData(document.getElementById('scalpForm'))
-      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_CONFIRM_ENABLED']
+      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()

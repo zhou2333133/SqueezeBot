@@ -44,31 +44,28 @@ class ConfigManager:
         # 妖币扫描器
         "YAOBI_SCAN_INTERVAL":    (1,      1440),
         "YAOBI_MIN_SCORE":        (0,      100),
-        # 超短线
-        "SCALP_TRIGGER_PCT":           (0.5,    20.0),
-        "SCALP_WINDOW_MINUTES":        (1,      30),
-        "SCALP_VOLUME_MULTIPLIER":     (1.0,    10.0),
-        "SCALP_ACTIVE_RANGE_PCT":      (0.5,    30.0),
-        "SCALP_PULLBACK_PCT":          (0.3,    20.0),
-        "SCALP_MEAN_REVERT_PCT":       (0.5,    30.0),
+        # 超短线 V3.0
         "SCALP_MAX_POSITIONS":         (1,      20),
         "SCALP_POSITION_USDT":         (1,      1_000_000),
         "SCALP_LEVERAGE":              (1,      125),
         "SCALP_STOP_LOSS_PCT":         (0.1,    50.0),
-        "SCALP_TP1_PCT":               (0.1,    100.0),
         "SCALP_TP1_RATIO":             (0.1,    0.9),
-        "SCALP_TP2_PCT":               (0.1,    200.0),
         "SCALP_TP2_RATIO":             (0.1,    0.9),
         "SCALP_TP3_TRAIL_PCT":         (0.1,    5.0),
-        "SCALP_SLOPE_THRESHOLD":       (0.05,   5.0),
-        "SCALP_SLOPE_LOOKBACK":        (3,      30),
-        "SCALP_SL_COOLDOWN_MINUTES":   (0,      480),
         "SCALP_CANDIDATE_LIMIT":       (20,     500),
         "SCALP_RISK_PER_TRADE_USDT":   (1,      1_000_000),
         "SCALP_MAX_DAILY_LOSS_USDT":   (1,      1_000_000),
-        "SCALP_FLAT_THRESHOLD":        (0.5,    20.0),
         "SCALP_TP1_RR":                (0.5,    10.0),
         "SCALP_TP2_RR":                (1.0,    20.0),
+        # V3.0 轧空猎杀 & 动能突破
+        "SQUEEZE_OI_DROP_MAJOR":       (0.1,    5.0),
+        "SQUEEZE_OI_DROP_MID":         (0.3,    10.0),
+        "SQUEEZE_OI_DROP_MEME":        (0.3,    15.0),
+        "SQUEEZE_WICK_PCT":            (0.3,    5.0),
+        "SQUEEZE_TAKER_MIN":           (0.5,    0.9),
+        "BREAKOUT_TAKER_MIN":          (0.4,    0.9),
+        "SIGNAL_COOLDOWN_SECONDS":     (1,      60),
+        "OI_POLL_INTERVAL":            (5,      60),
         # 一直做空
         "FADE_TRIGGER_PCT":       (1.0,    50.0),
         "FADE_MAX_POSITIONS":     (1,      20),
@@ -83,10 +80,8 @@ class ConfigManager:
         # Funding Rate Reversal
         "FR_OI_SURGE_PCT":        (1.0,    200.0),
         "FR_FUNDING_THRESHOLD":   (-0.1,   -0.0001),
-        # Global market filters
+        # 全局市场过滤
         "BTC_GUARD_PCT":          (0.5,    10.0),
-        "SCALP_VWAP_MAX_DEV":     (0.5,    20.0),
-        "SCALP_TAKER_RATIO_MIN":  (0.5,    0.9),
     }
 
     def __init__(self):
@@ -130,42 +125,37 @@ class ConfigManager:
             "YAOBI_CHAINS":            "eth,bsc,solana,base,arbitrum",
             "OBSIDIAN_VAULT_PATH":     r"C:\BOT\yaobi",
             "COINGLASS_API_KEY":       "",
-            # ── 超短线策略 ────────────────────────────────────────────────────
+            # ── 超短线策略 V3.0 (Squeeze Hunter) ─────────────────────────────
             "SCALP_ENABLED":             False,
             "SCALP_AUTO_TRADE":          False,
-            "SCALP_TRIGGER_PCT":         2.0,
-            "SCALP_WINDOW_MINUTES":      3,
-            "SCALP_VOLUME_MULTIPLIER":   3.0,
-            "SCALP_ENTRY_MODE":          "immediate",
             "SCALP_ENABLE_LONG":         True,
             "SCALP_ENABLE_SHORT":        True,
             "SCALP_MAX_POSITIONS":       3,
-            "SCALP_POSITION_USDT":       50.0,
+            "SCALP_POSITION_USDT":       50.0,       # 最大保证金上限/笔
             "SCALP_LEVERAGE":            10,
-            "SCALP_STOP_LOSS_PCT":       15.0,   # 动态SL模式下作为最大SL上限（保证金%）
-            "SCALP_TP1_PCT":             15.0,   # 固定SL模式下的TP1（保证金%）
-            "SCALP_TP1_RATIO":           0.3,
-            "SCALP_TP2_PCT":             40.0,   # 固定SL模式下的TP2（保证金%）
-            "SCALP_TP2_RATIO":           0.4,
-            "SCALP_TP3_TRAIL_PCT":       1.5,
+            "SCALP_STOP_LOSS_PCT":       15.0,       # 最大SL保证金%（硬帽）
+            "SCALP_TP1_RATIO":           0.5,        # TP1平仓50%
+            "SCALP_TP2_RATIO":           0.3,        # TP2再平30%，剩20%追踪
+            "SCALP_TP3_TRAIL_PCT":       1.5,        # EMA5追踪止损回撤%
             "SCALP_WATCHLIST":           "",
             "SCALP_CANDIDATE_LIMIT":     80,
-            "SCALP_ACTIVE_RANGE_PCT":    2.5,
-            "SCALP_PULLBACK_PCT":        1.0,
-            "SCALP_MEAN_REVERT_PCT":     2.0,
             "SCALP_PAPER_TRADE":         False,
-            "SCALP_SLOPE_THRESHOLD":     0.15,
-            "SCALP_SLOPE_LOOKBACK":      6,
-            "SCALP_CONFIRM_ENABLED":     True,
-            "SCALP_SL_COOLDOWN_MINUTES": 0,     # 已废弃，观察模式替代
-            # ── 新增：动态止损 & 风控 ─────────────────────────────────────
-            "SCALP_USE_DYNAMIC_SL":      True,   # 启用结构止损（local high/low）
-            "SCALP_RISK_PER_TRADE_USDT": 5.0,   # 每笔最大亏损（USDT），决定仓位大小
-            "SCALP_MAX_DAILY_LOSS_USDT": 50.0,  # 每日亏损熔断阈值
-            "SCALP_TP1_RR":              1.5,   # TP1 = SL距离 × 1.5（动态SL模式）
-            "SCALP_TP2_RR":              3.5,   # TP2 = SL距离 × 3.5（动态SL模式）
-            "SCALP_FLAT_ENABLED":        False,  # 是否启用均线反转逆势单（高风险，默认关）
-            "SCALP_FLAT_THRESHOLD":      2.0,   # 均线反转触发阈值（%）
+            # ── 动态止损 & 风控 ───────────────────────────────────────────────
+            "SCALP_USE_DYNAMIC_SL":      True,       # 结构止损（local high/low）
+            "SCALP_RISK_PER_TRADE_USDT": 5.0,        # 每笔最大亏损USDT
+            "SCALP_MAX_DAILY_LOSS_USDT": 50.0,       # 每日亏损熔断阈值
+            "SCALP_TP1_RR":              1.5,        # TP1 = SL距离 × 1.5
+            "SCALP_TP2_RR":              3.5,        # TP2 = SL距离 × 3.5
+            # ── V3.0 轧空猎杀参数 ─────────────────────────────────────────────
+            "SQUEEZE_OI_DROP_MAJOR":     0.5,        # 大币(BTC/ETH等) OI降幅触发%
+            "SQUEEZE_OI_DROP_MID":       1.0,        # 中型山寨 OI降幅触发%
+            "SQUEEZE_OI_DROP_MEME":      1.5,        # 小币/Meme OI降幅触发%
+            "SQUEEZE_WICK_PCT":          1.0,        # 下影线最小反弹%（确认不是一直跌）
+            "SQUEEZE_TAKER_MIN":         0.65,       # 轧空信号要求的最低Taker买入比
+            # ── V3.0 动能突破参数 ─────────────────────────────────────────────
+            "BREAKOUT_TAKER_MIN":        0.55,       # 突破信号要求的最低Taker买入比
+            "SIGNAL_COOLDOWN_SECONDS":   5,          # 同一币信号冷却秒数
+            "OI_POLL_INTERVAL":          10,         # OI轮询间隔（秒）
             # ── 一直做空策略 ──────────────────────────────────────────────────
             "FADE_ENABLED":            False,
             "FADE_AUTO_TRADE":         False,
@@ -185,10 +175,8 @@ class ConfigManager:
             "ENABLE_FUNDING_REVERSAL": False,
             "FR_OI_SURGE_PCT":         15.0,
             "FR_FUNDING_THRESHOLD":    -0.001,
-            # ── 全局市场过滤（超短线 & 一直做空共用）─────────────────────────
+            # ── 全局市场过滤 ──────────────────────────────────────────────────
             "BTC_GUARD_PCT":           2.0,
-            "SCALP_VWAP_MAX_DEV":      3.0,
-            "SCALP_TAKER_RATIO_MIN":   0.55,
         }
         self.settings: dict = self.load()
 

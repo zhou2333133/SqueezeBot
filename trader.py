@@ -155,6 +155,25 @@ class BinanceTrader:
             return positions[0] if positions else None
         return None
 
+    async def place_limit_ioc_order(self, symbol: str, side: str, quantity: float, price: float) -> dict | None:
+        """IOC 限价单（Immediate Or Cancel）— 防飞单追高核心机制"""
+        resp = await self._request("POST", "/fapi/v1/order", {
+            "symbol":      symbol,
+            "side":        side,
+            "type":        "LIMIT",
+            "timeInForce": "IOC",
+            "quantity":    _fmt(quantity),
+            "price":       _fmt(price),
+        })
+        if resp and resp.get("orderId"):
+            filled = float(resp.get("executedQty", 0))
+            status = resp.get("status", "")
+            logger.info(
+                "✅ IOC限价单: %s %s %.6f @ %.6f | 状态:%s 实际成交:%.6f",
+                symbol, side, quantity, price, status, filled,
+            )
+        return resp
+
     async def cancel_order(self, symbol: str, order_id: int) -> dict | None:
         """取消指定挂单"""
         return await self._request("DELETE", "/fapi/v1/order", {
