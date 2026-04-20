@@ -673,44 +673,92 @@
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">最多同时持有N笔仓位，超过则暂停新信号。建议3~5。</div>
                 <input class="inp inp-o" type="number" name="SCALP_MAX_POSITIONS" :value="cfg.SCALP_MAX_POSITIONS"></div>
               <div>
-                <label class="text-xs text-gray-400 font-medium">单笔保证金 USDT</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">每笔交易投入的保证金（名义价值=保证金×杠杆）。</div>
+                <label class="text-xs text-gray-400 font-medium">单笔保证金上限 USDT</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">每笔仓位保证金上限（动态止损模式下，实际仓位由每笔风险USDT决定，此值为上限）。</div>
                 <input class="inp inp-o" type="number" name="SCALP_POSITION_USDT" :value="cfg.SCALP_POSITION_USDT"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">杠杆倍数</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">越高=盈亏放大越多，风险越大。新手建议5~10倍。</div>
                 <input class="inp inp-o" type="number" name="SCALP_LEVERAGE" :value="cfg.SCALP_LEVERAGE"></div>
               <div>
-                <label class="text-xs text-gray-400 font-medium">止损 % (保证金)</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">亏损保证金的N%时止损出场。如1.2%=亏损0.6U(50U仓×10倍)时止损。</div>
-                <input class="inp inp-o" type="number" step="0.1" name="SCALP_STOP_LOSS_PCT" :value="cfg.SCALP_STOP_LOSS_PCT"></div>
+                <label class="text-xs text-gray-400 font-medium">最大SL % (保证金)</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：作为SL上限（超出则退回固定%）。固定止损模式：直接用此值。建议15%。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_STOP_LOSS_PCT" :value="cfg.SCALP_STOP_LOSS_PCT"></div>
+            </div>
+            <div class="grid grid-cols-3 gap-3 mt-3">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">每笔最大亏损 USDT</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">固定风险仓位：每笔触发止损时最多亏N USDT（用于反算开仓数量）。来自贝叶斯建议：Never full Kelly。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_RISK_PER_TRADE_USDT" :value="cfg.SCALP_RISK_PER_TRADE_USDT??5"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">每日亏损熔断 USDT</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">当天累计亏损超过此值，自动停止新开仓（次日UTC 00:00重置）。建议设为账户的3~5%。</div>
+                <input class="inp inp-o" type="number" step="5" name="SCALP_MAX_DAILY_LOSS_USDT" :value="cfg.SCALP_MAX_DAILY_LOSS_USDT??50"></div>
+              <div class="flex items-start pt-5">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle to-toggle">
+                    <input type="checkbox" name="SCALP_USE_DYNAMIC_SL" :checked="cfg.SCALP_USE_DYNAMIC_SL!==false" @change="cfg.SCALP_USE_DYNAMIC_SL=$event.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <div>
+                    <span class="text-sm text-orange-300">动态结构止损</span>
+                    <div class="text-xs text-gray-600 mt-0.5">开启：SL设在近5根K线真实High/Low结构位；关闭：固定%止损（旧模式）。</div>
+                  </div>
+                </label>
+              </div>
             </div>
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">止盈设置 (三档分批平仓)</p>
-            <div class="text-xs text-gray-600 mb-2">三档设计: TP1快速锁定小利润→SL移至中点保护; TP2让主仓跑趋势; TP3追踪止损吃尾行情</div>
+            <div class="text-xs text-gray-600 mb-2">动态止损模式：TP1/TP2由SL距离×倍数决定（自动适配波动率）；固定止损模式：使用下方保证金%设置</div>
             <div class="grid grid-cols-4 gap-3 mt-2">
               <div>
-                <label class="text-xs text-gray-400 font-medium">TP1触发 % (保证金)</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">赚到N%保证金时触发第一档平仓。越小=越快锁利，防反转。建议0.8~1.5%。</div>
-                <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP1_PCT" :value="cfg.SCALP_TP1_PCT"></div>
+                <label class="text-xs text-gray-400 font-medium">TP1 Risk:Reward倍数</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP1 = SL距离 × N倍。建议1.2~2.0。1.5=盈亏比1.5:1。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP1_RR" :value="cfg.SCALP_TP1_RR??1.5"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP1平仓比例</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">TP1触发时平掉多少仓位(0~1)。0.3=平30%，保留70%继续跑趋势。</div>
                 <input class="inp inp-o" type="number" step="0.05" name="SCALP_TP1_RATIO" :value="cfg.SCALP_TP1_RATIO"></div>
               <div>
-                <label class="text-xs text-gray-400 font-medium">TP2触发 % (保证金)</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">赚到N%保证金时触发第二档平仓。趋势行情建议5~8%，震荡建议3~5%。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP2_PCT" :value="cfg.SCALP_TP2_PCT"></div>
+                <label class="text-xs text-gray-400 font-medium">TP2 Risk:Reward倍数</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP2 = SL距离 × N倍。建议3.0~5.0。3.5=盈亏比3.5:1。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP2_RR" :value="cfg.SCALP_TP2_RR??3.5"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP2平仓比例</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP2触发时再平掉多少仓位。剩余仓位(1-TP1-TP2)进入追踪止损(TP3)。</div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP2触发时再平掉多少仓位。剩余仓位(1-TP1-TP2)进入EMA5追踪止损(TP3)。</div>
                 <input class="inp inp-o" type="number" step="0.05" name="SCALP_TP2_RATIO" :value="cfg.SCALP_TP2_RATIO"></div>
             </div>
-            <div class="grid grid-cols-2 gap-3 mt-3">
+            <div class="grid grid-cols-3 gap-3 mt-3">
               <div>
-                <label class="text-xs text-gray-400 font-medium">TP3追踪止损回撤 %</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP2命中后剩余仓位进入追踪：价格从最高点回撤N%时平仓。越小=越紧，越大=让利润跑得更远。建议1~2%。</div>
+                <label class="text-xs text-gray-400 font-medium">TP3 EMA5追踪缓冲 %</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP3使用EMA5作为追踪止损基准，此值为EMA5缓冲（防毛刺）。同时保留固定%作为兜底。建议1~2%。</div>
                 <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP3_TRAIL_PCT" :value="cfg.SCALP_TP3_TRAIL_PCT"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TP1触发 % (固定止损专用)</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">仅在<b>关闭动态止损</b>时使用。赚到N%保证金时触发TP1。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP1_PCT" :value="cfg.SCALP_TP1_PCT"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TP2触发 % (固定止损专用)</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">仅在<b>关闭动态止损</b>时使用。赚到N%保证金时触发TP2。</div>
+                <input class="inp inp-o" type="number" step="1" name="SCALP_TP2_PCT" :value="cfg.SCALP_TP2_PCT"></div>
+            </div>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              <div class="flex items-start">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle to-toggle">
+                    <input type="checkbox" name="SCALP_FLAT_ENABLED" :checked="cfg.SCALP_FLAT_ENABLED===true" @change="cfg.SCALP_FLAT_ENABLED=$event.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <div>
+                    <span class="text-sm text-orange-300">均线反转信号（高风险）</span>
+                    <div class="text-xs text-gray-600 mt-0.5">开启FLAT震荡行情的逆势反转单。1m级别4.5%偏离通常是突破而非超买超卖，<b>建议关闭</b>。</div>
+                  </div>
+                </label>
+              </div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">反转触发阈值 %（FLAT模式）</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">开启FLAT反转时，偏离MA20超过此%才触发。建议1.5~2.5%，且需Taker衰竭配合。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_FLAT_THRESHOLD" :value="cfg.SCALP_FLAT_THRESHOLD??2.0"></div>
             </div>
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">动能识别 & 右侧确认</p>
