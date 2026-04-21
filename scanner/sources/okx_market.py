@@ -6,6 +6,7 @@ REST: /api/v6/dex/market/price-info  /api/v6/dex/market/token/search
 import base64
 import hashlib
 import hmac
+import json
 import logging
 from datetime import datetime, timezone
 from urllib.parse import urlencode
@@ -15,7 +16,7 @@ import aiohttp
 from config import OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE
 
 logger = logging.getLogger(__name__)
-_BASE = "https://www.okx.com"
+_BASE = "https://web3.okx.com"
 
 # chainIndex → human name
 CHAIN_NAMES = {
@@ -65,7 +66,51 @@ def _headers_post(path: str, body: str = "") -> dict:
 
 def _enabled() -> bool:
     return bool(OKX_API_KEY and OKX_API_KEY != "YOUR_OKX_API_KEY"
-                and OKX_SECRET_KEY and OKX_SECRET_KEY != "YOUR_OKX_SECRET_KEY")
+                and OKX_SECRET_KEY and OKX_SECRET_KEY != "YOUR_OKX_SECRET_KEY"
+                and OKX_PASSPHRASE)
+
+
+def credentials_status() -> dict:
+    return {
+        "enabled":        _enabled(),
+        "api_key_set":    bool(OKX_API_KEY and OKX_API_KEY != "YOUR_OKX_API_KEY"),
+        "secret_set":     bool(OKX_SECRET_KEY and OKX_SECRET_KEY != "YOUR_OKX_SECRET_KEY"),
+        "passphrase_set": bool(OKX_PASSPHRASE),
+        "base_url":       _BASE,
+    }
+
+
+def _json_body(data) -> str:
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
+
+def _first_data(data: dict) -> dict:
+    payload = data.get("data", {})
+    if isinstance(payload, list):
+        return payload[0] if payload and isinstance(payload[0], dict) else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _float_any(d: dict, *keys: str) -> float:
+    for key in keys:
+        val = d.get(key)
+        if val is not None and val != "":
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
+def _int_any(d: dict, *keys: str) -> int:
+    for key in keys:
+        val = d.get(key)
+        if val is not None and val != "":
+            try:
+                return int(float(val))
+            except (TypeError, ValueError):
+                pass
+    return 0
 
 
 async def search_tokens(
@@ -101,9 +146,8 @@ async def get_token_price_info(
     """获取 token 价格/市值/持仓人数/成交量（OKX 最全的链上数据）"""
     if not _enabled():
         return None
-    import json
-    body_dict = {"chainIndex": chain_index, "tokenContractAddress": address}
-    body_str  = json.dumps(body_dict)
+    body_dict = [{"chainIndex": str(chain_index), "tokenContractAddress": address}]
+    body_str  = _json_body(body_dict)
     path      = "/api/v6/dex/market/price-info"
     try:
         async with session.post(
@@ -115,23 +159,26 @@ async def get_token_price_info(
             if resp.status == 200:
                 data = await resp.json()
                 if data.get("code") == "0":
-                    d = data.get("data", {})
+                    d = _first_data(data)
                     return {
-                        "price_usd":         float(d.get("price") or 0),
-                        "market_cap":        float(d.get("marketCap") or 0),
-                        "liquidity":         float(d.get("liquidity") or 0),
-                        "holder_count":      int(d.get("holders") or 0),
-                        "price_change_5m":   float(d.get("priceChange5M") or 0),
-                        "price_change_1h":   float(d.get("priceChange1H") or 0),
-                        "price_change_4h":   float(d.get("priceChange4H") or 0),
-                        "price_change_24h":  float(d.get("priceChange24H") or 0),
-                        "volume_5m":         float(d.get("volume5M") or 0),
-                        "volume_1h":         float(d.get("volume1H") or 0),
-                        "volume_24h":        float(d.get("volume24H") or 0),
-                        "tx_count_5m":       int(d.get("txs5M") or 0),
-                        "tx_count_1h":       int(d.get("txs1H") or 0),
-                        "circ_supply":       float(d.get("circSupply") or 0),
+                        "price_usd":         _float_any(d, "price"),
+                        "market_cap":        _float_any(d, "marketCap", "marketCapUsd"),
+                        "liquidity":         _float_any(d, "liquidity", "liquidityUsd"),
+                        "holder_count":      _int_any(d, "holders", "holderCount"),
+                        "price_change_5m":   _float_any(d, "priceChange5M", "priceChange5m"),
+                        "price_change_1h":   _float_any(d, "priceChange1H", "priceChange1h"),
+                        "price_change_4h":   _float_any(d, "priceChange4H", "priceChange4h"),
+                        "price_change_24h":  _float_any(d, "priceChange24H", "priceChange24h", "change24H"),
+                        "volume_5m":         _float_any(d, "volume5M", "volume5m"),
+                        "volume_1h":         _float_any(d, "volume1H", "volume1h"),
+                        "volume_24h":        _float_any(d, "volume24H", "volume24h"),
+                        "tx_count_5m":       _int_any(d, "txs5M", "txs5m", "txCount5M"),
+                        "tx_count_1h":       _int_any(d, "txs1H", "txs1h", "txCount1H"),
+                        "circ_supply":       _float_any(d, "circSupply", "circulatingSupply"),
                     }
+                logger.debug("OKX price-info code=%s msg=%s", data.get("code"), data.get("msg") or data.get("message"))
+            else:
+                logger.debug("OKX price-info HTTP %s: %s", resp.status, (await resp.text())[:200])
     except Exception as e:
         logger.debug("OKX price-info 异常: %s", e)
     return None
@@ -146,13 +193,12 @@ async def get_token_trades(
     """获取近期成交记录，返回大单(>$5K)占比，用于识别机构吸筹。"""
     if not _enabled():
         return {"large_trade_pct": 0.0, "total_usd": 0.0, "trade_count": 0}
-    import json as _json
     body_dict = {
         "chainIndex":           chain_index,
         "tokenContractAddress": token_address,
         "limit":                str(limit),
     }
-    body_str = _json.dumps(body_dict)
+    body_str = _json_body(body_dict)
     path     = "/api/v5/dex/aggregator/trade-records"
     try:
         async with session.post(
@@ -164,12 +210,18 @@ async def get_token_trades(
             if resp.status == 200:
                 data = await resp.json()
                 if data.get("code") == "0":
-                    trades = data.get("data", {}).get("tradeList", [])
+                    payload = data.get("data", {})
+                    if isinstance(payload, list):
+                        trades = payload
+                    elif isinstance(payload, dict):
+                        trades = payload.get("tradeList", []) or payload.get("list", [])
+                    else:
+                        trades = []
                     if not trades:
                         return {"large_trade_pct": 0.0, "total_usd": 0.0, "trade_count": 0}
-                    total_usd   = sum(float(t.get("usdValue", 0) or 0) for t in trades)
-                    large_usd   = sum(float(t.get("usdValue", 0) or 0) for t in trades
-                                      if float(t.get("usdValue", 0) or 0) >= 5000)
+                    total_usd   = sum(_float_any(t, "usdValue", "volumeUsd", "amountUsd") for t in trades)
+                    large_usd   = sum(_float_any(t, "usdValue", "volumeUsd", "amountUsd") for t in trades
+                                      if _float_any(t, "usdValue", "volumeUsd", "amountUsd") >= 5000)
                     large_pct   = large_usd / total_usd if total_usd > 0 else 0.0
                     return {
                         "large_trade_pct": round(large_pct, 4),
@@ -179,6 +231,25 @@ async def get_token_trades(
     except Exception as e:
         logger.debug("OKX trade-records 异常: %s", e)
     return {"large_trade_pct": 0.0, "total_usd": 0.0, "trade_count": 0}
+
+
+async def diagnose(session: aiohttp.ClientSession) -> dict:
+    status = credentials_status()
+    if not status["enabled"]:
+        return {**status, "ok": False, "reason": "missing_okx_credentials"}
+
+    search = await search_tokens(session, "weth", chains="1,10", limit=3)
+    price = await get_token_price_info(
+        session,
+        "1",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    )
+    return {
+        **status,
+        "ok": bool(search or price),
+        "search_count": len(search),
+        "price_info_ok": bool(price),
+    }
 
 
 def _parse_token_list(items: list) -> list[dict]:
@@ -192,11 +263,11 @@ def _parse_token_list(items: list) -> list[dict]:
                 "chain":        chain,
                 "chain_id":     str(t.get("chainIndex", "")),
                 "address":      (t.get("tokenContractAddress") or "").lower(),
-                "price_usd":    float(t.get("price") or 0),
-                "price_change_24h": float(t.get("change24H") or 0),
-                "holder_count": int(t.get("holders") or 0),
-                "liquidity":    float(t.get("liquidity") or 0),
-                "market_cap":   float(t.get("marketCap") or 0),
+                "price_usd":    _float_any(t, "price"),
+                "price_change_24h": _float_any(t, "change24H", "priceChange24H"),
+                "holder_count": _int_any(t, "holders", "holderCount"),
+                "liquidity":    _float_any(t, "liquidity"),
+                "market_cap":   _float_any(t, "marketCap", "marketCapUsd"),
                 "logo_url":     t.get("tokenLogoUrl", ""),
                 "tags":         t.get("tagList", []),
                 "source":       "okx_search",

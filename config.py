@@ -15,6 +15,10 @@ SURF_API_KEY       = os.getenv("SURF_API_KEY",       "YOUR_SURF_API_KEY")
 OKX_API_KEY        = os.getenv("OKX_API_KEY",        "YOUR_OKX_API_KEY")
 OKX_SECRET_KEY     = os.getenv("OKX_SECRET_KEY",     "YOUR_OKX_SECRET_KEY")
 OKX_PASSPHRASE     = os.getenv("OKX_PASSPHRASE",     "")
+BINANCE_SQUARE_COOKIE      = os.getenv("BINANCE_SQUARE_COOKIE",      "")
+BINANCE_SQUARE_CSRF_TOKEN  = os.getenv("BINANCE_SQUARE_CSRF_TOKEN",  "")
+BINANCE_SQUARE_BNC_UUID    = os.getenv("BINANCE_SQUARE_BNC_UUID",    "")
+BINANCE_SQUARE_OPENAPI_KEY = os.getenv("BINANCE_SQUARE_OPENAPI_KEY", "")
 
 MAX_CONCURRENT_REQUESTS = 15
 
@@ -61,6 +65,7 @@ class ConfigManager:
         "YAOBI_SCAN_INTERVAL":         (1,      1440),
         "YAOBI_MIN_SCORE":             (0,      100),
         "YAOBI_SURF_TOP_N":            (1,      20),
+        "YAOBI_SQUARE_ROWS":           (1,      200),
     }
 
     def __init__(self):
@@ -115,6 +120,8 @@ class ConfigManager:
             "COINGLASS_API_KEY":         "",
             "YAOBI_SURF_ENABLED":        True,
             "YAOBI_SURF_TOP_N":          5,
+            "YAOBI_SQUARE_ENABLED":      True,
+            "YAOBI_SQUARE_ROWS":         50,
         }
         self.settings: dict = self.load()
 

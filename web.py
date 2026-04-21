@@ -428,6 +428,21 @@ async def yaobi_status():
     })
 
 
+@app.get("/api/yaobi/diagnostics")
+async def yaobi_diagnostics():
+    from scanner.sources import okx_market, binance_square
+    try:
+        async with aiohttp.ClientSession(trust_env=True) as session:
+            okx_diag, square_diag = await asyncio.gather(
+                okx_market.diagnose(session),
+                binance_square.diagnose(session, rows=5),
+            )
+        return JSONResponse({"okx": okx_diag, "binance_square": square_diag})
+    except Exception as e:
+        logger.error("妖币数据源诊断失败: %s", e, exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/api/yaobi/start")
 async def yaobi_start():
     if bot_state.yaobi_task and not bot_state.yaobi_task.done():

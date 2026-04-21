@@ -734,6 +734,17 @@
               <div><label class="text-xs text-gray-500">最低评分 (0-100)</label>
                 <input class="inp mt-1" type="number" name="YAOBI_MIN_SCORE" :value="cfg.YAOBI_MIN_SCORE" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'"></div>
             </div>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <label class="toggle">
+                  <input type="checkbox" name="YAOBI_SQUARE_ENABLED" :checked="cfg.YAOBI_SQUARE_ENABLED!==false" @change="cfg.YAOBI_SQUARE_ENABLED=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-gray-400">启用币安广场</span>
+              </label>
+              <div><label class="text-xs text-gray-500">广场抓取条数</label>
+                <input class="inp mt-1" type="number" name="YAOBI_SQUARE_ROWS" :value="cfg.YAOBI_SQUARE_ROWS??50" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'"></div>
+            </div>
             <div class="mt-3">
               <label class="text-xs text-gray-500">监控链 (逗号分隔)</label>
               <input class="inp mt-1" type="text" name="YAOBI_CHAINS" :value="cfg.YAOBI_CHAINS" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'">
@@ -1332,7 +1343,7 @@ function app() {
     },
     async saveYaobiConfig() {
       const fd=new FormData(document.getElementById('yaobiForm'))
-      const bk=['YAOBI_ENABLED']; bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
+      const bk=['YAOBI_ENABLED','YAOBI_SQUARE_ENABLED']; bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
         this.showToast(d.message,d.status==='success'?'success':'error')

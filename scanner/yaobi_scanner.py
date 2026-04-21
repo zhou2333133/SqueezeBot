@@ -125,16 +125,22 @@ class YaobiScanner:
             logger.info("🔍 DEX Screener: %d 个项目", dex_count)
 
             # ── 4. Binance Square ────────────────────────────────────────────
-            try:
-                square_posts = await fetch_hot_posts(session, rows=50)
-                ticker_map = extract_ticker_mentions(square_posts)
-                self._apply_square_mentions(candidates, ticker_map)
+            if config_manager.settings.get("YAOBI_SQUARE_ENABLED", True):
+                try:
+                    square_rows = int(config_manager.settings.get("YAOBI_SQUARE_ROWS", 50))
+                    square_posts = await fetch_hot_posts(session, rows=square_rows)
+                    ticker_map = extract_ticker_mentions(square_posts)
+                    self._apply_square_mentions(candidates, ticker_map)
+                    scan_status["sources"]["binance_square"] = {
+                        "count": len(square_posts), "last_run": start.strftime("%H:%M"),
+                    }
+                    logger.info("🔍 广场: %d 条热帖, 提及 %d 个币种", len(square_posts), len(ticker_map))
+                except Exception as e:
+                    logger.warning("广场抓取失败: %s", e)
+            else:
                 scan_status["sources"]["binance_square"] = {
-                    "count": len(square_posts), "last_run": start.strftime("%H:%M"),
+                    "count": 0, "last_run": start.strftime("%H:%M"), "disabled": True,
                 }
-                logger.info("🔍 广场: %d 条热帖, 提及 %d 个币种", len(square_posts), len(ticker_map))
-            except Exception as e:
-                logger.warning("广场抓取失败: %s", e)
 
             # ── 5. Surf 新闻预过滤 ───────────────────────────────────────────
             if _SURF_ENABLED and config_manager.settings.get("YAOBI_SURF_ENABLED", True):
