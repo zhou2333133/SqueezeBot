@@ -51,6 +51,33 @@ class TestScalpEngine(unittest.TestCase):
 
         self.assertEqual(bot._check_market_state("BTCUSDT", "LONG"), "RANGE_CHOP")
 
+    def test_entry_context_snapshot_uses_existing_taker_helper(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["TESTUSDT"] = {
+            "rank": 1,
+            "direction_bias": "ANY",
+            "change_24h": 12.5,
+            "volume_24h": 1_000_000,
+        }
+        bot.kline_buffer["TESTUSDT"] = [
+            {"o": 100.0, "h": 101.0, "l": 99.0, "c": 100.0 + i * 0.01, "q": 1000.0, "Q": 550.0}
+            for i in range(60)
+        ]
+        bot._live_candle["TESTUSDT"] = {
+            "h": 101.5,
+            "l": 100.5,
+            "taker_buy": 700.0,
+            "total_vol": 1000.0,
+            "close": 101.0,
+            "open": 100.8,
+        }
+
+        ctx = bot._entry_context_snapshot("TESTUSDT", "LONG", 0.25, "动能突破多", "UNKNOWN")
+
+        self.assertEqual(ctx["symbol"], "TESTUSDT")
+        self.assertEqual(ctx["current_taker_ratio"], 0.7)
+        self.assertEqual(ctx["candidate_rank"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1333,7 +1333,7 @@ class BinanceScalpBot:
                  if len(closes) >= 20 and closes[-20] else 0.0)
         ret60 = ((closes[-1] - closes[-60]) / closes[-60] * 100
                  if len(closes) >= 60 and closes[-60] else 0.0)
-        taker = self._current_taker_ratio(symbol, min_vol_ratio=0.0)
+        taker = self._get_taker_ratio(symbol, min_vol_ratio=0.0)
         return {
             "symbol": symbol,
             "direction": direction,
