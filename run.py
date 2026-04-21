@@ -4,7 +4,7 @@ import logging
 import uvicorn
 
 import bot_state
-from config import config_manager, LOGS_DIR
+from config import config_manager, LOGS_DIR, PANEL_HOST, PANEL_PORT, PANEL_TOKEN
 from log_manager import setup_logging
 from market_hub import hub
 
@@ -35,14 +35,15 @@ async def main() -> None:
 
     uvi_config = uvicorn.Config(
         "web:app",
-        host="0.0.0.0",
-        port=8000,
+        host=PANEL_HOST,
+        port=PANEL_PORT,
         log_level="warning",
         access_log=False,
     )
     server = uvicorn.Server(uvi_config)
 
-    logger.info("🌐 Web 控制台: http://localhost:8000")
+    auth_hint = "Token已启用" if PANEL_TOKEN else "本机模式"
+    logger.info("🌐 Web 控制台: http://%s:%s (%s)", PANEL_HOST, PANEL_PORT, auth_hint)
     await server.serve()
 
 

@@ -595,7 +595,8 @@
         <span class="text-xs text-gray-600" x-text="'胜率 '+scalpWinRate+'%'"></span>
       </div>
       <div class="flex items-center gap-3">
-        <a href="/api/scalp/trades/csv" download class="text-xs text-gray-500 hover:text-orange-400 transition-colors" title="下载全部成交为 CSV">📥 CSV</a>
+        <a :href="auth.required?'/api/scalp/trades/csv?token='+encodeURIComponent(auth.token):'/api/scalp/trades/csv'"
+          download class="text-xs text-gray-500 hover:text-orange-400 transition-colors" title="下载全部成交为 CSV">📥 CSV</a>
         <button @click="copyScalpReport()" class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="生成策略分析报告并复制到剪贴板">📋 复制报告</button>
         <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
       </div>
@@ -1062,9 +1063,9 @@
                     </template>
                   </div>
                   <div x-show="(c.links?.dexscreener||c.links?.gecko)" class="flex gap-2 pt-1">
-                    <a x-show="c.links?.dexscreener" :href="c.links.dexscreener" target="_blank"
+                    <a x-show="c.links?.dexscreener" :href="c.links.dexscreener" target="_blank" rel="noopener noreferrer"
                       class="text-xs text-teal-400 hover:underline">DEXScreener ↗</a>
-                    <a x-show="c.links?.gecko" :href="c.links.gecko" target="_blank"
+                    <a x-show="c.links?.gecko" :href="c.links.gecko" target="_blank" rel="noopener noreferrer"
                       class="text-xs text-violet-400 hover:underline">GeckoTerminal ↗</a>
                   </div>
                 </div>
@@ -1086,6 +1087,19 @@
 
 </main>
 
+<!-- Panel Auth -->
+<div x-show="auth.required && !auth.ok"
+  class="fixed inset-0 z-[70] bg-[#050608]/95 flex items-center justify-center px-4">
+  <form @submit.prevent="unlockPanel()"
+    class="w-full max-w-sm border border-orange-500/25 bg-[#0b0b12] rounded-lg p-5 shadow-2xl">
+    <div class="text-base font-bold text-white">面板验证</div>
+    <div class="text-xs text-gray-500 mt-1">输入本机面板 Token 后继续。</div>
+    <input class="inp mt-4" type="password" x-model="auth.token" placeholder="PANEL_TOKEN" autocomplete="current-password">
+    <button class="btn-primary w-full mt-4" type="submit">进入面板</button>
+    <div x-show="auth.error" class="text-xs text-red-400 mt-3" x-text="auth.error"></div>
+  </form>
+</div>
+
 <!-- Toast -->
 <div x-show="toast.show"
   x-transition:enter="transition ease-out duration-200"
@@ -1099,15 +1113,24 @@
 </div>
 
 <script>
+const PANEL_AUTH = {{ auth | tojson }};
+const PANEL_TOKEN_HEADER = 'X-SqueezeBot-Token';
 function app() {
   return {
     mode: 'scalp',
     clock: '',
     toast: { show: false, msg: '', type: 'success' },
+    auth: {
+      required: !!PANEL_AUTH.token_required,
+      ok: !PANEL_AUTH.token_required,
+      token: localStorage.getItem('squeezebot_panel_token') || '',
+      error: '',
+    },
     cfg: {{ config | tojson }},
     balance: { balance: null, availableBalance: null, unrealizedProfit: null },
     wsStatus: { scalpLog:'closed', scalpSig:'closed', yaobiCand:'closed' },
     _ws: {},
+    _booted: false,
 
     csvSymbols: [], csvSymbol: '', csvData: [],
     manualOpen: false,
@@ -1137,6 +1160,16 @@ function app() {
 
     init() {
       this.startClock()
+      if (this.auth.required) {
+        if (this.auth.token) this.unlockPanel(true)
+        return
+      }
+      this.boot()
+    },
+
+    boot() {
+      if (this._booted) return
+      this._booted = true
       this.connectAll()
       this.loadScalpSignals()
       this.loadScalpTrades()
@@ -1155,6 +1188,47 @@ function app() {
       this.loadBalance()
     },
 
+    async unlockPanel(silent=false) {
+      this.auth.error = ''
+      try {
+        const resp = await this.apiFetch('/api/auth/check', {method:'POST'}, true)
+        if (!resp.ok) {
+          localStorage.removeItem('squeezebot_panel_token')
+          this.auth.ok = false
+          this.auth.error = silent ? 'Token 已失效，请重新输入。' : 'Token 不正确。'
+          return
+        }
+        localStorage.setItem('squeezebot_panel_token', this.auth.token)
+        this.auth.ok = true
+        if (this._booted) this.connectAll()
+        else this.boot()
+      } catch(e) {
+        this.auth.error = silent ? '验证失败，请重新输入。' : '验证失败。'
+      }
+    },
+
+    lockPanel() {
+      if (!this.auth.required) return
+      localStorage.removeItem('squeezebot_panel_token')
+      this.auth.ok = false
+      this.auth.error = 'Token 已失效，请重新输入。'
+      Object.values(this._ws).forEach(ws => { try { ws.close() } catch{} })
+      this._ws = {}
+    },
+
+    authHeaders() {
+      return this.auth.token ? {[PANEL_TOKEN_HEADER]: this.auth.token} : {}
+    },
+
+    async apiFetch(url, options={}, skipAuthLock=false) {
+      const headers = Object.assign({}, options.headers || {}, this.authHeaders())
+      const resp = await fetch(url, {...options, headers})
+      if (resp.status === 401 && !skipAuthLock) {
+        this.lockPanel()
+      }
+      return resp
+    },
+
     startClock() {
       const tick = () => { this.clock = new Date().toLocaleTimeString('zh-CN',{hour12:false}); setTimeout(tick,1000) }
       tick()
@@ -1168,7 +1242,8 @@ function app() {
 
     connectWs(key, path) {
       if (this._ws[key]?.readyState === WebSocket.OPEN) return
-      const ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}${path}`)
+      const token = this.auth.required ? `?token=${encodeURIComponent(this.auth.token)}` : ''
+      const ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}${path}${token}`)
       this._ws[key] = ws
       ws.onopen  = () => { this.wsStatus[key] = 'open' }
       ws.onclose = () => { this.wsStatus[key] = 'closed'; setTimeout(()=>this.connectWs(key,path), 3000) }
@@ -1195,12 +1270,12 @@ function app() {
     },
 
     async loadBalance() {
-      try { const d=await(await fetch('/api/account/balance')).json(); if(d.asset) this.balance=d } catch{}
+      try { const d=await(await this.apiFetch('/api/account/balance')).json(); if(d.asset) this.balance=d } catch{}
     },
 
     async copyScalpReport() {
       try {
-        const d = await(await fetch('/api/scalp/report')).json()
+        const d = await(await this.apiFetch('/api/scalp/report')).json()
         if (d.error) { this.showToast('❌ '+d.error, 'error'); return }
         const text = JSON.stringify(d, null, 2)
         await navigator.clipboard.writeText(text)
@@ -1209,11 +1284,11 @@ function app() {
     },
 
     async loadCsvSymbols() {
-      try { const d=await(await fetch('/api/data/symbols')).json(); this.csvSymbols=d.symbols||[] } catch{}
+      try { const d=await(await this.apiFetch('/api/data/symbols')).json(); this.csvSymbols=d.symbols||[] } catch{}
     },
     async loadCsvData() {
       if (!this.csvSymbol) return
-      try { const d=await(await fetch(`/api/data/${this.csvSymbol}?limit=60`)).json(); this.csvData=d.rows||[] } catch{}
+      try { const d=await(await this.apiFetch(`/api/data/${this.csvSymbol}?limit=60`)).json(); this.csvData=d.rows||[] } catch{}
     },
 
     async saveScalpConfig() {
@@ -1221,30 +1296,30 @@ function app() {
       const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
-        const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
+        const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()
         this.showToast(d.message, d.status==='success'?'success':'error')
-        if (d.status==='success') { this.cfg=await(await fetch('/api/config')).json() }
+        if (d.status==='success') { this.cfg=await(await this.apiFetch('/api/config')).json() }
       } catch(e) { this.showToast('❌ 保存失败: '+e,'error') }
     },
 
     async submitManual() {
       const fd=new FormData(); fd.set('symbol',this.manual.symbol); fd.set('side',this.manual.side); fd.set('quantity',this.manual.quantity)
-      try { const d=await(await fetch('/api/trade',{method:'POST',body:fd})).json(); this.showToast(d.message,d.status==='success'?'success':'error') }
+      try { const d=await(await this.apiFetch('/api/trade',{method:'POST',body:fd})).json(); this.showToast(d.message,d.status==='success'?'success':'error') }
       catch(e){ this.showToast('❌ 下单异常: '+e,'error') }
     },
 
     async pollScalpStatus() {
-      try { const d=await(await fetch('/api/scalp/status')).json(); this.scalpRunning=d.running; this.scalpSymbolCount=d.symbols_count } catch{}
+      try { const d=await(await this.apiFetch('/api/scalp/status')).json(); this.scalpRunning=d.running; this.scalpSymbolCount=d.symbols_count } catch{}
     },
     async loadScalpSignals() {
-      try { const d=await(await fetch('/api/scalp/signals?limit=100')).json(); this.scalpSignals=d.signals||[] } catch{}
+      try { const d=await(await this.apiFetch('/api/scalp/signals?limit=100')).json(); this.scalpSignals=d.signals||[] } catch{}
     },
     async clearScalpSignals() {
-      await fetch('/api/scalp/signals',{method:'DELETE'}); this.scalpSignals=[]; this.showToast('✅ 超短线信号已清空')
+      await this.apiFetch('/api/scalp/signals',{method:'DELETE'}); this.scalpSignals=[]; this.showToast('✅ 超短线信号已清空')
     },
     async loadScalpTrades() {
       try {
-        const d = await(await fetch('/api/scalp/trades?limit=200')).json()
+        const d = await(await this.apiFetch('/api/scalp/trades?limit=200')).json()
         this.scalpTrades    = d.trades    || []
         this.scalpTotalPnl  = d.total_pnl || 0
         this.scalpWinRate   = d.win_rate  || 0
@@ -1252,20 +1327,20 @@ function app() {
       } catch{}
     },
     async clearScalpTrades() {
-      await fetch('/api/scalp/trades',{method:'DELETE'})
+      await this.apiFetch('/api/scalp/trades',{method:'DELETE'})
       this.scalpTrades=[]; this.scalpTotalPnl=0; this.scalpWinRate=0; this.scalpTradeTotal=0
       this.showToast('✅ 历史成交已清空')
     },
     async loadScalpPositions() {
       if (!this.scalpRunning) return
-      try { const d=await(await fetch('/api/scalp/positions')).json(); this.scalpPositions=d.positions||{} } catch{}
+      try { const d=await(await this.apiFetch('/api/scalp/positions')).json(); this.scalpPositions=d.positions||{} } catch{}
     },
     async loadScalpFilterStats() {
-      try { const d=await(await fetch('/api/scalp/filter-stats')).json(); this.scalpFilterStats=d } catch{}
+      try { const d=await(await this.apiFetch('/api/scalp/filter-stats')).json(); this.scalpFilterStats=d } catch{}
     },
     async clearPaperPositions() {
       try {
-        const d=await(await fetch('/api/scalp/paper/positions',{method:'DELETE'})).json()
+        const d=await(await this.apiFetch('/api/scalp/paper/positions',{method:'DELETE'})).json()
         this.showToast(d.message, d.status==='success'?'success':'error')
         await this.loadScalpPositions()
       } catch(e){ this.showToast('❌ 清除失败: '+e,'error') }
@@ -1275,26 +1350,26 @@ function app() {
       const fd = new FormData()
       fd.set('SCALP_ENABLED', this.cfg.SCALP_ENABLED ? 'true' : 'false')
       try {
-        await fetch('/api/config', {method:'POST', body:fd})
+        await this.apiFetch('/api/config', {method:'POST', body:fd})
         this.showToast(this.cfg.SCALP_ENABLED ? '🟢 策略已开启，开始扫描信号' : '⚫ 策略已暂停', 'success')
       } catch(e) { this.showToast('❌ 保存失败: '+e, 'error') }
     },
     async startScalp() {
       try {
-        const d=await(await fetch('/api/scalp/start',{method:'POST'})).json()
+        const d=await(await this.apiFetch('/api/scalp/start',{method:'POST'})).json()
         this.showToast(d.message, d.status==='started'||d.status==='already_running'?'success':'error')
         await this.pollScalpStatus()
       } catch(e){ this.showToast('❌ 启动失败: '+e,'error') }
     },
     async stopScalp() {
       try {
-        const d=await(await fetch('/api/scalp/stop',{method:'POST'})).json()
+        const d=await(await this.apiFetch('/api/scalp/stop',{method:'POST'})).json()
         this.showToast(d.message); this.scalpRunning=false; this.scalpPositions={}
       } catch(e){ this.showToast('❌ 停止失败: '+e,'error') }
     },
     async refreshScalpSymbols() {
       try {
-        const d=await(await fetch('/api/scalp/refresh',{method:'POST'})).json()
+        const d=await(await this.apiFetch('/api/scalp/refresh',{method:'POST'})).json()
         this.showToast(d.message, d.status==='success'?'success':'error')
         await this.pollScalpStatus()
       } catch{}
@@ -1303,51 +1378,51 @@ function app() {
 
     async pollYaobiStatus() {
       try {
-        const d=await(await fetch('/api/yaobi/status')).json()
+        const d=await(await this.apiFetch('/api/yaobi/status')).json()
         this.yaobiRunning=d.running; this.yaobiStatus=d
       } catch{}
     },
     async loadYaobiCandidates() {
       try {
         const q=new URLSearchParams({min_score:this.yaobiFilter.minScore,chain:this.yaobiFilter.chain,source:this.yaobiFilter.source,limit:200})
-        const d=await(await fetch('/api/yaobi/candidates?'+q)).json()
+        const d=await(await this.apiFetch('/api/yaobi/candidates?'+q)).json()
         this.yaobiCandidates=(d.candidates||[]).map(c=>({...c,_open:false}))
         this._applyYaobiFilter()
       } catch{}
     },
     async clearYaobiCandidates() {
-      await fetch('/api/yaobi/candidates',{method:'DELETE'}); this.yaobiCandidates=[]; this.filteredCandidates=[]; this.showToast('✅ 候选库已清空')
+      await this.apiFetch('/api/yaobi/candidates',{method:'DELETE'}); this.yaobiCandidates=[]; this.filteredCandidates=[]; this.showToast('✅ 候选库已清空')
     },
     async startYaobi() {
       try {
-        const d=await(await fetch('/api/yaobi/start',{method:'POST'})).json()
+        const d=await(await this.apiFetch('/api/yaobi/start',{method:'POST'})).json()
         this.showToast(d.message,d.status==='started'||d.status==='already_running'?'success':'error')
         await this.pollYaobiStatus()
       } catch(e){ this.showToast('❌ 启动失败: '+e,'error') }
     },
     async stopYaobi() {
       try {
-        const d=await(await fetch('/api/yaobi/stop',{method:'POST'})).json()
+        const d=await(await this.apiFetch('/api/yaobi/stop',{method:'POST'})).json()
         this.showToast(d.message); this.yaobiRunning=false
       } catch(e){ this.showToast('❌ 停止失败: '+e,'error') }
     },
     async yaobiScanNow() {
       try {
-        const d=await(await fetch('/api/yaobi/scan',{method:'POST'})).json()
+        const d=await(await this.apiFetch('/api/yaobi/scan',{method:'POST'})).json()
         this.showToast(d.message,d.status==='started'?'success':'error')
         setTimeout(()=>this.pollYaobiStatus(), 2000)
       } catch(e){ this.showToast('❌ 扫描失败: '+e,'error') }
     },
     async loadObsidianStatus() {
-      try { const d=await(await fetch('/api/yaobi/obsidian/status')).json(); this.obsidianStatus=d } catch{}
+      try { const d=await(await this.apiFetch('/api/yaobi/obsidian/status')).json(); this.obsidianStatus=d } catch{}
     },
     async saveYaobiConfig() {
       const fd=new FormData(document.getElementById('yaobiForm'))
       const bk=['YAOBI_ENABLED','YAOBI_SQUARE_ENABLED']; bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
-        const d=await(await fetch('/api/config',{method:'POST',body:fd})).json()
+        const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()
         this.showToast(d.message,d.status==='success'?'success':'error')
-        if(d.status==='success'){ this.cfg=await(await fetch('/api/config')).json() }
+        if(d.status==='success'){ this.cfg=await(await this.apiFetch('/api/config')).json() }
       } catch(e){ this.showToast('❌ 保存失败: '+e,'error') }
     },
     _applyYaobiFilter() {

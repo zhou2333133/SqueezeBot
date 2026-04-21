@@ -20,11 +20,18 @@ BINANCE_SQUARE_CSRF_TOKEN  = os.getenv("BINANCE_SQUARE_CSRF_TOKEN",  "")
 BINANCE_SQUARE_BNC_UUID    = os.getenv("BINANCE_SQUARE_BNC_UUID",    "")
 BINANCE_SQUARE_OPENAPI_KEY = os.getenv("BINANCE_SQUARE_OPENAPI_KEY", "")
 
+PANEL_HOST       = os.getenv("PANEL_HOST", "127.0.0.1")
+PANEL_PORT       = int(os.getenv("PANEL_PORT", "8000"))
+PANEL_TOKEN      = os.getenv("PANEL_TOKEN", "")
+PANEL_LOCAL_ONLY = os.getenv("PANEL_LOCAL_ONLY", "true").lower() not in ("0", "false", "no", "off")
+
 MAX_CONCURRENT_REQUESTS = 15
 
 DATA_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 LOGS_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 CONFIG_FILE = os.path.join(DATA_DIR, "settings.json")
+MASKED_SECRET = "********"
+SENSITIVE_SETTING_KEYS = {"COINGLASS_API_KEY"}
 
 
 class ConfigManager:
@@ -140,6 +147,8 @@ class ConfigManager:
     def save(self, new_settings: dict) -> None:
         for k, v in new_settings.items():
             if k not in self.default_settings:
+                continue
+            if k in SENSITIVE_SETTING_KEYS and str(v).strip() in ("", MASKED_SECRET):
                 continue
             typ = type(self.default_settings[k])
             if typ is bool:

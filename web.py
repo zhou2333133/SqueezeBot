@@ -1,10 +1,12 @@
 import asyncio
 import collections
 import csv
+import hmac
 import io
 import logging
 import os
 import queue as std_queue
+from ipaddress import ip_address
 
 import aiohttp
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -12,7 +14,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 import bot_state
-from config import config_manager, DATA_DIR
+from config import (
+    config_manager, DATA_DIR, MASKED_SECRET, PANEL_LOCAL_ONLY, PANEL_TOKEN,
+    SENSITIVE_SETTING_KEYS,
+)
 from log_manager import log_queue, scalp_log_queue
 import signals as _signals_mod
 from signals import (
@@ -25,10 +30,67 @@ from trader import BinanceTrader
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="SqueezeBot Control Panel")
+app = FastAPI(
+    title="SqueezeBot Control Panel",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+PANEL_TOKEN_HEADER = "X-SqueezeBot-Token"
+_AUTH_PUBLIC_PATHS = {"/api/auth/status", "/api/auth/check"}
+
+
+def _redact_config(settings: dict) -> dict:
+    safe = dict(settings)
+    for key in SENSITIVE_SETTING_KEYS:
+        if safe.get(key):
+            safe[key] = MASKED_SECRET
+    return safe
+
+
+def _client_is_local(host: str | None) -> bool:
+    if not PANEL_LOCAL_ONLY:
+        return True
+    if not host:
+        return False
+    if host in ("localhost",):
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _valid_panel_token(token: str | None) -> bool:
+    if not PANEL_TOKEN:
+        return True
+    return bool(token) and hmac.compare_digest(str(token), PANEL_TOKEN)
+
+
+def _auth_meta() -> dict:
+    return {
+        "token_required": bool(PANEL_TOKEN),
+        "local_only": PANEL_LOCAL_ONLY,
+    }
+
+
+def _token_from_request(request: Request) -> str:
+    return request.headers.get(PANEL_TOKEN_HEADER, "") or request.query_params.get("token", "")
+
+
+@app.middleware("http")
+async def panel_security(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in _AUTH_PUBLIC_PATHS:
+        host = request.client.host if request.client else ""
+        if not _client_is_local(host):
+            return JSONResponse({"error": "local_only"}, status_code=403)
+        if not _valid_panel_token(_token_from_request(request)):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 # ─── 页面 ────────────────────────────────────────────────────────────────────
@@ -38,8 +100,25 @@ async def dashboard(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"config": config_manager.settings},
+        context={"config": _redact_config(config_manager.settings), "auth": _auth_meta()},
     )
+
+
+# ─── 面板认证 API ─────────────────────────────────────────────────────────────
+
+@app.get("/api/auth/status")
+async def auth_status():
+    return JSONResponse(_auth_meta())
+
+
+@app.post("/api/auth/check")
+async def auth_check(request: Request):
+    host = request.client.host if request.client else ""
+    if not _client_is_local(host):
+        return JSONResponse({"status": "error", "message": "local_only"}, status_code=403)
+    if not _valid_panel_token(_token_from_request(request)):
+        return JSONResponse({"status": "error", "message": "unauthorized"}, status_code=401)
+    return JSONResponse({"status": "success"})
 
 
 # ─── 全局配置 API ─────────────────────────────────────────────────────────────
@@ -58,7 +137,7 @@ async def update_config(request: Request):
 
 @app.get("/api/config")
 async def get_config():
-    return JSONResponse(config_manager.settings)
+    return JSONResponse(_redact_config(config_manager.settings))
 
 
 # ─── 手动下单 ─────────────────────────────────────────────────────────────────
@@ -380,6 +459,13 @@ async def get_scalp_filter_stats():
 # ─── WebSocket ────────────────────────────────────────────────────────────────
 
 async def _ws_pump(websocket: WebSocket, q: std_queue.Queue, sleep: float = 0.1):
+    host = websocket.client.host if websocket.client else ""
+    if not _client_is_local(host):
+        await websocket.close(code=1008)
+        return
+    if not _valid_panel_token(websocket.query_params.get("token", "")):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     try:
         while True:
