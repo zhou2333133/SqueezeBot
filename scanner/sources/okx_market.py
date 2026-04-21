@@ -1,16 +1,18 @@
 """
 OKX OnChainOS Market API
 REST: /api/v6/dex/market/price-info  /api/v6/dex/market/token/search
-复用 okx_client.py 的签名机制
 文档: https://web3.okx.com/onchainos/dev-docs/market/market-api-introduction
 """
+import base64
+import hashlib
+import hmac
 import logging
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 import aiohttp
 
 from config import OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE
-from okx_client import _sign, _ts          # reuse auth helpers
 
 logger = logging.getLogger(__name__)
 _BASE = "https://www.okx.com"
@@ -21,6 +23,18 @@ CHAIN_NAMES = {
     "42161": "arb", "10": "op", "8453": "base", "43114": "avax",
     "784": "sui", "607": "ton",
 }
+
+
+def _sign(secret: str, ts: str, method: str, path: str, body: str = "") -> str:
+    msg = ts + method.upper() + path + body
+    return base64.b64encode(
+        hmac.new(secret.encode(), msg.encode(), hashlib.sha256).digest()
+    ).decode()
+
+
+def _ts() -> str:
+    now = datetime.now(timezone.utc)
+    return now.strftime(f"%Y-%m-%dT%H:%M:%S.{now.microsecond // 1000:03d}Z")
 
 
 def _headers(path: str) -> dict:
@@ -37,14 +51,10 @@ def _headers(path: str) -> dict:
 
 
 def _headers_post(path: str, body: str = "") -> dict:
-    import base64, hashlib, hmac
     ts = _ts()
-    sig = base64.b64encode(
-        hmac.new(OKX_SECRET_KEY.encode(), (ts + "POST" + path + body).encode(), hashlib.sha256).digest()
-    ).decode()
     h = {
         "OK-ACCESS-KEY":       OKX_API_KEY,
-        "OK-ACCESS-SIGN":      sig,
+        "OK-ACCESS-SIGN":      _sign(OKX_SECRET_KEY, ts, "POST", path, body),
         "OK-ACCESS-TIMESTAMP": ts,
         "Content-Type":        "application/json",
     }
