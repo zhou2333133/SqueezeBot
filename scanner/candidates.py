@@ -75,6 +75,13 @@ class Candidate:
     okx_chain_count:     int   = 0
     okx_chains_found:    list  = field(default_factory=list)
     okx_large_trade_pct: float = 0.0  # 大单(>$5K)成交占比
+    okx_buy_ratio:       float = 0.0
+    okx_risk_level:      int   = 0
+    okx_token_tags:      list  = field(default_factory=list)
+    okx_top10_hold_pct:  float = 0.0
+    okx_dev_hold_pct:    float = 0.0
+    okx_lp_burned_pct:   float = 0.0
+    okx_smart_money_holders: int = 0
 
     # ── 币安合约增强 ──────────────────────────────────────────────────────────
     funding_rate_pct:  float = 0.0    # 当前资金费率%
@@ -145,6 +152,13 @@ class Candidate:
             "okx_chain_count":    self.okx_chain_count,
             "okx_chains_found":   self.okx_chains_found,
             "okx_large_trade_pct": round(self.okx_large_trade_pct, 3),
+            "okx_buy_ratio":      round(self.okx_buy_ratio, 3),
+            "okx_risk_level":     self.okx_risk_level,
+            "okx_token_tags":     self.okx_token_tags,
+            "okx_top10_hold_pct": round(self.okx_top10_hold_pct, 2),
+            "okx_dev_hold_pct":   round(self.okx_dev_hold_pct, 2),
+            "okx_lp_burned_pct":  round(self.okx_lp_burned_pct, 2),
+            "okx_smart_money_holders": self.okx_smart_money_holders,
             "funding_rate_pct":   round(self.funding_rate_pct, 4),
             "fr_extreme_short":   self.fr_extreme_short,
             "retail_short_pct":   round(self.retail_short_pct, 1),

@@ -34,6 +34,114 @@ MASKED_SECRET = "********"
 SENSITIVE_SETTING_KEYS = {"COINGLASS_API_KEY"}
 
 
+def _valid_secret(value: str | None, placeholder: str = "") -> bool:
+    if not value:
+        return False
+    value = str(value).strip()
+    return bool(value and value != placeholder and not value.startswith("YOUR_"))
+
+
+def _split_env_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [x.strip() for x in value.split(",") if x.strip()]
+
+
+def configured_surf_keys() -> list[str]:
+    keys: list[str] = []
+    keys.extend(_split_env_list(os.getenv("SURF_API_KEYS", "")))
+    keys.append(SURF_API_KEY)
+    for i in range(2, 11):
+        keys.append(os.getenv(f"SURF_API_KEY_{i}", ""))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for key in keys:
+        if _valid_secret(key, "YOUR_SURF_API_KEY") and key not in seen:
+            deduped.append(key)
+            seen.add(key)
+    return deduped
+
+
+def surf_credentials_status() -> dict:
+    return {
+        "enabled": bool(configured_surf_keys()),
+        "key_count": len(configured_surf_keys()),
+        "multi_key_env": bool(os.getenv("SURF_API_KEYS", "")),
+    }
+
+
+_surf_key_cursor = 0
+
+
+def next_surf_api_key() -> str:
+    global _surf_key_cursor
+    keys = configured_surf_keys()
+    if not keys:
+        return ""
+    key = keys[_surf_key_cursor % len(keys)]
+    _surf_key_cursor += 1
+    return key
+
+
+def configured_okx_credentials() -> list[dict]:
+    creds: list[dict] = []
+
+    def add(key: str | None, secret: str | None, passphrase: str | None, label: str) -> None:
+        if (_valid_secret(key, "YOUR_OKX_API_KEY")
+                and _valid_secret(secret, "YOUR_OKX_SECRET_KEY")
+                and _valid_secret(passphrase, "")):
+            creds.append({
+                "key": str(key).strip(),
+                "secret": str(secret).strip(),
+                "passphrase": str(passphrase).strip(),
+                "label": label,
+            })
+
+    add(OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE, "OKX_API_KEY")
+    for i in range(2, 11):
+        add(
+            os.getenv(f"OKX_API_KEY_{i}", ""),
+            os.getenv(f"OKX_SECRET_KEY_{i}", ""),
+            os.getenv(f"OKX_PASSPHRASE_{i}", ""),
+            f"OKX_API_KEY_{i}",
+        )
+
+    raw_json = os.getenv("OKX_API_CREDENTIALS", "")
+    if raw_json:
+        try:
+            parsed = json.loads(raw_json)
+            if isinstance(parsed, list):
+                for idx, item in enumerate(parsed, 1):
+                    if isinstance(item, dict):
+                        add(
+                            item.get("api_key") or item.get("key"),
+                            item.get("secret_key") or item.get("secret"),
+                            item.get("passphrase"),
+                            f"OKX_API_CREDENTIALS[{idx}]",
+                        )
+        except Exception as e:
+            logging.getLogger(__name__).warning("OKX_API_CREDENTIALS 解析失败: %s", e)
+
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for cred in creds:
+        if cred["key"] in seen:
+            continue
+        deduped.append(cred)
+        seen.add(cred["key"])
+    return deduped
+
+
+def okx_credentials_status() -> dict:
+    creds = configured_okx_credentials()
+    return {
+        "enabled": bool(creds),
+        "key_count": len(creds),
+        "labels": [c["label"] for c in creds],
+        "base_url": "https://web3.okx.com",
+    }
+
+
 class ConfigManager:
     _BOUNDS: dict[str, tuple] = {
         # 超短线 V3.0
@@ -73,6 +181,11 @@ class ConfigManager:
         "YAOBI_MIN_SCORE":             (0,      100),
         "YAOBI_SURF_TOP_N":            (1,      20),
         "YAOBI_SQUARE_ROWS":           (1,      200),
+        "YAOBI_OKX_HOT_LIMIT":         (1,      100),
+        "YAOBI_OKX_HEAVY_TOP_N":       (1,      120),
+        "YAOBI_OKX_PRICE_BATCH_SIZE":  (1,      100),
+        "OKX_MIN_REQUEST_INTERVAL":    (0.02,   5.0),
+        "SURF_MIN_REQUEST_INTERVAL":   (0.02,   5.0),
     }
 
     def __init__(self):
@@ -129,6 +242,13 @@ class ConfigManager:
             "YAOBI_SURF_TOP_N":          5,
             "YAOBI_SQUARE_ENABLED":      True,
             "YAOBI_SQUARE_ROWS":         50,
+            "YAOBI_OKX_ENABLED":         True,
+            "YAOBI_OKX_HOT_ENABLED":     True,
+            "YAOBI_OKX_HOT_LIMIT":       50,
+            "YAOBI_OKX_HEAVY_TOP_N":     40,
+            "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
+            "OKX_MIN_REQUEST_INTERVAL":  0.20,
+            "SURF_MIN_REQUEST_INTERVAL": 0.20,
         }
         self.settings: dict = self.load()
 

@@ -3,9 +3,11 @@ import collections
 import csv
 import hmac
 import io
+import json
 import logging
 import os
 import queue as std_queue
+from datetime import datetime
 from ipaddress import ip_address
 
 import aiohttp
@@ -26,6 +28,7 @@ from signals import (
 from scanner.candidates import (
     candidates_queue, get_sorted_candidates, clear_candidates, scan_status,
 )
+from scanner.provider_metrics import provider_metrics_snapshot
 from trader import BinanceTrader
 
 logger = logging.getLogger(__name__)
@@ -427,6 +430,177 @@ async def get_scalp_report():
     return JSONResponse(report)
 
 
+async def _scalp_report_or_none() -> dict | None:
+    if not scalp_trade_history:
+        return None
+    response = await get_scalp_report()
+    if response.status_code != 200:
+        return None
+    return json.loads(response.body.decode("utf-8"))
+
+
+def _group_trade_stats(trades: list[dict], key: str) -> dict:
+    rows: dict[str, dict] = {}
+    for t in trades:
+        if key == "signal_label":
+            name = str(t.get("signal_label") or t.get("signal") or "?")
+        else:
+            name = str(t.get(key) or "?")
+        pnl = float(t.get("pnl_usdt", 0) or 0)
+        row = rows.setdefault(name, {
+            "count": 0,
+            "wins": 0,
+            "pnl_usdt": 0.0,
+            "avg_mfe_pct": 0.0,
+            "avg_mae_pct": 0.0,
+            "_mfe_sum": 0.0,
+            "_mae_sum": 0.0,
+        })
+        row["count"] += 1
+        row["wins"] += 1 if pnl > 0 else 0
+        row["pnl_usdt"] += pnl
+        row["_mfe_sum"] += float(t.get("mfe_pct", 0) or 0)
+        row["_mae_sum"] += float(t.get("mae_pct", 0) or 0)
+    for row in rows.values():
+        count = row["count"] or 1
+        row["win_rate_pct"] = round(row["wins"] / count * 100, 1)
+        row["pnl_usdt"] = round(row["pnl_usdt"], 4)
+        row["avg_mfe_pct"] = round(row.pop("_mfe_sum") / count, 4)
+        row["avg_mae_pct"] = round(row.pop("_mae_sum") / count, 4)
+    return dict(sorted(rows.items(), key=lambda x: x[1]["pnl_usdt"]))
+
+
+def _analysis_markdown(pack: dict) -> str:
+    report = pack.get("策略报告") or {}
+    stats = report.get("整体统计", {}) if isinstance(report, dict) else {}
+    lines = [
+        "# SqueezeBot 复盘包",
+        "",
+        f"- 生成时间: {pack.get('generated_at')}",
+        f"- 成交笔数: {stats.get('总成交笔数', len(pack.get('成交明细', [])))}",
+        f"- 总盈亏: {stats.get('总盈亏USDT', 0)} USDT",
+        f"- 胜率: {stats.get('胜率%', 0)}%",
+        "",
+        "## 结论入口",
+        "",
+        "- 先看 `策略报告.整体统计`、`成交分组统计`、`过滤统计快照`。",
+        "- 再看每笔 `entry_context`、`mfe_pct/mae_pct`、`post_exit_*` 判断方向、止损和卖飞。",
+        "- 数据源使用情况看 `数据源诊断.provider_metrics`。",
+        "",
+        "## 成交分组统计",
+        "",
+    ]
+    grouped = pack.get("成交分组统计", {})
+    for group_name, rows in grouped.items():
+        lines += [f"### {group_name}", ""]
+        if not rows:
+            lines.append("- 无")
+            lines.append("")
+            continue
+        for name, row in rows.items():
+            lines.append(
+                f"- {name}: {row.get('count')}笔, 胜率 {row.get('win_rate_pct')}%, "
+                f"PnL {row.get('pnl_usdt')}U, MFE {row.get('avg_mfe_pct')}%, MAE {row.get('avg_mae_pct')}%"
+            )
+        lines.append("")
+    lines += [
+        "## 最近成交",
+        "",
+    ]
+    for t in pack.get("成交明细", [])[-20:]:
+        lines.append(
+            f"- {t.get('exit_time', '')} {t.get('symbol')} {t.get('direction')} "
+            f"{t.get('signal_label') or t.get('signal')} {t.get('close_reason')} "
+            f"PnL={t.get('pnl_usdt')}U MFE={t.get('mfe_pct')}% MAE={t.get('mae_pct')}% "
+            f"Post30={t.get('post_exit_30m_favorable_pct', 'NA')}%"
+        )
+    return "\n".join(lines) + "\n"
+
+
+async def _build_scalp_analysis_pack() -> dict:
+    trades = list(scalp_trade_history)
+    bot = bot_state.scalp_bot
+    runtime = {
+        "scalp_running": bool(bot_state.scalp_task and not bot_state.scalp_task.done()),
+        "yaobi_running": bool(bot_state.yaobi_task and not bot_state.yaobi_task.done()),
+        "open_positions": len(scalp_positions),
+        "scalp_signals": len(scalp_signals_history),
+        "scalp_trades": len(trades),
+    }
+    provider_diag = {
+        "provider_metrics": provider_metrics_snapshot(),
+        "scan_sources": scan_status.get("sources", {}),
+    }
+    try:
+        from config import surf_credentials_status, okx_credentials_status
+        from scanner.sources import binance_square
+        provider_diag["credentials"] = {
+            "surf": surf_credentials_status(),
+            "okx": okx_credentials_status(),
+            "binance_square": binance_square.auth_status(),
+        }
+    except Exception as e:
+        provider_diag["credentials_error"] = str(e)
+
+    cfg = _redact_config(config_manager.settings)
+    pack = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "用途": "把这个 JSON/Markdown 发给 Codex，可用于复盘选币、入场、出场、数据源调用和参数问题。",
+        "运行状态": runtime,
+        "策略参数": cfg,
+        "策略报告": await _scalp_report_or_none(),
+        "成交分组统计": {
+            "by_signal": _group_trade_stats(trades, "signal_label"),
+            "by_direction": _group_trade_stats(trades, "direction"),
+            "by_market_state": _group_trade_stats(trades, "market_state"),
+            "by_close_reason": _group_trade_stats(trades, "close_reason"),
+            "by_symbol": _group_trade_stats(trades, "symbol"),
+        },
+        "成交明细": trades,
+        "信号样本": scalp_signals_history[-120:],
+        "当前持仓": dict(scalp_positions),
+        "过滤统计快照": _signals_mod.scalp_filter_stats,
+        "候选池快照": {
+            "symbols": list(getattr(bot, "candidate_symbols", []) or []),
+            "meta": dict(getattr(bot, "candidate_meta", {}) or {}),
+        },
+        "妖币扫描": {
+            "status": dict(scan_status),
+            "top_candidates": get_sorted_candidates()[:100],
+        },
+        "数据源诊断": provider_diag,
+        "字段说明": {
+            "mfe_pct": "持仓期间原方向最大有利波动百分比，用于判断是否拿住。",
+            "mae_pct": "持仓期间最大逆向波动百分比，用于判断止损是否太紧。",
+            "post_exit_*": "平仓后继续观察原方向 15/30/60/120 分钟，用于判断卖飞或方向是否选对。",
+            "entry_context": "开仓瞬间的候选池、OI、taker、ATR、短期涨跌和新闻状态快照。",
+        },
+    }
+    return pack
+
+
+@app.get("/api/scalp/analysis-pack.json")
+async def export_scalp_analysis_pack_json():
+    pack = await _build_scalp_analysis_pack()
+    payload = json.dumps(pack, ensure_ascii=False, indent=2, default=str)
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=squeezebot_analysis_pack.json"},
+    )
+
+
+@app.get("/api/scalp/analysis-pack.md")
+async def export_scalp_analysis_pack_markdown():
+    pack = await _build_scalp_analysis_pack()
+    payload = _analysis_markdown(pack)
+    return StreamingResponse(
+        iter([payload]),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=squeezebot_analysis_pack.md"},
+    )
+
+
 @app.get("/api/scalp/paper/positions")
 async def get_scalp_paper_positions():
     paper = {k: v for k, v in scalp_positions.items() if v.get("paper")}
@@ -502,6 +676,16 @@ async def ws_scalp_signals(websocket: WebSocket):
 
 @app.get("/api/yaobi/status")
 async def yaobi_status():
+    try:
+        from config import surf_credentials_status, okx_credentials_status
+        from scanner.sources import binance_square
+        credentials = {
+            "surf": surf_credentials_status(),
+            "okx": okx_credentials_status(),
+            "binance_square": binance_square.auth_status(),
+        }
+    except Exception:
+        credentials = {}
     is_running = bool(bot_state.yaobi_task and not bot_state.yaobi_task.done())
     return JSONResponse({
         "running":       is_running,
@@ -510,6 +694,8 @@ async def yaobi_status():
         "total_scanned": scan_status.get("total_scanned", 0),
         "scored":        scan_status.get("scored", 0),
         "sources":       scan_status.get("sources", {}),
+        "provider_metrics": provider_metrics_snapshot(),
+        "credentials":   credentials,
         "errors":        scan_status.get("errors", [])[-3:],
     })
 
@@ -517,13 +703,19 @@ async def yaobi_status():
 @app.get("/api/yaobi/diagnostics")
 async def yaobi_diagnostics():
     from scanner.sources import okx_market, binance_square
+    from config import surf_credentials_status
     try:
         async with aiohttp.ClientSession(trust_env=True) as session:
             okx_diag, square_diag = await asyncio.gather(
                 okx_market.diagnose(session),
                 binance_square.diagnose(session, rows=5),
             )
-        return JSONResponse({"okx": okx_diag, "binance_square": square_diag})
+        return JSONResponse({
+            "okx": okx_diag,
+            "surf": surf_credentials_status(),
+            "binance_square": square_diag,
+            "provider_metrics": provider_metrics_snapshot(),
+        })
     except Exception as e:
         logger.error("妖币数据源诊断失败: %s", e, exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)

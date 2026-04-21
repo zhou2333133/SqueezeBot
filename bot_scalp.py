@@ -14,9 +14,10 @@ from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
-from config import config_manager
+from config import config_manager, configured_surf_keys, next_surf_api_key
 from market_hub import hub
 import signals as _signals_mod
+from scanner.provider_metrics import record_provider_call, record_provider_skip
 from signals import add_scalp_signal, set_scalp_position, add_scalp_trade
 from trader import BinanceTrader
 
@@ -64,6 +65,11 @@ class ScalpPosition:
     slippage_usdt:      float      = 0.0
     closed_quantity:    float      = 0.0
     current_price:      float      = 0.0
+    max_favorable_pct:  float      = 0.0
+    max_adverse_pct:    float      = 0.0
+    max_favorable_time: str        = ""
+    max_adverse_time:   str        = ""
+    entry_context:      dict       = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         unreal = 0.0
@@ -92,6 +98,8 @@ class ScalpPosition:
             "realized_gross_pnl": round(self.realized_gross_pnl, 4),
             "fee_usdt":           round(self.fee_usdt, 4),
             "slippage_usdt":      round(self.slippage_usdt, 4),
+            "mfe_pct":            round(self.max_favorable_pct, 3),
+            "mae_pct":            round(self.max_adverse_pct, 3),
             "unrealized_pct":     round(unreal, 2),
             "current_price":      round(self.current_price, 8),
         }
@@ -127,6 +135,8 @@ class BinanceScalpBot:
         self._signal_cooldown:  dict[str, float]         = {}
         # 平均K线成交量（用于Taker比率噪声过滤）
         self._avg_vol:          dict[str, float]         = {}
+        # 平仓后继续观察，用于判断卖飞/方向是否选对（不额外 REST 调用）
+        self._post_exit_watch:   dict[str, list]          = {}
         # OI暖机截止时间（首轮OI就绪后静默60秒，防信号井喷）
         self._oi_warmup_until:  float                    = 0.0
         # 过滤统计（每5分钟输出）
@@ -309,6 +319,7 @@ class BinanceScalpBot:
     def _desired_ws_streams(self) -> set[str]:
         symbols = set(self.candidate_symbols)
         symbols.update(self.open_positions.keys())
+        symbols.update(self._post_exit_watch.keys())
         symbols.add("BTCUSDT")
         return {f"{s.lower()}@kline_1m" for s in symbols if s}
 
@@ -413,6 +424,9 @@ class BinanceScalpBot:
             # 重置突破锁（每根新K线允许重新触发一次Breakout信号）
             self._breakout_fired[symbol] = False
 
+        # 平仓后的影子复盘：继续观察原方向是否还有空间
+        self._update_post_exit_watch(symbol, price)
+
         # 更新持仓实时价格 + 检查TP/SL
         if symbol in self.open_positions:
             self.open_positions[symbol].current_price = price
@@ -494,8 +508,8 @@ class BinanceScalpBot:
 
     async def _surf_news_scan(self, symbols: list[str]) -> None:
         """每5分钟批量扫描新闻，更新 candidate_meta[sym]['news_sentiment']"""
-        from config import SURF_API_KEY
-        if not SURF_API_KEY or SURF_API_KEY == "YOUR_SURF_API_KEY":
+        if not configured_surf_keys():
+            record_provider_skip("surf", "news/curated", "missing_surf_api_key", items=len(symbols))
             return
 
         NEG = {"hack","exploit","rug","scam","delist","suspend","crash","fraud","lawsuit","ponzi"}
@@ -513,10 +527,13 @@ class BinanceScalpBot:
                     idx = text.find(kw, idx + len(kw))
             return False
 
-        headers = {"Authorization": f"Bearer {SURF_API_KEY}"}
-
         async def _check(sym: str) -> None:
             base = sym.replace("USDT", "")
+            api_key = next_surf_api_key()
+            if not api_key:
+                record_provider_skip("surf", "news/curated", "missing_surf_api_key")
+                return
+            headers = {"Authorization": f"Bearer {api_key}"}
             try:
                 async with self.session.get(
                     "https://api.asksurf.ai/v1/news/curated",
@@ -525,8 +542,10 @@ class BinanceScalpBot:
                     timeout=aiohttp.ClientTimeout(total=6),
                 ) as resp:
                     if resp.status != 200:
+                        record_provider_call("surf", "news/curated", False, status=resp.status)
                         return
                     items = (await resp.json()).get("data", [])
+                    record_provider_call("surf", "news/curated", True, status=resp.status, items=len(items))
                     if not items:
                         return
                     text = " ".join(i.get("title", "").lower() for i in items)
@@ -541,8 +560,8 @@ class BinanceScalpBot:
                         if old != sentiment:
                             logger.info("⚡ [%s] 📰 新闻情绪: %s → %s", sym, old, sentiment)
                         self.candidate_meta[sym]["news_sentiment"] = sentiment
-            except Exception:
-                pass
+            except Exception as e:
+                record_provider_call("surf", "news/curated", False, status="exception", error=f"{type(e).__name__}: {e}")
 
         sem = asyncio.Semaphore(8)
         async def bounded(s):
@@ -552,8 +571,9 @@ class BinanceScalpBot:
 
     async def _surf_entry_check(self, symbol: str, direction: str, price: float) -> tuple[bool, int, str]:
         """仅极端行情（24h涨跌 > ±30%）调用 Surf AI 深度审查，普通行情直接放行"""
-        from config import SURF_API_KEY
-        if not SURF_API_KEY or SURF_API_KEY == "YOUR_SURF_API_KEY":
+        api_key = next_surf_api_key()
+        if not api_key:
+            record_provider_skip("surf", "chat/completions", "missing_surf_api_key")
             return True, 100, "未配置"
 
         meta       = self.candidate_meta.get(symbol, {})
@@ -585,7 +605,7 @@ class BinanceScalpBot:
             f'{{\"score\":0-100,\"risk\":\"LOW|MED|HIGH\",\"reason\":\"max 15 words\"}}'
         )
         try:
-            headers = {"Authorization": f"Bearer {SURF_API_KEY}"}
+            headers = {"Authorization": f"Bearer {api_key}"}
             async with self.session.post(
                 "https://api.asksurf.ai/v1/chat/completions",
                 json={"model": "surf-1.5-turbo", "messages": [{"role": "user", "content": prompt}]},
@@ -593,8 +613,10 @@ class BinanceScalpBot:
                 timeout=aiohttp.ClientTimeout(total=12),
             ) as resp:
                 if resp.status != 200:
+                    record_provider_call("surf", "chat/completions", False, status=resp.status)
                     return True, 100, f"HTTP {resp.status}"
                 data   = await resp.json()
+                record_provider_call("surf", "chat/completions", True, status=resp.status, items=1)
                 text   = data["choices"][0]["message"]["content"].strip()
                 if "```" in text:
                     text = text.split("```")[1].lstrip("json").strip()
@@ -607,9 +629,11 @@ class BinanceScalpBot:
                             symbol, score, risk, reason, "✅入场" if ok else "❌拒绝")
                 return ok, score, reason
         except json.JSONDecodeError as e:
+            record_provider_call("surf", "chat/completions", False, status="json_decode", error=str(e))
             logger.warning("⚡ [%s] Surf解析失败(%s)，放行", symbol, e)
             return True, 100, "解析失败"
         except Exception as e:
+            record_provider_call("surf", "chat/completions", False, status="exception", error=f"{type(e).__name__}: {e}")
             logger.warning("⚡ [%s] Surf异常: %s，放行", symbol, e)
             return True, 100, str(e)
 
@@ -1141,6 +1165,10 @@ class BinanceScalpBot:
             "tp1_price":    round(tp1_price, 8),
             "tp2_price":    round(tp2_price, 8),
         }
+        entry_context = self._entry_context_snapshot(
+            symbol, direction, trigger_pct, signal_label, market_state,
+        )
+        base_signal["entry_context"] = entry_context
         logger.info(
             "⚡ [%s] ✅ [%s] SL=%.2f%% TP1=%.2f%%(×%.1fR) TP2=%.2f%%(×%.1fR) | qty=%.4f",
             symbol, signal_label, sl_distance_pct, tp1_dist,
@@ -1180,6 +1208,7 @@ class BinanceScalpBot:
                 tp2_timeout_minutes = tp2_timeout_minutes,
                 risk_usdt          = risk_usdt,
                 paper              = True,
+                entry_context      = entry_context,
             )
             self.open_positions[symbol] = pos
             set_scalp_position(symbol, pos.to_dict())
@@ -1243,6 +1272,7 @@ class BinanceScalpBot:
             tp2_timeout_minutes = tp2_timeout_minutes,
             risk_usdt          = risk_usdt,
             paper              = False,
+            entry_context      = entry_context,
         )
         self.open_positions[symbol] = pos
         set_scalp_position(symbol, pos.to_dict())
@@ -1271,6 +1301,116 @@ class BinanceScalpBot:
         pos.closed_quantity += qty
         pos.quantity_remaining = max(0.0, pos.quantity_remaining - qty)
         return {"qty": qty, "gross": gross, "fee": fee, "slippage": slippage, "net": net}
+
+    def _update_position_excursion(self, pos: ScalpPosition, price: float) -> None:
+        if price <= 0 or pos.entry_price <= 0:
+            return
+        move_pct = ((price - pos.entry_price) / pos.entry_price * 100
+                    if pos.direction == "LONG"
+                    else (pos.entry_price - price) / pos.entry_price * 100)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if move_pct > pos.max_favorable_pct:
+            pos.max_favorable_pct = move_pct
+            pos.max_favorable_time = now
+        adverse = max(0.0, -move_pct)
+        if adverse > pos.max_adverse_pct:
+            pos.max_adverse_pct = adverse
+            pos.max_adverse_time = now
+
+    def _entry_context_snapshot(
+        self,
+        symbol: str,
+        direction: str,
+        trigger_pct: float,
+        signal_label: str,
+        market_state: str,
+    ) -> dict:
+        meta = dict(self.candidate_meta.get(symbol, {}))
+        buf = self.kline_buffer.get(symbol, [])
+        last = buf[-1] if buf else {}
+        closes = [k["c"] for k in buf]
+        ret20 = ((closes[-1] - closes[-20]) / closes[-20] * 100
+                 if len(closes) >= 20 and closes[-20] else 0.0)
+        ret60 = ((closes[-1] - closes[-60]) / closes[-60] * 100
+                 if len(closes) >= 60 and closes[-60] else 0.0)
+        taker = self._current_taker_ratio(symbol, min_vol_ratio=0.0)
+        return {
+            "symbol": symbol,
+            "direction": direction,
+            "signal_label": signal_label,
+            "market_state": market_state,
+            "trigger_pct": round(trigger_pct, 4),
+            "candidate_rank": meta.get("rank"),
+            "direction_bias": meta.get("direction_bias"),
+            "change_24h": meta.get("change_24h", 0.0),
+            "volume_24h": meta.get("volume_24h", 0.0),
+            "vol_surge": meta.get("vol_surge", 0.0),
+            "funding_rate": meta.get("funding_rate", 0.0),
+            "fr_squeeze": meta.get("fr_squeeze", False),
+            "news_sentiment": meta.get("news_sentiment", "neutral"),
+            "oi_change_3m_pct": round(self._get_oi_change_pct(symbol) or 0.0, 4),
+            "current_taker_ratio": round(taker, 4) if taker is not None else None,
+            "atr_pct": round(self._calc_atr_pct(buf), 4) if len(buf) >= 15 else 0.0,
+            "ret20m_pct": round(ret20, 4),
+            "ret60m_pct": round(ret60, 4),
+            "last_kline_close": last.get("c"),
+            "kline_buffer_len": len(buf),
+        }
+
+    def _start_post_exit_watch(self, trade: dict, pos: ScalpPosition, exit_price: float) -> None:
+        if exit_price <= 0:
+            return
+        trade["post_exit_status"] = "watching"
+        trade["post_exit_horizons_min"] = [15, 30, 60, 120]
+        watch = {
+            "trade": trade,
+            "direction": pos.direction,
+            "exit_price": exit_price,
+            "start_ts": time.monotonic(),
+            "max_favorable_pct": 0.0,
+            "max_adverse_pct": 0.0,
+            "completed": set(),
+            "horizons": [15, 30, 60, 120],
+        }
+        self._post_exit_watch.setdefault(pos.symbol, []).append(watch)
+
+    def _update_post_exit_watch(self, symbol: str, price: float) -> None:
+        watches = self._post_exit_watch.get(symbol)
+        if not watches or price <= 0:
+            return
+        remaining = []
+        now = time.monotonic()
+        for watch in watches:
+            exit_price = watch["exit_price"]
+            move_pct = ((price - exit_price) / exit_price * 100
+                        if watch["direction"] == "LONG"
+                        else (exit_price - price) / exit_price * 100)
+            if move_pct > watch["max_favorable_pct"]:
+                watch["max_favorable_pct"] = move_pct
+            adverse = max(0.0, -move_pct)
+            if adverse > watch["max_adverse_pct"]:
+                watch["max_adverse_pct"] = adverse
+
+            elapsed_min = (now - watch["start_ts"]) / 60
+            trade = watch["trade"]
+            trade["post_exit_mfe_pct"] = round(watch["max_favorable_pct"], 4)
+            trade["post_exit_mae_pct"] = round(watch["max_adverse_pct"], 4)
+            trade["post_exit_last_price"] = round(price, 8)
+            trade["post_exit_elapsed_min"] = round(elapsed_min, 2)
+            for horizon in watch["horizons"]:
+                if elapsed_min >= horizon and horizon not in watch["completed"]:
+                    trade[f"post_exit_{horizon}m_favorable_pct"] = round(watch["max_favorable_pct"], 4)
+                    trade[f"post_exit_{horizon}m_adverse_pct"] = round(watch["max_adverse_pct"], 4)
+                    trade[f"post_exit_{horizon}m_price"] = round(price, 8)
+                    watch["completed"].add(horizon)
+            if len(watch["completed"]) < len(watch["horizons"]):
+                remaining.append(watch)
+            else:
+                trade["post_exit_status"] = "complete"
+        if remaining:
+            self._post_exit_watch[symbol] = remaining
+        else:
+            self._post_exit_watch.pop(symbol, None)
 
     @staticmethod
     def _next_utc_midnight_ts() -> float:
@@ -1309,7 +1449,8 @@ class BinanceScalpBot:
 
         pnl_pct = (total_pnl / (pos.entry_price * pos.quantity / self.cfg.get("SCALP_LEVERAGE", 10)) * 100
                    if pos.entry_price > 0 and pos.quantity > 0 else 0.0)
-        add_scalp_trade({
+        hold_minutes = (time.monotonic() - pos.entry_ts) / 60
+        trade = {
             "symbol":       pos.symbol,
             "direction":    pos.direction,
             "signal":       pos.signal_label,
@@ -1325,11 +1466,21 @@ class BinanceScalpBot:
             "slippage_usdt": round(pos.slippage_usdt, 4),
             "net_r":        round(trade_r, 4),
             "pnl_pct":      round(pnl_pct, 2),
+            "hold_minutes":  round(hold_minutes, 2),
+            "mfe_pct":      round(pos.max_favorable_pct, 4),
+            "mae_pct":      round(pos.max_adverse_pct, 4),
+            "mfe_time":     pos.max_favorable_time,
+            "mae_time":     pos.max_adverse_time,
+            "tp1_hit":      pos.tp1_hit,
+            "tp2_hit":      pos.tp2_hit,
+            "entry_context": pos.entry_context,
             "close_reason": close_reason,
             "paper":        pos.paper,
             "leverage":     self.cfg.get("SCALP_LEVERAGE", 10),
             "quantity":     round(pos.quantity, 6),
-        })
+        }
+        self._start_post_exit_watch(trade, pos, exit_price)
+        add_scalp_trade(trade)
 
     async def _check_tp_sl(self, symbol: str, price: float) -> None:
         pos = self.open_positions.get(symbol)
@@ -1344,6 +1495,7 @@ class BinanceScalpBot:
         auto      = cfg.get("SCALP_AUTO_TRADE", False)
         is_paper  = pos.paper
         tag       = "📋 " if is_paper else ""
+        self._update_position_excursion(pos, price)
 
         def _tp_hit(tp_price: float) -> bool:
             return (pos.direction == "LONG"  and price >= tp_price) or \

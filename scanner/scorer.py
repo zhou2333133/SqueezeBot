@@ -131,6 +131,16 @@ def score(c: Candidate) -> Candidate:
     if c.okx_large_trade_pct >= 0.30:
         api_pts += 15; sigs.append(f"机构大单{c.okx_large_trade_pct*100:.0f}%")
 
+    # OKX 近期链上买盘
+    if c.okx_buy_ratio >= 0.70 and c.okx_large_trade_pct >= 0.15:
+        api_pts += 8; sigs.append(f"OKX买盘{c.okx_buy_ratio*100:.0f}%")
+    elif c.okx_buy_ratio >= 0.60:
+        api_pts += 4
+
+    # OKX 聪明钱/巨鲸标签
+    if c.okx_smart_money_holders >= 2:
+        api_pts += 6; sigs.append(f"聪明钱持仓{c.okx_smart_money_holders}")
+
     # 资金费率极端做空 (轧空前兆)
     if c.fr_extreme_short:
         api_pts += 12; sigs.append(f"FR极端做空{c.funding_rate_pct:.3f}%")
@@ -182,6 +192,22 @@ def score(c: Candidate) -> Candidate:
     # Surf AI 高风险裁决
     if c.surf_ai_risk_level == "HIGH":
         deduct += 30; sigs.append(f"⚠ SurfAI高风险: {c.surf_ai_reason}")
+
+    # OKX 风险控制/链上集中度
+    if c.okx_risk_level >= 4:
+        deduct += 30; sigs.append(f"⚠ OKX高风险等级{c.okx_risk_level}")
+    elif c.okx_risk_level == 3:
+        deduct += 15; sigs.append("⚠ OKX中高风险")
+
+    danger_tags = {"honeypot", "lowLiquidity", "devHoldingStatusSellAll"}
+    found_danger = sorted(danger_tags.intersection(set(c.okx_token_tags or [])))
+    if found_danger:
+        deduct += 20; sigs.append(f"⚠ OKX风险标签:{'/'.join(found_danger)}")
+
+    if c.okx_top10_hold_pct >= 80:
+        deduct += 15; sigs.append(f"⚠ Top10持仓{c.okx_top10_hold_pct:.0f}%")
+    elif c.okx_top10_hold_pct >= 65:
+        deduct += 8
 
     bd["风险扣分"] = -deduct
 

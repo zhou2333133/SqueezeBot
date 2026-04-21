@@ -15,7 +15,7 @@ from typing import Optional
 
 import aiohttp
 
-from config import config_manager, SURF_API_KEY
+from config import config_manager, next_surf_api_key, surf_credentials_status
 from scanner.candidates import (
     Candidate, upsert_candidate, scan_status, candidates_map, clear_candidates,
 )
@@ -24,9 +24,19 @@ from scanner.sources.geckoterminal import fetch_trending_pools, fetch_new_pools
 from scanner.sources.dexscreener import (
     fetch_token_boosts, fetch_latest_profiles, fetch_token_detail,
 )
-from scanner.sources.okx_market import get_token_price_info, search_tokens, get_token_trades, CHAIN_NAMES
+from scanner.sources.okx_market import (
+    CHAIN_IDS,
+    CHAIN_NAMES,
+    get_hot_tokens,
+    get_token_advanced_info,
+    get_token_holders,
+    get_token_price_info_batch,
+    get_token_trades,
+    search_tokens,
+)
 from scanner.sources.binance_square import fetch_hot_posts, extract_ticker_mentions
 from scanner.sources.binance_futures import scan_futures_oi
+from scanner.provider_metrics import record_provider_call, record_provider_skip
 from scanner.obsidian import (
     init_rulebook, write_daily_candidates, write_daily_digest,
     write_square_archive, write_token_doc,
@@ -37,14 +47,16 @@ logger = logging.getLogger(__name__)
 _FUTURES_URL   = "https://fapi.binance.com/fapi/v1/exchangeInfo"
 _SCAN_NETWORKS = ["eth", "bsc", "solana", "base", "arbitrum"]
 
-_SURF_ENABLED = bool(SURF_API_KEY and SURF_API_KEY != "YOUR_SURF_API_KEY")
-
 _NEG_KW = {"hack", "exploit", "rug", "scam", "delist", "suspend", "crash",
            "fraud", "lawsuit", "ponzi", "breach", "stolen", "vulnerability"}
 _POS_KW = {"partnership", "listing", "upgrade", "adoption", "mainnet", "launch",
            "integration", "backed", "grant", "milestone", "record"}
 _NEG_GATES = {"not", "no", "never", "successfully", "patches", "fixed",
               "resolved", "mitigated", "prevents", "blocked"}
+
+
+def _surf_enabled() -> bool:
+    return bool(surf_credentials_status().get("enabled"))
 
 
 class YaobiScanner:
@@ -124,7 +136,38 @@ class YaobiScanner:
             }
             logger.info("🔍 DEX Screener: %d 个项目", dex_count)
 
-            # ── 4. Binance Square ────────────────────────────────────────────
+            # ── 4. OKX 热门榜 ────────────────────────────────────────────────
+            okx_hot_count = 0
+            if config_manager.settings.get("YAOBI_OKX_ENABLED", True) and config_manager.settings.get("YAOBI_OKX_HOT_ENABLED", True):
+                try:
+                    hot_limit = int(config_manager.settings.get("YAOBI_OKX_HOT_LIMIT", 50))
+                    chain_names = [
+                        x.strip().lower()
+                        for x in str(config_manager.settings.get("YAOBI_CHAINS", "")).split(",")
+                        if x.strip()
+                    ]
+                    chain_ids = [CHAIN_IDS.get(x, "") for x in chain_names]
+                    chain_ids = [x for x in chain_ids if x]
+                    if not chain_ids:
+                        chain_ids = ["501", "8453", "56", "1"]
+                    okx_tasks = [get_hot_tokens(session, chain_index=cid, limit=hot_limit) for cid in chain_ids[:5]]
+                    okx_results = await asyncio.gather(*okx_tasks, return_exceptions=True)
+                    for r in okx_results:
+                        if isinstance(r, list):
+                            self._ingest_items(candidates, r)
+                            okx_hot_count += len(r)
+                    scan_status["sources"]["okx_hot"] = {
+                        "count": okx_hot_count, "last_run": start.strftime("%H:%M"),
+                    }
+                    logger.info("🔍 OKX 热门榜: %d 个项目", okx_hot_count)
+                except Exception as e:
+                    logger.warning("OKX热门榜失败: %s", e)
+            else:
+                scan_status["sources"]["okx_hot"] = {
+                    "count": 0, "last_run": start.strftime("%H:%M"), "disabled": True,
+                }
+
+            # ── 5. Binance Square ────────────────────────────────────────────
             if config_manager.settings.get("YAOBI_SQUARE_ENABLED", True):
                 try:
                     square_rows = int(config_manager.settings.get("YAOBI_SQUARE_ROWS", 50))
@@ -142,8 +185,8 @@ class YaobiScanner:
                     "count": 0, "last_run": start.strftime("%H:%M"), "disabled": True,
                 }
 
-            # ── 5. Surf 新闻预过滤 ───────────────────────────────────────────
-            if _SURF_ENABLED and config_manager.settings.get("YAOBI_SURF_ENABLED", True):
+            # ── 6. Surf 新闻预过滤 ───────────────────────────────────────────
+            if _surf_enabled() and config_manager.settings.get("YAOBI_SURF_ENABLED", True):
                 cand_list = list(candidates.values())
                 cand_list = await self._surf_news_filter(session, cand_list)
                 # Rebuild dict from filtered list
@@ -152,36 +195,39 @@ class YaobiScanner:
                     candidates.pop(k, None)
                 logger.info("🔍 Surf新闻过滤: 剩余 %d 个候选 (淘汰 %d 个负面)", len(cand_list), len(removed))
 
-            # ── 6. OKX Market 价格补全 ───────────────────────────────────────
+            # ── 7. OKX Market 价格批量补全 ───────────────────────────────────
             enriched = 0
             enrich_targets = [
                 c for c in candidates.values()
-                if c.address and c.chain_id and c.chain_id not in ("501",)
+                if c.address and c.chain_id
             ]
-            for c in enrich_targets[:60]:
-                try:
-                    info = await get_token_price_info(session, c.chain_id, c.address)
-                    if info:
-                        c.price_usd      = info["price_usd"]      or c.price_usd
-                        c.market_cap     = info["market_cap"]      or c.market_cap
-                        c.liquidity      = info["liquidity"]       or c.liquidity
-                        c.holder_count   = info["holder_count"]    or c.holder_count
-                        c.price_change_1h  = info["price_change_1h"]
-                        c.price_change_4h  = info["price_change_4h"]
-                        c.price_change_24h = info["price_change_24h"] or c.price_change_24h
-                        c.volume_24h       = info["volume_24h"]    or c.volume_24h
-                        # 5分钟交易笔数加速
-                        txs_now = info.get("tx_count_5m", 0)
-                        if c.txs_5m > 0 and txs_now > 0:
-                            c.txs_5m_accel = txs_now / c.txs_5m
-                        c.txs_5m = txs_now
-                        enriched += 1
-                    await asyncio.sleep(0.08)
-                except Exception:
-                    pass
+            try:
+                batch_data = await get_token_price_info_batch(
+                    session,
+                    [{"chainIndex": c.chain_id, "tokenContractAddress": c.address} for c in enrich_targets],
+                )
+                for c in enrich_targets:
+                    info = batch_data.get(f"{c.chain_id}:{c.address}")
+                    if not info:
+                        continue
+                    c.price_usd      = info["price_usd"]      or c.price_usd
+                    c.market_cap     = info["market_cap"]      or c.market_cap
+                    c.liquidity      = info["liquidity"]       or c.liquidity
+                    c.holder_count   = info["holder_count"]    or c.holder_count
+                    c.price_change_1h  = info["price_change_1h"]
+                    c.price_change_4h  = info["price_change_4h"]
+                    c.price_change_24h = info["price_change_24h"] or c.price_change_24h
+                    c.volume_24h       = info["volume_24h"]    or c.volume_24h
+                    txs_now = info.get("tx_count_5m", 0)
+                    if c.txs_5m > 0 and txs_now > 0:
+                        c.txs_5m_accel = txs_now / c.txs_5m
+                    c.txs_5m = txs_now
+                    enriched += 1
+            except Exception as e:
+                logger.debug("OKX批量补全异常: %s", e)
             logger.info("🔍 OKX 补充 %d 个链上数据", enriched)
 
-            # ── 7. DEX Screener 价格兜底 ─────────────────────────────────────
+            # ── 8. DEX Screener 价格兜底 ─────────────────────────────────────
             needs_detail = [
                 c for c in candidates.values()
                 if c.price_usd == 0 and c.address
@@ -201,12 +247,12 @@ class YaobiScanner:
                 except Exception:
                     pass
 
-        # ── 8. Binance 期货标记 ──────────────────────────────────────────────
+        # ── 9. Binance 期货标记 ──────────────────────────────────────────────
         for c in candidates.values():
             if (c.symbol.upper() + "USDT") in self._futures_symbols:
                 c.has_futures = True
 
-        # ── 9. 聪明钱启发式检测 ──────────────────────────────────────────────
+        # ── 10. 聪明钱启发式检测 ─────────────────────────────────────────────
         for c in candidates.values():
             if (c.liquidity > 50_000
                     and c.volume_24h > 0
@@ -219,7 +265,7 @@ class YaobiScanner:
                     f"趋势榜#{c.gecko_trend_rank}"
                 )
 
-        # ── 10. 合约OI扫描 + 资金费率 + 散户多空 ────────────────────────────
+        # ── 11. 合约OI扫描 + 资金费率 + 散户多空 ────────────────────────────
         async with aiohttp.ClientSession(trust_env=True) as session:
             try:
                 top_n = int(config_manager.settings.get("YAOBI_FUTURES_TOP_N", 120))
@@ -274,8 +320,18 @@ class YaobiScanner:
             except Exception as e:
                 logger.warning("合约OI扫描失败: %s", e)
 
-            # ── 11. OKX 多链验证 + 大单分析 (有合约的品种) ──────────────────
-            futures_candidates = [c for c in candidates.values() if c.has_futures]
+            # ── 12. OKX 多链验证 + 大单/风险分析 (限额内挑高价值合约品种) ─────
+            okx_top_n = int(config_manager.settings.get("YAOBI_OKX_HEAVY_TOP_N", 40))
+            futures_candidates = sorted(
+                [c for c in candidates.values() if c.has_futures],
+                key=lambda x: (
+                    x.oi_change_24h_pct,
+                    x.volume_ratio,
+                    x.square_mentions,
+                    x.price_change_24h,
+                ),
+                reverse=True,
+            )[:okx_top_n]
             if futures_candidates:
                 sem = asyncio.Semaphore(5)
                 async def _enrich_okx_one(c: Candidate) -> None:
@@ -286,7 +342,7 @@ class YaobiScanner:
                                      return_exceptions=True)
                 logger.info("🔍 OKX链验证: %d 个合约品种已分析", len(futures_candidates))
 
-        # ── 12. 首轮打分 ─────────────────────────────────────────────────────
+        # ── 13. 首轮打分 ─────────────────────────────────────────────────────
         min_score = int(config_manager.settings.get("YAOBI_MIN_SCORE", 30))
         scored: list[Candidate] = []
         for c in candidates.values():
@@ -295,9 +351,9 @@ class YaobiScanner:
                 scored.append(c)
         scored.sort(key=lambda x: x.score, reverse=True)
 
-        # ── 13. Surf AI 终审 (Top-N) ─────────────────────────────────────────
+        # ── 14. Surf AI 终审 (Top-N) ─────────────────────────────────────────
         surf_top_n = int(config_manager.settings.get("YAOBI_SURF_TOP_N", 5))
-        if _SURF_ENABLED and config_manager.settings.get("YAOBI_SURF_ENABLED", True) and scored:
+        if _surf_enabled() and config_manager.settings.get("YAOBI_SURF_ENABLED", True) and scored:
             top_candidates = [c for c in scored[:surf_top_n] if c.score >= 55]
             if top_candidates:
                 async with aiohttp.ClientSession(trust_env=True) as session:
@@ -308,7 +364,7 @@ class YaobiScanner:
                 scored.sort(key=lambda x: x.score, reverse=True)
                 logger.info("🔍 Surf AI终审: %d 个候选已审查", len(top_candidates))
 
-        # ── 14. 写入候选库 ───────────────────────────────────────────────────
+        # ── 15. 写入候选库 ───────────────────────────────────────────────────
         for c in scored:
             upsert_candidate(c)
 
@@ -324,7 +380,7 @@ class YaobiScanner:
             len(candidates), len(scored), min_score, elapsed,
         )
 
-        # ── 15. Obsidian 日报 (每天一次) ────────────────────────────────────
+        # ── 16. Obsidian 日报 (每天一次) ────────────────────────────────────
         today = date.today()
         if self._last_obsidian_date != today and scored:
             try:
@@ -349,8 +405,6 @@ class YaobiScanner:
         candidates: list[Candidate],
     ) -> list[Candidate]:
         """批量查询 Surf 新闻，标记情绪，过滤掉负面新闻的候选。"""
-        headers = {"Authorization": f"Bearer {SURF_API_KEY}"}
-
         def _classify(text: str) -> str:
             lower = text.lower()
             for kw in _NEG_KW:
@@ -366,6 +420,11 @@ class YaobiScanner:
 
         async def _check(c: Candidate) -> None:
             base = c.symbol.replace("USDT", "")
+            api_key = next_surf_api_key()
+            if not api_key:
+                record_provider_skip("surf", "news/curated", "missing_surf_api_key")
+                return
+            headers = {"Authorization": f"Bearer {api_key}"}
             try:
                 async with session.get(
                     "https://api.asksurf.ai/v1/news/curated",
@@ -374,15 +433,17 @@ class YaobiScanner:
                     timeout=aiohttp.ClientTimeout(total=6),
                 ) as resp:
                     if resp.status != 200:
+                        record_provider_call("surf", "news/curated", False, status=resp.status)
                         return
                     items = (await resp.json()).get("data", [])
+                    record_provider_call("surf", "news/curated", True, status=resp.status, items=len(items))
                     if not items:
                         return
                     c.surf_news_titles = [i.get("title", "") for i in items]
                     combined = " ".join(t.lower() for t in c.surf_news_titles)
                     c.surf_news_sentiment = _classify(combined)
-            except Exception:
-                pass
+            except Exception as e:
+                record_provider_call("surf", "news/curated", False, status="exception", error=f"{type(e).__name__}: {e}")
 
         sem = asyncio.Semaphore(8)
         async def bounded(c: Candidate) -> None:
@@ -402,6 +463,17 @@ class YaobiScanner:
                 chains = list({t.get("chain_id", "") for t in tokens if t.get("chain_id")})
                 c.okx_chain_count  = len(chains)
                 c.okx_chains_found = [CHAIN_NAMES.get(ch, ch) for ch in chains]
+                if not c.address:
+                    primary = max(
+                        tokens,
+                        key=lambda t: (t.get("liquidity", 0), t.get("market_cap", 0), t.get("volume_24h", 0)),
+                    )
+                    c.chain_id = primary.get("chain_id", c.chain_id)
+                    c.chain = primary.get("chain", c.chain)
+                    c.address = primary.get("address", c.address)
+                    c.liquidity = primary.get("liquidity", 0) or c.liquidity
+                    c.market_cap = primary.get("market_cap", 0) or c.market_cap
+                    c.holder_count = primary.get("holder_count", 0) or c.holder_count
         except Exception:
             pass
 
@@ -409,6 +481,22 @@ class YaobiScanner:
             try:
                 trade_info = await get_token_trades(session, c.chain_id, c.address)
                 c.okx_large_trade_pct = trade_info.get("large_trade_pct", 0.0)
+                c.okx_buy_ratio = trade_info.get("buy_ratio", 0.0)
+            except Exception:
+                pass
+            try:
+                adv = await get_token_advanced_info(session, c.chain_id, c.address)
+                if adv:
+                    c.okx_risk_level = adv.get("risk_control_level", 0)
+                    c.okx_token_tags = adv.get("token_tags", [])
+                    c.okx_top10_hold_pct = adv.get("top10_hold_pct", 0.0)
+                    c.okx_dev_hold_pct = adv.get("dev_hold_pct", 0.0)
+                    c.okx_lp_burned_pct = adv.get("lp_burned_pct", 0.0)
+            except Exception:
+                pass
+            try:
+                smart_holders = await get_token_holders(session, c.chain_id, c.address, tag_filter="3", limit=20)
+                c.okx_smart_money_holders = smart_holders.get("smart_money_count", 0)
             except Exception:
                 pass
 
@@ -420,9 +508,12 @@ class YaobiScanner:
         candidates: list[Candidate],
     ) -> None:
         """对高分候选进行 Surf AI 风险审查，设置 surf_ai_risk_level。"""
-        headers = {"Authorization": f"Bearer {SURF_API_KEY}"}
-
         async def _review(c: Candidate) -> None:
+            api_key = next_surf_api_key()
+            if not api_key:
+                record_provider_skip("surf", "chat/completions", "missing_surf_api_key")
+                return
+            headers = {"Authorization": f"Bearer {api_key}"}
             prompt = (
                 f"You are a crypto token risk analyst. Evaluate {c.symbol} as a speculative trade candidate.\n"
                 f"Data: price_change_24h={c.price_change_24h:+.1f}%, "
@@ -444,8 +535,10 @@ class YaobiScanner:
                     timeout=aiohttp.ClientTimeout(total=12),
                 ) as resp:
                     if resp.status != 200:
+                        record_provider_call("surf", "chat/completions", False, status=resp.status)
                         return
                     data   = await resp.json()
+                    record_provider_call("surf", "chat/completions", True, status=resp.status, items=1)
                     text   = data["choices"][0]["message"]["content"].strip()
                     if "```" in text:
                         text = text.split("```")[1].lstrip("json").strip()
@@ -456,6 +549,7 @@ class YaobiScanner:
                     if c.surf_ai_risk_level == "HIGH":
                         logger.info("🔍 [%s] Surf AI 高风险: %s", c.symbol, c.surf_ai_reason)
             except Exception as e:
+                record_provider_call("surf", "chat/completions", False, status="exception", error=f"{type(e).__name__}: {e}")
                 logger.debug("Surf AI 审查异常 [%s]: %s", c.symbol, e)
 
         sem = asyncio.Semaphore(3)
@@ -479,7 +573,8 @@ class YaobiScanner:
                 if not sym or len(sym) < 2 or len(sym) > 12:
                     continue
                 chain_id = item.get("chain_id", "")
-                address  = (item.get("address") or "").lower()
+                raw_address = str(item.get("address") or "").strip()
+                address  = raw_address if str(chain_id) in ("501", "784", "607") else raw_address.lower()
                 src      = item.get("source", "unknown")
 
                 key = f"{chain_id}:{address}" if (chain_id and address) else sym

@@ -25,6 +25,25 @@ class TestYaobiSources(unittest.TestCase):
         self.assertEqual(okx_market._int_any(item, "holders"), 3210)
         self.assertEqual(okx_market._float_any(item, "priceChange24H"), 12.5)
 
+    def test_okx_sol_address_preserves_case(self) -> None:
+        sol_addr = "SoLCaseSensitive123abcXYZ"
+        self.assertEqual(okx_market._normalize_address("501", sol_addr), sol_addr)
+        self.assertEqual(okx_market._normalize_address("1", "0xABCDEF"), "0xabcdef")
+
+    def test_okx_price_info_parser_returns_batch_key_fields(self) -> None:
+        row = {
+            "chainIndex": "1",
+            "tokenContractAddress": "0xABCDEF",
+            "price": "1.25",
+            "top10HoldPercent": "66.6",
+            "txs24H": "123",
+        }
+        parsed = okx_market._parse_price_info(row)
+        self.assertEqual(parsed["chain_id"], "1")
+        self.assertEqual(parsed["address"], "0xabcdef")
+        self.assertEqual(parsed["price_usd"], 1.25)
+        self.assertEqual(parsed["tx_count_24h"], 123)
+
     def test_binance_square_extracts_nested_posts_and_mentions(self) -> None:
         payload = {
             "code": "000000",

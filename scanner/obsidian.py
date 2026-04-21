@@ -198,6 +198,8 @@ def write_token_doc(c: dict) -> None:
         f"- **价格**: ${c.get('price_usd', 0):.6g}",
         f"- **市值**: ${c.get('market_cap', 0)/1e6:.2f}M  **流动性**: ${c.get('liquidity', 0)/1e6:.2f}M",
         f"- **持仓人数**: {c.get('holder_count', 0):,}",
+        f"- **OKX风险**: 等级 {c.get('okx_risk_level', 0)}  Top10 {c.get('okx_top10_hold_pct', 0):.1f}%  买盘 {c.get('okx_buy_ratio', 0)*100:.0f}%",
+        f"- **OKX标签**: {', '.join(c.get('okx_token_tags', [])[:6]) or '无'}",
         "",
         "## 评分",
         f"- **总分**: {c.get('score', 0)}/100",

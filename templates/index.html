@@ -597,6 +597,10 @@
       <div class="flex items-center gap-3">
         <a :href="auth.required?'/api/scalp/trades/csv?token='+encodeURIComponent(auth.token):'/api/scalp/trades/csv'"
           download class="text-xs text-gray-500 hover:text-orange-400 transition-colors" title="下载全部成交为 CSV">📥 CSV</a>
+        <a :href="auth.required?'/api/scalp/analysis-pack.json?token='+encodeURIComponent(auth.token):'/api/scalp/analysis-pack.json'"
+          download class="text-xs text-gray-500 hover:text-green-400 transition-colors" title="下载给 Codex 分析用的完整 JSON 复盘包">⬇ JSON复盘包</a>
+        <a :href="auth.required?'/api/scalp/analysis-pack.md?token='+encodeURIComponent(auth.token):'/api/scalp/analysis-pack.md'"
+          download class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="下载 Markdown 摘要复盘包">⬇ MD摘要</a>
         <button @click="copyScalpReport()" class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="生成策略分析报告并复制到剪贴板">📋 复制报告</button>
         <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
       </div>
@@ -746,6 +750,31 @@
               <div><label class="text-xs text-gray-500">广场抓取条数</label>
                 <input class="inp mt-1" type="number" name="YAOBI_SQUARE_ROWS" :value="cfg.YAOBI_SQUARE_ROWS??50" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'"></div>
             </div>
+            <p class="text-xs text-green-900 uppercase tracking-widest mt-4 pt-1">OKX Market</p>
+            <div class="grid grid-cols-2 gap-3 mt-2">
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <label class="toggle" style="--t:#22c55e">
+                  <input type="checkbox" name="YAOBI_OKX_ENABLED" :checked="cfg.YAOBI_OKX_ENABLED!==false" @change="cfg.YAOBI_OKX_ENABLED=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-gray-400">启用 OKX 补全</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <label class="toggle" style="--t:#22c55e">
+                  <input type="checkbox" name="YAOBI_OKX_HOT_ENABLED" :checked="cfg.YAOBI_OKX_HOT_ENABLED!==false" @change="cfg.YAOBI_OKX_HOT_ENABLED=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-gray-400">OKX 热门榜</span>
+              </label>
+              <div><label class="text-xs text-gray-500">热门榜每链数量</label>
+                <input class="inp mt-1" type="number" name="YAOBI_OKX_HOT_LIMIT" :value="cfg.YAOBI_OKX_HOT_LIMIT??50" style="border-color:#1a3a2a"></div>
+              <div><label class="text-xs text-gray-500">深度分析 Top N</label>
+                <input class="inp mt-1" type="number" name="YAOBI_OKX_HEAVY_TOP_N" :value="cfg.YAOBI_OKX_HEAVY_TOP_N??40" style="border-color:#1a3a2a"></div>
+              <div><label class="text-xs text-gray-500">价格批量大小</label>
+                <input class="inp mt-1" type="number" name="YAOBI_OKX_PRICE_BATCH_SIZE" :value="cfg.YAOBI_OKX_PRICE_BATCH_SIZE??100" style="border-color:#1a3a2a"></div>
+              <div><label class="text-xs text-gray-500">OKX 请求间隔秒</label>
+                <input class="inp mt-1" type="number" step="0.05" name="OKX_MIN_REQUEST_INTERVAL" :value="cfg.OKX_MIN_REQUEST_INTERVAL??0.2" style="border-color:#1a3a2a"></div>
+            </div>
             <div class="mt-3">
               <label class="text-xs text-gray-500">监控链 (逗号分隔)</label>
               <input class="inp mt-1" type="text" name="YAOBI_CHAINS" :value="cfg.YAOBI_CHAINS" style="border-color:#1a3a2a" onfocus="this.style.borderColor='#4ade80'" onblur="this.style.borderColor='#1a3a2a'">
@@ -758,7 +787,13 @@
             <p class="text-xs text-green-900 uppercase tracking-widest mt-4 pt-1">API 密钥</p>
             <div class="mt-2 space-y-2">
               <div><label class="text-xs text-gray-500">OKX API Key</label>
-                <input class="inp mt-1 text-xs" type="password" placeholder="留空则不使用 OKX 补全" :value="cfg.OKX_API_KEY||''" disabled title="在启动参数或环境变量中设置"></div>
+                <input class="inp mt-1 text-xs" type="text"
+                  :value="(yaobiStatus.credentials?.okx?.enabled?'已配置 ':'未配置 ')+(yaobiStatus.credentials?.okx?.key_count||0)+' 个 key'"
+                  disabled title="在 .env 或环境变量中设置 OKX_API_KEY / OKX_API_KEY_2 等"></div>
+              <div><label class="text-xs text-gray-500">Surf API Key</label>
+                <input class="inp mt-1 text-xs" type="text"
+                  :value="(yaobiStatus.credentials?.surf?.enabled?'已配置 ':'未配置 ')+(yaobiStatus.credentials?.surf?.key_count||0)+' 个 key'"
+                  disabled title="在 .env 或环境变量中设置 SURF_API_KEY / SURF_API_KEYS / SURF_API_KEY_2 等"></div>
               <div><label class="text-xs text-gray-500">Coinglass API Key (可选)</label>
                 <input class="inp mt-1 text-xs" type="text" name="COINGLASS_API_KEY" :value="cfg.COINGLASS_API_KEY||''" placeholder="留空则跳过" style="border-color:#1a3a2a"></div>
             </div>
@@ -793,6 +828,20 @@
             </div>
           </template>
           <div x-show="!Object.keys(yaobiStatus.sources||{}).length" class="text-gray-700 text-xs text-center py-2">等待首次扫描...</div>
+        </div>
+        <div class="mt-4 pt-3 border-t border-[#11251b] space-y-2">
+          <div class="text-[10px] text-gray-700 uppercase tracking-wider">API 调用统计</div>
+          <template x-for="[name,m] in Object.entries(yaobiStatus.provider_metrics||{})" :key="name">
+            <div class="text-xs">
+              <div class="flex items-center justify-between">
+                <span class="text-gray-400" x-text="name"></span>
+                <span class="text-gray-600" x-text="'ok '+(m.ok||0)+' / fail '+(m.fail||0)+' / skip '+(m.skipped||0)"></span>
+              </div>
+              <div class="text-[10px] text-gray-700 truncate"
+                x-text="(m.last_endpoint||'')+' '+(m.last_status||'')+' '+(m.last_reason||m.last_error||'')"></div>
+            </div>
+          </template>
+          <div x-show="!Object.keys(yaobiStatus.provider_metrics||{}).length" class="text-gray-700 text-xs text-center py-2">暂无 API 调用记录</div>
         </div>
       </div>
 
@@ -1144,7 +1193,7 @@ function app() {
 
 
     yaobiCandidates: [], yaobiRunning: false, yaobiOpen: true,
-    yaobiStatus: { last_scan:null, scanning:false, total_scanned:0, scored:0, sources:{}, errors:[] },
+    yaobiStatus: { last_scan:null, scanning:false, total_scanned:0, scored:0, sources:{}, provider_metrics:{}, credentials:{}, errors:[] },
     obsidianStatus: { vault_path:'', exists:false, file_count:0 },
     yaobiFilter: { minScore:0, chain:'', source:'' },
     yaobiSort: 'score',
@@ -1418,7 +1467,7 @@ function app() {
     },
     async saveYaobiConfig() {
       const fd=new FormData(document.getElementById('yaobiForm'))
-      const bk=['YAOBI_ENABLED','YAOBI_SQUARE_ENABLED']; bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
+      const bk=['YAOBI_ENABLED','YAOBI_SQUARE_ENABLED','YAOBI_OKX_ENABLED','YAOBI_OKX_HOT_ENABLED']; bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()
         this.showToast(d.message,d.status==='success'?'success':'error')
