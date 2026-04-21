@@ -167,7 +167,7 @@
         <span class="text-xs text-gray-500 uppercase tracking-wider">策略参数</span>
       </div>
       <div class="text-sm font-bold text-orange-300"
-        x-text="'OI轮询 '+(cfg.OI_POLL_INTERVAL??10)+'s | 冷却 '+(cfg.SIGNAL_COOLDOWN_SECONDS??5)+'s'"></div>
+        x-text="'OI轮询 '+(cfg.OI_POLL_INTERVAL??10)+'s | 冷却 '+(cfg.SIGNAL_COOLDOWN_SECONDS??20)+'s'"></div>
       <div class="text-xs text-gray-600 mt-1"
         x-text="'SQ Taker≥'+Math.round((cfg.SQUEEZE_TAKER_MIN??0.65)*100)+'% | BO Taker≥'+Math.round((cfg.BREAKOUT_TAKER_MIN??0.62)*100)+'%'"></div>
     </div>
@@ -211,7 +211,7 @@
               <div>
                 <label class="text-xs text-gray-400 font-medium">信号冷却秒</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">同一币发出一次信号后，N 秒内不再重复入场，防 Tick 连续触发。</div>
-                <input class="inp inp-o" type="number" name="SIGNAL_COOLDOWN_SECONDS" :value="cfg.SIGNAL_COOLDOWN_SECONDS??5"></div>
+                <input class="inp inp-o" type="number" name="SIGNAL_COOLDOWN_SECONDS" :value="cfg.SIGNAL_COOLDOWN_SECONDS??20"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">BTC 守卫 %</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">BTC 5 分钟急跌时禁做多，急涨时禁做空，避免逆着大盘开仓。</div>
@@ -308,8 +308,8 @@
                 <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_MIN_PCT" :value="cfg.BREAKOUT_MIN_PCT??0.10"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">当前K量比</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">当前1m K线成交量至少达到近5根均量的比例，默认0.20。</div>
-                <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_MIN_VOL_RATIO" :value="cfg.BREAKOUT_MIN_VOL_RATIO??0.20"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">当前1m K线成交量至少达到近5根均量的比例，默认0.35。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_MIN_VOL_RATIO" :value="cfg.BREAKOUT_MIN_VOL_RATIO??0.35"></div>
             </div>
             <div class="grid grid-cols-1 gap-3 mt-3">
               <div>
@@ -323,16 +323,16 @@
             <div class="grid grid-cols-4 gap-3 mt-2">
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP1 Risk:Reward倍数</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP1 = SL距离 × N倍。趋势默认2R。</div>
-                <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP1_RR" :value="cfg.SCALP_TP1_RR??2"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP1 = SL距离 × N倍。默认1.5R。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP1_RR" :value="cfg.SCALP_TP1_RR??1.5"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP1平仓比例</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">TP1触发时小比例拿利并推成本保本。默认0.15。</div>
                 <input class="inp inp-o" type="number" step="0.05" name="SCALP_TP1_RATIO" :value="cfg.SCALP_TP1_RATIO"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP2 Risk:Reward倍数</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP2 = SL距离 × N倍。趋势默认4R。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP2_RR" :value="cfg.SCALP_TP2_RR??4"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP2 = SL距离 × N倍。默认3.5R。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP2_RR" :value="cfg.SCALP_TP2_RR??3.5"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP2平仓比例</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">TP2触发时再平掉多少仓位。默认0.25，保留60% Runner。</div>
@@ -345,8 +345,8 @@
                 <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP3_TRAIL_PCT" :value="cfg.SCALP_TP3_TRAIL_PCT"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">结构追踪K数</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">Runner 用最近N根已闭合K线结构低/高点做追踪。默认5。</div>
-                <input class="inp inp-o" type="number" step="1" name="SCALP_STRUCTURE_TRAIL_BARS" :value="cfg.SCALP_STRUCTURE_TRAIL_BARS??5"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">Runner 用最近N根已闭合K线结构低/高点做追踪。默认8。</div>
+                <input class="inp inp-o" type="number" step="1" name="SCALP_STRUCTURE_TRAIL_BARS" :value="cfg.SCALP_STRUCTURE_TRAIL_BARS??8"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP1时间止损分钟</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">入场后N分钟未触达TP1，判定突破失效并退出。</div>
