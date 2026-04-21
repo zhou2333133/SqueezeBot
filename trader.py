@@ -95,6 +95,19 @@ class BinanceTrader:
             logger.info("✅ 市价单成功: %s %s %.6f (OrderID: %s)", symbol, side, quantity, resp["orderId"])
         return resp
 
+    async def place_reduce_only_market_order(self, symbol: str, side: str, quantity: float) -> dict | None:
+        """只减仓市价单，供TP/SL/紧急平仓使用，避免状态延迟造成反向开仓。"""
+        resp = await self._request("POST", "/fapi/v1/order", {
+            "symbol": symbol,
+            "side": side,
+            "type": "MARKET",
+            "quantity": _fmt(quantity),
+            "reduceOnly": "true",
+        })
+        if resp and resp.get("orderId"):
+            logger.info("✅ ReduceOnly 市价平仓: %s %s %.6f (OrderID: %s)", symbol, side, quantity, resp["orderId"])
+        return resp
+
     async def place_stop_loss_order(self, symbol: str, side: str, stop_price: float) -> dict | None:
         """止损单（平仓市价止损）"""
         resp = await self._request("POST", "/fapi/v1/order", {
@@ -139,6 +152,7 @@ class BinanceTrader:
             "activationPrice": _fmt(activation_price),
             "callbackRate": f"{callback_rate:.1f}",
             "quantity": _fmt(quantity),
+            "reduceOnly": "true",
         })
         if resp and resp.get("orderId"):
             logger.info(

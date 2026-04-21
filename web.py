@@ -231,7 +231,12 @@ async def export_scalp_trades_csv():
     if not trades:
         return JSONResponse({"message": "暂无成交记录"}, status_code=404)
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=trades[0].keys())
+    fieldnames = []
+    for trade in trades:
+        for key in trade.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(trades)
     output.seek(0)
@@ -252,11 +257,18 @@ async def get_scalp_report():
     total = len(trades)
     wins  = sum(1 for t in trades if t.get("pnl_usdt", 0) > 0)
     total_pnl = sum(t.get("pnl_usdt", 0) for t in trades)
+    total_gross_pnl = sum(t.get("gross_pnl_usdt", t.get("pnl_usdt", 0)) for t in trades)
+    total_fee = sum(t.get("fee_usdt", 0) for t in trades)
+    total_slippage = sum(t.get("slippage_usdt", 0) for t in trades)
     win_pnls  = [t["pnl_usdt"] for t in trades if t.get("pnl_usdt", 0) > 0]
     loss_pnls = [t["pnl_usdt"] for t in trades if t.get("pnl_usdt", 0) <= 0]
 
+    def trade_signal_label(t: dict) -> str:
+        return t.get("signal_label") or t.get("signal") or "?"
+
     by_reason = dict(collections.Counter(t.get("close_reason", "?") for t in trades))
-    by_label  = dict(collections.Counter(t.get("signal_label", "?") for t in trades).most_common(10))
+    by_label  = dict(collections.Counter(trade_signal_label(t) for t in trades).most_common(10))
+    by_state  = dict(collections.Counter(t.get("market_state", "?") for t in trades).most_common(10))
     by_symbol = collections.Counter()
     sym_pnl: dict[str, float] = {}
     for t in trades:
@@ -276,20 +288,30 @@ async def get_scalp_report():
             "结构止损":         cfg.get("SCALP_USE_DYNAMIC_SL"),
             "每笔风险USDT":     cfg.get("SCALP_RISK_PER_TRADE_USDT"),
             "每日熔断USDT":     cfg.get("SCALP_MAX_DAILY_LOSS_USDT"),
+            "每日熔断R":        cfg.get("SCALP_MAX_DAILY_LOSS_R"),
+            "手续费率单边":      cfg.get("FEE_RATE_PER_SIDE"),
+            "滑点率单边":        cfg.get("SLIPPAGE_RATE_PER_SIDE"),
             "TP1_RR":           cfg.get("SCALP_TP1_RR"),
             "TP2_RR":           cfg.get("SCALP_TP2_RR"),
             "TP1平仓比例":      cfg.get("SCALP_TP1_RATIO"),
             "TP2平仓比例":      cfg.get("SCALP_TP2_RATIO"),
             "TP3追踪%":         cfg.get("SCALP_TP3_TRAIL_PCT"),
+            "结构追踪K数":       cfg.get("SCALP_STRUCTURE_TRAIL_BARS"),
+            "TP1时间止损分钟":   cfg.get("SCALP_TIME_STOP_MINUTES"),
+            "TP2超时分钟":       cfg.get("SCALP_TP2_TIMEOUT_MINUTES"),
             "候选池上限":       cfg.get("SCALP_CANDIDATE_LIMIT"),
             "OI轮询秒":         cfg.get("OI_POLL_INTERVAL"),
             "信号冷却秒":       cfg.get("SIGNAL_COOLDOWN_SECONDS"),
+            "BTC守卫%":         cfg.get("BTC_GUARD_PCT"),
             "轧空OI阈值-大币%": cfg.get("SQUEEZE_OI_DROP_MAJOR"),
             "轧空OI阈值-中币%": cfg.get("SQUEEZE_OI_DROP_MID"),
             "轧空OI阈值-Meme%": cfg.get("SQUEEZE_OI_DROP_MEME"),
             "挤压确认反弹%":    cfg.get("SQUEEZE_WICK_PCT"),
             "挤压Taker阈值":    cfg.get("SQUEEZE_TAKER_MIN"),
             "突破Taker阈值":    cfg.get("BREAKOUT_TAKER_MIN"),
+            "突破最小幅度%":     cfg.get("BREAKOUT_MIN_PCT"),
+            "突破ATR倍数":       cfg.get("BREAKOUT_ATR_MULT"),
+            "当前K量比阈值":     cfg.get("BREAKOUT_MIN_VOL_RATIO"),
         },
         "整体统计": {
             "总成交笔数":  total,
@@ -297,6 +319,9 @@ async def get_scalp_report():
             "亏损笔数":    total - wins,
             "胜率%":       round(wins / total * 100, 1),
             "总盈亏USDT":  round(total_pnl, 4),
+            "总毛盈亏USDT": round(total_gross_pnl, 4),
+            "总手续费USDT": round(total_fee, 4),
+            "总滑点USDT":  round(total_slippage, 4),
             "平均盈利USDT": round(sum(win_pnls) / len(win_pnls), 4) if win_pnls else 0,
             "平均亏损USDT": round(sum(loss_pnls) / len(loss_pnls), 4) if loss_pnls else 0,
             "盈亏比":      round(
@@ -305,16 +330,17 @@ async def get_scalp_report():
         },
         "最佳单笔": {
             "品种": best.get("symbol"), "方向": best.get("direction"),
-            "信号": best.get("signal_label"), "盈亏USDT": best.get("pnl_usdt"),
+            "信号": trade_signal_label(best), "盈亏USDT": best.get("pnl_usdt"),
             "时间": best.get("entry_time"),
         },
         "最差单笔": {
             "品种": worst.get("symbol"), "方向": worst.get("direction"),
-            "信号": worst.get("signal_label"), "盈亏USDT": worst.get("pnl_usdt"),
+            "信号": trade_signal_label(worst), "盈亏USDT": worst.get("pnl_usdt"),
             "时间": worst.get("entry_time"),
         },
         "平仓原因分布":   by_reason,
         "信号类型分布":   by_label,
+        "市场状态分布":   by_state,
         "盈利最多币种TOP5":  dict(top5),
         "亏损最多币种TOP5":  dict(bot5),
         "过滤统计快照":  _signals_mod.scalp_filter_stats or "（5分钟后刷新）",

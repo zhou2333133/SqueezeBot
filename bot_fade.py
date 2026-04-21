@@ -538,7 +538,10 @@ class BinanceFadeBot:
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += tp1_pnl
             elif auto:
-                await self.trader.place_market_order(symbol, "BUY", qty)
+                resp = await self.trader.place_reduce_only_market_order(symbol, "BUY", qty)
+                if not resp:
+                    logger.error("📉 [%s] TP1减仓失败，保留本地仓位等待下一次检查", symbol)
+                    return
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += tp1_pnl
             pct = (pos.entry_price - price) / pos.entry_price * 100
@@ -553,7 +556,10 @@ class BinanceFadeBot:
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += tp2_pnl
             elif auto:
-                await self.trader.place_market_order(symbol, "BUY", qty)
+                resp = await self.trader.place_reduce_only_market_order(symbol, "BUY", qty)
+                if not resp:
+                    logger.error("📉 [%s] TP2减仓失败，保留本地仓位等待下一次检查", symbol)
+                    return
                 pos.quantity_remaining -= qty
                 pos.realized_pnl += tp2_pnl
             pct = (pos.entry_price - price) / pos.entry_price * 100
@@ -569,7 +575,10 @@ class BinanceFadeBot:
             reason = "SL_保本" if pos.tp1_hit else "SL"
             logger.info("📉 [%s] %s%s 触发 @ %.6f", symbol, tag, reason, price)
             if not is_paper and auto and pos.quantity_remaining > 0:
-                await self.trader.place_market_order(symbol, "BUY", pos.quantity_remaining)
+                resp = await self.trader.place_reduce_only_market_order(symbol, "BUY", pos.quantity_remaining)
+                if not resp:
+                    logger.error("📉 [%s] %s平仓失败，保留本地仓位等待下一次检查", symbol, reason)
+                    return
             self._record_fade_trade(pos, price, reason, sl_pnl)
             del self.open_positions[symbol]
             set_fade_position(symbol, None)
