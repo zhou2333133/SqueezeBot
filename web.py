@@ -26,7 +26,8 @@ from signals import (
     scalp_signal_queue, scalp_signals_history, scalp_positions, scalp_trade_history,
 )
 from scanner.candidates import (
-    candidates_queue, get_sorted_candidates, clear_candidates, scan_status,
+    candidates_queue, get_sorted_candidates, get_anomaly_candidates,
+    clear_candidates, scan_status,
 )
 from scanner.provider_metrics import provider_metrics_snapshot
 from trader import BinanceTrader
@@ -567,6 +568,10 @@ async def _build_scalp_analysis_pack() -> dict:
         "妖币扫描": {
             "status": dict(scan_status),
             "top_candidates": get_sorted_candidates()[:100],
+            "anomaly_candidates": get_anomaly_candidates(
+                min_anomaly=int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35)),
+                limit=100,
+            ),
         },
         "数据源诊断": provider_diag,
         "字段说明": {
@@ -693,6 +698,8 @@ async def yaobi_status():
         "scanning":      scan_status.get("scanning", False),
         "total_scanned": scan_status.get("total_scanned", 0),
         "scored":        scan_status.get("scored", 0),
+        "anomalies":     scan_status.get("anomalies", 0),
+        "min_anomaly":   scan_status.get("min_anomaly", config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35)),
         "sources":       scan_status.get("sources", {}),
         "provider_metrics": provider_metrics_snapshot(),
         "credentials":   credentials,
@@ -767,6 +774,15 @@ async def yaobi_candidates(
 ):
     items = get_sorted_candidates(min_score=min_score, chain=chain, source=source)
     return JSONResponse({"candidates": items[:limit], "total": len(items)})
+
+
+@app.get("/api/yaobi/anomalies")
+async def yaobi_anomalies(
+    min_anomaly: int = 1,
+    limit: int = 100,
+):
+    items = get_anomaly_candidates(min_anomaly=min_anomaly, limit=limit)
+    return JSONResponse({"candidates": items, "total": len(items)})
 
 
 @app.delete("/api/yaobi/candidates")

@@ -344,8 +344,9 @@ class YaobiScanner:
 
         # ── 13. 首轮打分 ─────────────────────────────────────────────────────
         min_score = int(config_manager.settings.get("YAOBI_MIN_SCORE", 30))
+        all_candidates = list(candidates.values())
         scored: list[Candidate] = []
-        for c in candidates.values():
+        for c in all_candidates:
             c = score_candidate(c)
             if c.score >= min_score:
                 scored.append(c)
@@ -364,7 +365,17 @@ class YaobiScanner:
                 scored.sort(key=lambda x: x.score, reverse=True)
                 logger.info("🔍 Surf AI终审: %d 个候选已审查", len(top_candidates))
 
-        # ── 15. 写入候选库 ───────────────────────────────────────────────────
+        # ── 15. 异常币/情绪雷达 (OKX market-filter/sentiment-tracker 风格) ───
+        self._apply_anomaly_radar(all_candidates)
+        min_anomaly = int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35))
+        anomaly_count = sum(1 for c in all_candidates if c.anomaly_score >= min_anomaly)
+        scored = [
+            c for c in all_candidates
+            if c.score >= min_score or c.anomaly_score >= min_anomaly
+        ]
+        scored.sort(key=lambda x: (x.score, x.anomaly_score), reverse=True)
+
+        # ── 16. 写入候选库 ───────────────────────────────────────────────────
         for c in scored:
             upsert_candidate(c)
 
@@ -374,13 +385,15 @@ class YaobiScanner:
             "last_scan":     start.strftime("%Y-%m-%d %H:%M:%S"),
             "total_scanned": len(candidates),
             "scored":        len(scored),
+            "anomalies":     anomaly_count,
+            "min_anomaly":   min_anomaly,
         })
         logger.info(
-            "🔍 扫描完成: %d 个候选, %d 个达标 (≥%d分), 耗时 %.1fs",
-            len(candidates), len(scored), min_score, elapsed,
+            "🔍 扫描完成: %d 个候选, %d 个入库 (评分≥%d 或异动≥%d), 异常%d个, 耗时 %.1fs",
+            len(candidates), len(scored), min_score, min_anomaly, anomaly_count, elapsed,
         )
 
-        # ── 16. Obsidian 日报 (每天一次) ────────────────────────────────────
+        # ── 17. Obsidian 日报 (每天一次) ────────────────────────────────────
         today = date.today()
         if self._last_obsidian_date != today and scored:
             try:
@@ -460,6 +473,8 @@ class YaobiScanner:
         try:
             tokens = await search_tokens(session, c.symbol, limit=10)
             if tokens:
+                if "okx_search" not in c.sources:
+                    c.sources.append("okx_search")
                 chains = list({t.get("chain_id", "") for t in tokens if t.get("chain_id")})
                 c.okx_chain_count  = len(chains)
                 c.okx_chains_found = [CHAIN_NAMES.get(ch, ch) for ch in chains]
@@ -558,6 +573,196 @@ class YaobiScanner:
                 await _review(c)
 
         await asyncio.gather(*[bounded(c) for c in candidates], return_exceptions=True)
+
+    # ── 异常币/情绪雷达 ───────────────────────────────────────────────────────
+
+    def _apply_anomaly_radar(self, candidates: list[Candidate]) -> None:
+        """把 OKX/Binance/Surf/广场数据聚合成一张“今天哪些币不寻常”的雷达表。"""
+        for c in candidates:
+            score = 0
+            tags: list[str] = []
+            reasons: list[str] = []
+
+            def add(points: int, tag: str, reason: str = "") -> None:
+                nonlocal score
+                score += points
+                if tag and tag not in tags:
+                    tags.append(tag)
+                if reason:
+                    reasons.append(reason)
+
+            oi = float(c.oi_change_24h_pct or 0)
+            oi_abs = abs(oi)
+            if oi >= 150:
+                add(24, "OI爆增", f"OI {oi:+.1f}%")
+            elif oi >= 80:
+                add(18, "OI大增", f"OI {oi:+.1f}%")
+            elif oi >= 30:
+                add(10, "OI异动", f"OI {oi:+.1f}%")
+            elif oi <= -25:
+                add(9, "OI骤降", f"OI {oi:+.1f}%")
+
+            if c.oi_acceleration >= 30:
+                add(10, "OI加速", f"加速 {c.oi_acceleration:+.1f}%")
+            elif c.oi_acceleration >= 15:
+                add(5, "OI加速")
+
+            if c.volume_ratio >= 20:
+                add(12, "极端放量", f"成交量 {c.volume_ratio:.1f}x")
+            elif c.volume_ratio >= 10:
+                add(9, "明显放量", f"成交量 {c.volume_ratio:.1f}x")
+            elif c.volume_ratio >= 5:
+                add(5, "放量")
+
+            price_24h = float(c.price_change_24h or 0)
+            if price_24h >= 80:
+                add(16, "价格暴涨", f"价格 {price_24h:+.1f}%")
+            elif price_24h >= 30:
+                add(10, "价格强势", f"价格 {price_24h:+.1f}%")
+            elif price_24h <= -30:
+                add(10, "价格暴跌", f"价格 {price_24h:+.1f}%")
+            elif abs(price_24h) >= 12:
+                add(5, "价格异动")
+
+            if abs(c.price_change_1h or 0) >= 10:
+                add(8, "1H急动", f"1H {c.price_change_1h:+.1f}%")
+            elif abs(c.price_change_4h or 0) >= 20:
+                add(6, "4H急动", f"4H {c.price_change_4h:+.1f}%")
+
+            fr = float(c.funding_rate_pct or c.funding_rate or 0)
+            if fr <= -0.05 or c.fr_extreme_short:
+                add(12, "极端负FR", f"FR {fr:+.4f}%")
+            elif fr >= 0.08:
+                add(8, "高正FR", f"FR {fr:+.4f}%")
+            elif abs(fr) >= 0.03:
+                add(4, "资金费率异动")
+
+            if c.retail_short_pct >= 70:
+                add(10, "散户极空", f"散户空 {c.retail_short_pct:.0f}%")
+            elif c.retail_short_pct >= 62:
+                add(6, "散户偏空")
+
+            whale_long = float(c.whale_long_ratio or 0.5)
+            if c.has_futures:
+                if whale_long >= 0.65:
+                    add(7, "大户偏多", f"大户多 {whale_long * 100:.0f}%")
+                elif whale_long <= 0.40:
+                    add(7, "大户偏空", f"大户空 {(1 - whale_long) * 100:.0f}%")
+
+            if c.okx_large_trade_pct >= 0.30:
+                add(12, "OKX大单", f"大单 {c.okx_large_trade_pct * 100:.0f}%")
+            elif c.okx_large_trade_pct >= 0.15:
+                add(6, "OKX大单")
+
+            if c.okx_buy_ratio >= 0.70:
+                add(8, "OKX买盘", f"买盘 {c.okx_buy_ratio * 100:.0f}%")
+            elif c.okx_buy_ratio <= 0.35 and c.okx_buy_ratio > 0:
+                add(6, "OKX卖压", f"买盘 {c.okx_buy_ratio * 100:.0f}%")
+
+            if c.okx_smart_money_holders >= 3:
+                add(8, "聪明钱持仓", f"聪明钱 {c.okx_smart_money_holders}")
+            elif c.okx_smart_money_holders >= 1:
+                add(4, "聪明钱")
+
+            if c.okx_top10_hold_pct >= 75:
+                add(7, "筹码集中", f"Top10 {c.okx_top10_hold_pct:.0f}%")
+            elif c.okx_top10_hold_pct >= 60:
+                add(4, "筹码集中")
+
+            if c.txs_5m_accel >= 2.0:
+                add(8, "链上Tx加速", f"Tx {c.txs_5m_accel:.1f}x")
+            elif c.txs_5m_accel >= 1.5:
+                add(4, "链上活跃")
+
+            square_heat = int(c.square_mentions or 0)
+            news_heat = len(c.surf_news_titles or [])
+            if square_heat >= 20:
+                add(12, "情绪热", f"广场 {square_heat}条")
+            elif square_heat >= 8:
+                add(8, "情绪升温", f"广场 {square_heat}条")
+            elif square_heat >= 3:
+                add(4, "情绪升温")
+
+            if news_heat >= 3:
+                add(6, "新闻密集", f"新闻 {news_heat}条")
+            elif news_heat:
+                add(2, "新闻出现")
+
+            sentiment_score = 0
+            if c.surf_news_sentiment == "positive":
+                add(6, "Surf正面")
+                sentiment_score += 30
+            elif c.surf_news_sentiment == "negative":
+                add(6, "Surf负面")
+                sentiment_score -= 35
+            if c.surf_ai_risk_level == "HIGH":
+                add(6, "Surf高风险")
+                sentiment_score -= 25
+            elif c.surf_ai_score >= 70:
+                sentiment_score += 15
+
+            sentiment_score += min(square_heat * 2, 20)
+            if c.retail_short_pct >= 62:
+                sentiment_score -= min(int(c.retail_short_pct - 55), 20)
+            if whale_long >= 0.60:
+                sentiment_score += 12
+            elif whale_long <= 0.40:
+                sentiment_score -= 12
+            if fr <= -0.05:
+                sentiment_score -= 12
+            elif fr >= 0.05:
+                sentiment_score += 8
+
+            c.sentiment_heat = square_heat + news_heat + len(c.square_posts or [])
+            c.sentiment_score = max(-100, min(100, sentiment_score))
+            if c.sentiment_score >= 20:
+                c.sentiment_label = "bullish"
+            elif c.sentiment_score <= -20:
+                c.sentiment_label = "bearish"
+            else:
+                c.sentiment_label = "neutral"
+
+            if c.has_futures:
+                long_pct = whale_long * 100
+                if abs(long_pct - 50) < 0.1 and c.retail_short_pct:
+                    long_pct = max(0.0, min(100.0, 100.0 - c.retail_short_pct))
+                c.long_short_text = f"多{long_pct:.0f}%/空{100.0 - long_pct:.0f}%"
+            else:
+                c.long_short_text = "—/—"
+
+            holder_parts: list[str] = []
+            if c.okx_top10_hold_pct:
+                holder_parts.append(f"Top10 {c.okx_top10_hold_pct:.0f}%")
+            if c.okx_dev_hold_pct:
+                holder_parts.append(f"Dev {c.okx_dev_hold_pct:.1f}%")
+            if c.okx_smart_money_holders:
+                holder_parts.append(f"聪明钱 {c.okx_smart_money_holders}")
+            c.holder_signal = " / ".join(holder_parts[:3])
+
+            if c.okx_risk_level >= 4 and "OKX高风险" not in tags:
+                tags.append("OKX高风险")
+            if c.okx_token_tags:
+                for tag in c.okx_token_tags[:2]:
+                    label = f"OKX:{tag}"
+                    if label not in tags:
+                        tags.append(label)
+
+            # OI和价格同时剧烈变化时再加一点综合分，避免单一维度误报。
+            if oi_abs >= 30 and abs(price_24h) >= 10:
+                score += 6
+            if c.has_futures and (square_heat or news_heat) and oi_abs >= 20:
+                score += 4
+
+            c.anomaly_score = max(0, min(100, int(round(score))))
+            c.anomaly_tags = tags[:8]
+            c.market_filter_note = " | ".join(reasons[:4]) or (
+                " / ".join(tags[:3]) if tags else ""
+            )
+
+            for tag in c.anomaly_tags[:4]:
+                label = f"异动:{tag}"
+                if label not in c.signals:
+                    c.signals.append(label)
 
     # ── 内部辅助 ─────────────────────────────────────────────────────────────
 

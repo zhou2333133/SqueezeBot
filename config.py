@@ -179,6 +179,7 @@ class ConfigManager:
         # 妖币扫描器
         "YAOBI_SCAN_INTERVAL":         (1,      1440),
         "YAOBI_MIN_SCORE":             (0,      100),
+        "YAOBI_MIN_ANOMALY_SCORE":     (0,      100),
         "YAOBI_SURF_TOP_N":            (1,      20),
         "YAOBI_SQUARE_ROWS":           (1,      200),
         "YAOBI_OKX_HOT_LIMIT":         (1,      100),
@@ -235,6 +236,7 @@ class ConfigManager:
             "YAOBI_ENABLED":             False,
             "YAOBI_SCAN_INTERVAL":       15,
             "YAOBI_MIN_SCORE":           30,
+            "YAOBI_MIN_ANOMALY_SCORE":   35,
             "YAOBI_CHAINS":              "eth,bsc,solana,base,arbitrum",
             "OBSIDIAN_VAULT_PATH":       r"C:\BOT\yaobi",
             "COINGLASS_API_KEY":         "",

@@ -1,6 +1,8 @@
 import unittest
 
+from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, upsert_candidate
 from scanner.sources import binance_square, okx_market
+from scanner.yaobi_scanner import YaobiScanner
 
 
 class TestYaobiSources(unittest.TestCase):
@@ -63,6 +65,43 @@ class TestYaobiSources(unittest.TestCase):
         self.assertIn("PEPE", mentions)
         self.assertIn("SOL", mentions)
         self.assertEqual(mentions["PEPE"]["count"], 1)
+
+    def test_anomaly_radar_combines_okx_futures_and_sentiment(self) -> None:
+        c = Candidate(
+            symbol="RAVE",
+            has_futures=True,
+            price_change_24h=-44.9,
+            oi_change_24h_pct=16.4,
+            square_mentions=10,
+            funding_rate_pct=0.339,
+            whale_long_ratio=0.07,
+            retail_short_pct=80.0,
+            okx_large_trade_pct=0.35,
+            okx_buy_ratio=0.75,
+            surf_news_titles=["KOL discusses RAVE", "RAVE funding turns unusual"],
+        )
+
+        YaobiScanner()._apply_anomaly_radar([c])
+
+        self.assertGreaterEqual(c.anomaly_score, 50)
+        self.assertIn("OKX大单", c.anomaly_tags)
+        self.assertIn("散户极空", c.anomaly_tags)
+        self.assertEqual(c.long_short_text, "多7%/空93%")
+        self.assertGreaterEqual(c.sentiment_heat, 12)
+
+    def test_anomaly_candidates_sorted_by_anomaly_score(self) -> None:
+        clear_candidates()
+        try:
+            low = Candidate(symbol="LOW", anomaly_score=20, score=90)
+            high = Candidate(symbol="HIGH", anomaly_score=75, score=10)
+            upsert_candidate(low)
+            upsert_candidate(high)
+
+            rows = get_anomaly_candidates(min_anomaly=30, limit=10)
+
+            self.assertEqual([r["symbol"] for r in rows], ["HIGH"])
+        finally:
+            clear_candidates()
 
 
 if __name__ == "__main__":

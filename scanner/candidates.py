@@ -92,6 +92,16 @@ class Candidate:
     txs_5m:       int   = 0
     txs_5m_accel: float = 0.0         # 近5分钟 vs 前5分钟交易数倍数
 
+    # ── 异常币/情绪雷达 ──────────────────────────────────────────────────────
+    anomaly_score:      int   = 0     # 0-100, 类 OKX market-filter 异动指数
+    anomaly_tags:       list  = field(default_factory=list)
+    sentiment_heat:     int   = 0     # 新闻/广场/Surf 综合热度
+    sentiment_score:    int   = 0     # -100~100, 偏多为正、偏空为负
+    sentiment_label:    str   = ""    # bullish / bearish / neutral
+    long_short_text:    str   = "—/—" # UI 显示: 多x%/空y%
+    holder_signal:      str   = ""    # OKX top10/dev/smart-money 摘要
+    market_filter_note: str   = ""    # 核心异动解释
+
     # ── 分类 ──────────────────────────────────────────────────────────────────
     category: str = ""   # 启动预警 / 蓄势观察 / 风险
 
@@ -164,6 +174,14 @@ class Candidate:
             "retail_short_pct":   round(self.retail_short_pct, 1),
             "txs_5m":             self.txs_5m,
             "txs_5m_accel":       round(self.txs_5m_accel, 2),
+            "anomaly_score":       self.anomaly_score,
+            "anomaly_tags":        self.anomaly_tags,
+            "sentiment_heat":      self.sentiment_heat,
+            "sentiment_score":     self.sentiment_score,
+            "sentiment_label":     self.sentiment_label,
+            "long_short_text":     self.long_short_text,
+            "holder_signal":       self.holder_signal,
+            "market_filter_note":  self.market_filter_note,
             "category":           self.category,
             "score":              self.score,
             "score_breakdown":    self.score_breakdown,
@@ -198,6 +216,25 @@ def get_sorted_candidates(min_score: int = 0, chain: str = "", source: str = "")
     if source:
         items = [x for x in items if source in x.get("sources", [])]
     return sorted(items, key=lambda x: x.get("score", 0), reverse=True)
+
+
+def get_anomaly_candidates(min_anomaly: int = 1, limit: int = 100) -> list[dict]:
+    items = [
+        x for x in candidates_map.values()
+        if x.get("anomaly_score", 0) >= min_anomaly
+    ]
+    items = sorted(
+        items,
+        key=lambda x: (
+            x.get("anomaly_score", 0),
+            abs(x.get("oi_change_24h_pct", 0) or 0),
+            abs(x.get("price_change_24h", 0) or 0),
+            x.get("sentiment_heat", 0),
+            x.get("score", 0),
+        ),
+        reverse=True,
+    )
+    return items[:limit]
 
 
 def clear_candidates() -> None:
