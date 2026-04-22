@@ -23,6 +23,11 @@ class TestConfigMigration(unittest.TestCase):
                         "BREAKOUT_MIN_PCT": 0.05,
                         "BREAKOUT_ATR_MULT": 0.5,
                         "BREAKOUT_MIN_VOL_RATIO": 0.20,
+                        "SCALP_SURF_NEWS_ENABLED": True,
+                        "SCALP_SURF_ENTRY_AI_ENABLED": True,
+                        "YAOBI_SURF_NEWS_ENABLED": True,
+                        "YAOBI_SURF_AI_ENABLED": True,
+                        "YAOBI_SURF_TOP_N": 5,
                     }, f)
 
                 manager = config.ConfigManager()
@@ -34,6 +39,11 @@ class TestConfigMigration(unittest.TestCase):
                 self.assertEqual(manager.settings["BREAKOUT_MIN_PCT"], 0.10)
                 self.assertEqual(manager.settings["BREAKOUT_ATR_MULT"], 0.7)
                 self.assertEqual(manager.settings["BREAKOUT_MIN_VOL_RATIO"], 0.50)
+                self.assertFalse(manager.settings["SCALP_SURF_NEWS_ENABLED"])
+                self.assertFalse(manager.settings["SCALP_SURF_ENTRY_AI_ENABLED"])
+                self.assertFalse(manager.settings["YAOBI_SURF_NEWS_ENABLED"])
+                self.assertFalse(manager.settings["YAOBI_SURF_AI_ENABLED"])
+                self.assertEqual(manager.settings["YAOBI_SURF_TOP_N"], 1)
                 self.assertEqual(manager.settings["SCALP_POSITION_USDT"], 10.0)
                 self.assertTrue(manager.settings["SCALP_AUTO_TRADE"])
 

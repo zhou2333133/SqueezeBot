@@ -3,7 +3,7 @@
 只做两种高确定性信号：
   1. 轧空/轧多猎杀 (Squeeze Hunter): OI暴跌 + Taker爆买/卖 → 捕捉爆仓后的反向行情
   2. 动能突破 (Trend Breakout):  MA5>MA10>MA20 + 突破前高 + Taker确认 → 右侧顺势
-架构：Binance WS (Tick驱动) + OI REST轮询(10s) + Surf新闻(5min急救平仓)
+架构：Binance WS (Tick驱动) + OI REST轮询(10s) + 可选Surf新闻/AI风控
 """
 import asyncio
 import json
@@ -148,6 +148,8 @@ class BinanceScalpBot:
         self._avg_vol:          dict[str, float]         = {}
         # 平仓后继续观察，用于判断卖飞/方向是否选对（不额外 REST 调用）
         self._post_exit_watch:   dict[str, list]          = {}
+        # Surf 成本控制：后台新闻扫描按配置限频，默认关闭。
+        self._last_surf_news_scan_at: float                = 0.0
         # OI暖机截止时间（首轮OI就绪后静默60秒，防信号井喷）
         self._oi_warmup_until:  float                    = 0.0
         # 过滤统计（每5分钟输出）
@@ -522,10 +524,25 @@ class BinanceScalpBot:
     # ─── Surf 新闻扫描 + 急救平仓 ─────────────────────────────────────────────
 
     async def _surf_news_scan(self, symbols: list[str]) -> None:
-        """每5分钟批量扫描新闻，更新 candidate_meta[sym]['news_sentiment']"""
+        """按配置低频扫描少量高风险币新闻，更新 candidate_meta[sym]['news_sentiment']。"""
+        if not self.cfg.get("SCALP_SURF_NEWS_ENABLED", False):
+            record_provider_skip("surf", "news/feed", "scalp_surf_news_disabled", items=len(symbols))
+            return
         if not configured_surf_keys():
             record_provider_skip("surf", "news/feed", "missing_surf_api_key", items=len(symbols))
             return
+
+        now = time.monotonic()
+        interval = float(self.cfg.get("SCALP_SURF_NEWS_INTERVAL_MINUTES", 60) or 60) * 60
+        if self._last_surf_news_scan_at and now - self._last_surf_news_scan_at < interval:
+            record_provider_skip("surf", "news/feed", "scalp_surf_news_interval")
+            return
+
+        target_symbols = self._surf_news_target_symbols(symbols)
+        if not target_symbols:
+            record_provider_skip("surf", "news/feed", "scalp_surf_no_targets", items=len(symbols))
+            return
+        self._last_surf_news_scan_at = now
 
         NEG = {"hack","exploit","rug","scam","delist","suspend","crash","fraud","lawsuit","ponzi"}
         POS = {"partnership","listing","upgrade","adoption","mainnet","launch","integration","backed"}
@@ -547,7 +564,7 @@ class BinanceScalpBot:
 
         lookup_terms: list[str] = []
         fallback_searches = 0
-        for sym in symbols:
+        for sym in target_symbols:
             lookup_terms.extend(surf_project_terms(sym, self.candidate_meta.get(sym, {}).get("name", ""))[:2])
         lookup_terms = list(dict.fromkeys(lookup_terms))
 
@@ -558,7 +575,7 @@ class BinanceScalpBot:
         if not items:
             return
 
-        for sym in symbols:
+        for sym in target_symbols:
             meta = self.candidate_meta.get(sym)
             if not meta:
                 continue
@@ -588,8 +605,33 @@ class BinanceScalpBot:
             meta["news_sentiment"] = sentiment
             meta["surf_news_titles"] = [item.get("title", "") for item in matched[:3]]
 
+    def _surf_news_target_symbols(self, symbols: list[str]) -> list[str]:
+        top_n = int(self.cfg.get("SCALP_SURF_NEWS_TOP_N", 8) or 8)
+        open_set = set(self.open_positions.keys())
+
+        def _priority(sym: str) -> tuple:
+            meta = self.candidate_meta.get(sym, {})
+            change = abs(float(meta.get("change_24h", 0.0) or 0.0))
+            bias_score = 1 if meta.get("direction_bias") != "ANY" else 0
+            fr_score = 1 if meta.get("fr_squeeze") else 0
+            rank = int(meta.get("rank", 9999) or 9999)
+            return (1 if sym in open_set else 0, fr_score, bias_score, change, -rank)
+
+        eligible = [
+            sym for sym in symbols
+            if sym in open_set
+            or abs(float(self.candidate_meta.get(sym, {}).get("change_24h", 0.0) or 0.0)) >= 30
+            or self.candidate_meta.get(sym, {}).get("direction_bias") != "ANY"
+            or self.candidate_meta.get(sym, {}).get("fr_squeeze")
+        ]
+        eligible.sort(key=_priority, reverse=True)
+        return eligible[:max(1, top_n)]
+
     async def _surf_entry_check(self, symbol: str, direction: str, price: float) -> tuple[bool, int, str]:
         """仅极端行情（24h涨跌 > ±30%）调用 Surf AI 深度审查，普通行情直接放行"""
+        if not self.cfg.get("SCALP_SURF_ENTRY_AI_ENABLED", False):
+            record_provider_skip("surf", "chat/completions", "scalp_entry_ai_disabled")
+            return True, 100, "Surf AI关闭"
         if not configured_surf_keys():
             record_provider_skip("surf", "chat/completions", "missing_surf_api_key")
             return True, 100, "未配置"
@@ -598,7 +640,8 @@ class BinanceScalpBot:
         change_24h = meta.get("change_24h", 0.0)
         vol_24h    = meta.get("volume_24h", 0.0)
 
-        if abs(change_24h) < 30:
+        min_abs_change = float(self.cfg.get("SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE", 80.0) or 80.0)
+        if abs(change_24h) < min_abs_change:
             return True, 100, "正常行情跳过"
 
         buf   = self.kline_buffer.get(symbol, [])

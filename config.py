@@ -143,7 +143,7 @@ def okx_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 20260422
+    PROFILE_VERSION = 2026042202
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -175,7 +175,16 @@ class ConfigManager:
         "SIGNAL_COOLDOWN_SECONDS": 30,
         "OI_POLL_INTERVAL": 10,
         "BTC_GUARD_PCT": 2.0,
-        "YAOBI_SURF_TOP_N": 5,
+        "SCALP_SURF_NEWS_ENABLED": False,
+        "SCALP_SURF_NEWS_INTERVAL_MINUTES": 60,
+        "SCALP_SURF_NEWS_TOP_N": 8,
+        "SCALP_SURF_ENTRY_AI_ENABLED": False,
+        "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": 80.0,
+        "YAOBI_SURF_NEWS_ENABLED": False,
+        "YAOBI_SURF_NEWS_TOP_N": 20,
+        "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
+        "YAOBI_SURF_AI_ENABLED": False,
+        "YAOBI_SURF_TOP_N": 1,
         "YAOBI_OKX_HOT_LIMIT": 50,
         "YAOBI_OKX_HEAVY_TOP_N": 40,
         "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
@@ -219,11 +228,16 @@ class ConfigManager:
         "SIGNAL_COOLDOWN_SECONDS":     (1,      60),
         "OI_POLL_INTERVAL":            (5,      60),
         "BTC_GUARD_PCT":               (0.1,    10.0),
+        "SCALP_SURF_NEWS_INTERVAL_MINUTES": (5, 1440),
+        "SCALP_SURF_NEWS_TOP_N":       (1,      50),
+        "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": (0.0, 500.0),
         # 妖币扫描器
         "YAOBI_SCAN_INTERVAL":         (1,      1440),
         "YAOBI_MIN_SCORE":             (0,      100),
         "YAOBI_MIN_ANOMALY_SCORE":     (0,      100),
         "YAOBI_SURF_TOP_N":            (1,      20),
+        "YAOBI_SURF_NEWS_TOP_N":       (1,      100),
+        "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": (0, 20),
         "YAOBI_SQUARE_ROWS":           (1,      200),
         "YAOBI_OKX_HOT_LIMIT":         (1,      100),
         "YAOBI_OKX_HEAVY_TOP_N":       (1,      120),
@@ -279,6 +293,12 @@ class ConfigManager:
             "SIGNAL_COOLDOWN_SECONDS":   30,
             "OI_POLL_INTERVAL":          10,
             "BTC_GUARD_PCT":             2.0,
+            # Surf 成本控制：默认关闭后台/AI 调用，需要时在 UI 手动开启。
+            "SCALP_SURF_NEWS_ENABLED":    False,
+            "SCALP_SURF_NEWS_INTERVAL_MINUTES": 60,
+            "SCALP_SURF_NEWS_TOP_N":      8,
+            "SCALP_SURF_ENTRY_AI_ENABLED": False,
+            "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": 80.0,
             # ── 妖币扫描器 ────────────────────────────────────────────────────
             "YAOBI_ENABLED":             False,
             "YAOBI_SCAN_INTERVAL":       15,
@@ -288,7 +308,11 @@ class ConfigManager:
             "OBSIDIAN_VAULT_PATH":       r"C:\BOT\yaobi",
             "COINGLASS_API_KEY":         "",
             "YAOBI_SURF_ENABLED":        True,
-            "YAOBI_SURF_TOP_N":          5,
+            "YAOBI_SURF_NEWS_ENABLED":   False,
+            "YAOBI_SURF_NEWS_TOP_N":     20,
+            "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
+            "YAOBI_SURF_AI_ENABLED":     False,
+            "YAOBI_SURF_TOP_N":          1,
             "YAOBI_SQUARE_ENABLED":      True,
             "YAOBI_SQUARE_ROWS":         50,
             "YAOBI_OKX_ENABLED":         True,

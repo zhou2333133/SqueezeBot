@@ -193,14 +193,34 @@ class YaobiScanner:
                 }
 
             # ── 6. Surf 新闻预过滤 ───────────────────────────────────────────
-            if _surf_enabled() and config_manager.settings.get("YAOBI_SURF_ENABLED", True):
-                cand_list = list(candidates.values())
-                cand_list = await self._surf_news_filter(session, cand_list)
-                # Rebuild dict from filtered list
-                removed = set(candidates.keys()) - {c.key() for c in cand_list}
+            if (_surf_enabled()
+                    and config_manager.settings.get("YAOBI_SURF_ENABLED", True)
+                    and config_manager.settings.get("YAOBI_SURF_NEWS_ENABLED", False)):
+                all_cand_list = list(candidates.values())
+                news_top_n = int(config_manager.settings.get("YAOBI_SURF_NEWS_TOP_N", 20))
+                news_targets = sorted(
+                    all_cand_list,
+                    key=lambda c: (
+                        abs(c.price_change_24h or 0.0),
+                        c.square_mentions,
+                        c.gecko_trend_rank > 0,
+                        c.dex_boost_rank > 0,
+                    ),
+                    reverse=True,
+                )[:max(1, news_top_n)]
+                kept_targets = await self._surf_news_filter(session, news_targets)
+                removed = {c.key() for c in news_targets} - {c.key() for c in kept_targets}
                 for k in removed:
                     candidates.pop(k, None)
-                logger.info("🔍 Surf新闻过滤: 剩余 %d 个候选 (淘汰 %d 个负面)", len(cand_list), len(removed))
+                scan_status["sources"]["surf_news"] = {
+                    "count": len(news_targets), "last_run": start.strftime("%H:%M"),
+                }
+                logger.info("🔍 Surf新闻过滤: 审查%d个 剩余%d个候选 (淘汰%d个负面)",
+                            len(news_targets), len(candidates), len(removed))
+            else:
+                scan_status["sources"]["surf_news"] = {
+                    "count": 0, "last_run": start.strftime("%H:%M"), "disabled": True,
+                }
 
             # ── 7. OKX Market 价格批量补全 ───────────────────────────────────
             enriched = 0
@@ -370,8 +390,11 @@ class YaobiScanner:
         scored.sort(key=lambda x: x.score, reverse=True)
 
         # ── 14. Surf AI 终审 (Top-N) ─────────────────────────────────────────
-        surf_top_n = int(config_manager.settings.get("YAOBI_SURF_TOP_N", 5))
-        if _surf_enabled() and config_manager.settings.get("YAOBI_SURF_ENABLED", True) and scored:
+        surf_top_n = int(config_manager.settings.get("YAOBI_SURF_TOP_N", 1))
+        if (_surf_enabled()
+                and config_manager.settings.get("YAOBI_SURF_ENABLED", True)
+                and config_manager.settings.get("YAOBI_SURF_AI_ENABLED", False)
+                and scored):
             top_candidates = [c for c in scored[:surf_top_n] if c.score >= 55]
             if top_candidates:
                 async with aiohttp.ClientSession(trust_env=True) as session:
@@ -462,6 +485,7 @@ class YaobiScanner:
             items.extend(await surf_fetch_news_feed(session, projects=chunk, limit=50))
             await asyncio.sleep(0.05)
 
+        fallback_limit = int(config_manager.settings.get("YAOBI_SURF_FALLBACK_SEARCH_LIMIT", 3))
         fallback_searches = 0
         for c in candidates:
             matched = [
@@ -469,7 +493,7 @@ class YaobiScanner:
                 if surf_news_matches_symbol(item, c.symbol, c.name)
             ][:5]
             if (not matched
-                    and fallback_searches < 20
+                    and fallback_searches < fallback_limit
                     and (abs(c.price_change_24h or 0.0) >= 30 or c.square_mentions >= 8)):
                 query = " ".join(surf_project_terms(c.symbol, c.name)[:2])
                 matched = await surf_search_news(session, query)

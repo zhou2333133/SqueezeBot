@@ -103,6 +103,11 @@ class TestScalpReport(unittest.TestCase):
             "突破ATR最小%",
             "突破ATR最大%",
             "当前K量比阈值",
+            "Surf后台新闻",
+            "Surf新闻间隔分钟",
+            "Surf新闻TopN",
+            "Surf入场AI",
+            "Surf入场AI涨跌阈值%",
         }
         self.assertTrue(expected_keys.issubset(snapshot.keys()))
         self.assertNotIn("活跃振幅%", snapshot)

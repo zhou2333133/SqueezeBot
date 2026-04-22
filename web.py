@@ -461,6 +461,11 @@ async def get_scalp_report():
             "突破ATR最小%":      cfg.get("BREAKOUT_ATR_MIN_PCT"),
             "突破ATR最大%":      cfg.get("BREAKOUT_ATR_MAX_PCT"),
             "当前K量比阈值":     cfg.get("BREAKOUT_MIN_VOL_RATIO"),
+            "Surf后台新闻":      cfg.get("SCALP_SURF_NEWS_ENABLED"),
+            "Surf新闻间隔分钟":   cfg.get("SCALP_SURF_NEWS_INTERVAL_MINUTES"),
+            "Surf新闻TopN":      cfg.get("SCALP_SURF_NEWS_TOP_N"),
+            "Surf入场AI":       cfg.get("SCALP_SURF_ENTRY_AI_ENABLED"),
+            "Surf入场AI涨跌阈值%": cfg.get("SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE"),
         },
         "整体统计": {
             "总成交笔数":  total,
