@@ -91,6 +91,15 @@ def score(c: Candidate) -> Candidate:
 
     # ── 8. OI & 合约信号 (最高 55) ──────────────────────────────────────────
     oi_pts = 0
+    if c.oi_trend_grade == "S":
+        oi_pts += 20; sigs.append(f"S级OI趋势 7D+{c.oi_change_7d_pct:.0f}% / 3D+{c.oi_change_3d_pct:.0f}%")
+    elif c.oi_trend_grade == "A":
+        oi_pts += 12; sigs.append(f"A级OI趋势 7D+{c.oi_change_7d_pct:.0f}%")
+    elif c.oi_trend_grade == "B":
+        oi_pts += 6; sigs.append(f"B级OI趋势 7D+{c.oi_change_7d_pct:.0f}%")
+    elif c.oi_trend_grade == "RISK":
+        oi_pts -= 8; sigs.append("⚠ OI趋势转弱")
+
     if c.oi_change_24h_pct >= 150:
         oi_pts += 25; sigs.append(f"OI日增+{c.oi_change_24h_pct:.0f}%")
     elif c.oi_change_24h_pct >= 80:
@@ -189,6 +198,9 @@ def score(c: Candidate) -> Candidate:
     if c.oi_change_24h_pct < -15 and c.price_change_24h > 10:
         deduct += 20; sigs.append("⚠ OI↓价格↑(庄家出货)")
 
+    if c.oi_trend_grade == "RISK":
+        deduct += 12
+
     # Surf AI 高风险裁决
     if c.surf_ai_risk_level == "HIGH":
         deduct += 30; sigs.append(f"⚠ SurfAI高风险: {c.surf_ai_reason}")
@@ -223,13 +235,17 @@ def score(c: Candidate) -> Candidate:
         risk_flag = (
             whale_s >= 60
             or c.short_crowd_pct >= 68
+            or c.oi_trend_grade == "RISK"
             or (c.oi_change_24h_pct < -15 and c.price_change_24h > 10)
         )
         if risk_flag:
             c.category = "风险"
+        elif c.oi_trend_grade == "S":
+            c.category = "启动预警"
         elif c.oi_change_24h_pct >= 80 and c.volume_ratio >= 10:
             c.category = "启动预警"
         elif (
+            c.oi_trend_grade in {"A", "B"} or
             (c.oi_flat_days >= 7 and c.volume_ratio >= 3)
             or c.oi_acceleration >= 20
             or (c.oi_change_24h_pct >= 40 and c.volume_ratio >= 5)

@@ -93,8 +93,13 @@ async def _analyze_symbol(
             "has_signal":         False,
             "has_futures":        True,
             "oi_change_24h_pct":  0.0,
+            "oi_change_3d_pct":   0.0,
+            "oi_change_7d_pct":   0.0,
             "oi_acceleration":    0.0,
             "oi_flat_days":       0,
+            "oi_trend_grade":     "",
+            "oi_consistency_score": 0,
+            "ema_deviation_pct":  0.0,
             "volume_ratio":       1.0,
             "whale_long_ratio":   0.5,
             "short_crowd_pct":    50.0,
@@ -112,6 +117,7 @@ async def _analyze_symbol(
         oi_24h  = float(oi_hist_4h[-1 - lookback]["sumOpenInterest"])
         oi_change_24h = (oi_now - oi_24h) / oi_24h * 100 if oi_24h > 0 else 0.0
         result["oi_change_24h_pct"] = round(oi_change_24h, 1)
+        result.update(_calc_oi_trend_fields(oi_hist_4h, klines_1d))
 
         # ── OI 加速 (近4h vs 前4h) ────────────────────────────────────────────
         if len(oi_hist_4h) >= 3:
@@ -164,12 +170,29 @@ async def _analyze_symbol(
         is_launch = is_accum = is_risk = False
 
         oi_chg = result["oi_change_24h_pct"]
+        oi_3d = result["oi_change_3d_pct"]
+        oi_7d = result["oi_change_7d_pct"]
+        oi_grade = result["oi_trend_grade"]
         v_ratio = result["volume_ratio"]
         flat_d  = result["oi_flat_days"]
         accel   = result["oi_acceleration"]
         whale_s = (1 - result["whale_long_ratio"]) * 100   # short%
         short_c = result["short_crowd_pct"]
         price_c = result["price_change_24h"]
+
+        # OI日增
+        if oi_grade == "S":
+            sigs.append(f"S级OI趋势 7D+{oi_7d:.0f}% / 3D+{oi_3d:.0f}%")
+            is_launch = True
+        elif oi_grade == "A":
+            sigs.append(f"A级OI趋势 7D+{oi_7d:.0f}% / 3D+{oi_3d:.0f}%")
+            is_accum = True
+        elif oi_grade == "B":
+            sigs.append(f"B级OI趋势 7D+{oi_7d:.0f}%")
+            is_accum = True
+        elif oi_grade == "RISK":
+            sigs.append("OI趋势风险")
+            is_risk = True
 
         # OI日增
         if oi_chg >= 80:
@@ -263,6 +286,78 @@ def _calc_flat_days(oi_hist_4h: list) -> int:
         else:
             break
     return flat
+
+
+def _pct_change(now: float, before: float) -> float:
+    return (now - before) / before * 100 if before > 0 else 0.0
+
+
+def _ema(values: list[float], period: int) -> float:
+    if not values:
+        return 0.0
+    k = 2 / (period + 1)
+    ema = values[0]
+    for v in values[1:]:
+        ema = v * k + ema * (1 - k)
+    return ema
+
+
+def _calc_oi_trend_fields(oi_hist_4h: list, klines_1d: list) -> dict:
+    """输出关注层用的 OI 趋势等级；不直接参与交易信号。"""
+    result = {
+        "oi_change_3d_pct": 0.0,
+        "oi_change_7d_pct": 0.0,
+        "oi_trend_grade": "C",
+        "oi_consistency_score": 0,
+        "ema_deviation_pct": 0.0,
+    }
+    if not isinstance(oi_hist_4h, list) or len(oi_hist_4h) < 7:
+        return result
+
+    values = [float(x.get("sumOpenInterest", 0) or 0) for x in oi_hist_4h]
+    now = values[-1]
+    if now <= 0:
+        return result
+
+    idx_3d = max(0, len(values) - 1 - 18)
+    idx_7d = max(0, len(values) - 1 - 42)
+    result["oi_change_3d_pct"] = round(_pct_change(now, values[idx_3d]), 1)
+    result["oi_change_7d_pct"] = round(_pct_change(now, values[idx_7d]), 1)
+
+    recent_steps = values[max(1, len(values) - 18):]
+    prev_steps = values[max(0, len(values) - 19):-1]
+    up_count = sum(1 for prev, cur in zip(prev_steps, recent_steps) if prev > 0 and cur > prev)
+    total_steps = max(1, min(len(prev_steps), len(recent_steps)))
+    consistency = int(round(up_count / total_steps * 100))
+    result["oi_consistency_score"] = consistency
+
+    closes: list[float] = []
+    if isinstance(klines_1d, list):
+        for k in klines_1d[-10:]:
+            try:
+                closes.append(float(k[4]))
+            except Exception:
+                continue
+    if len(closes) >= 3:
+        ema_val = _ema(closes, min(7, len(closes)))
+        if ema_val > 0:
+            result["ema_deviation_pct"] = round((closes[-1] - ema_val) / ema_val * 100, 2)
+
+    oi_3d = result["oi_change_3d_pct"]
+    oi_7d = result["oi_change_7d_pct"]
+    ema_dev = result["ema_deviation_pct"]
+    if oi_7d >= 80 and oi_3d >= 30 and consistency >= 60 and ema_dev >= 0:
+        grade = "S"
+    elif oi_7d >= 40 and oi_3d >= 15 and consistency >= 50:
+        grade = "A"
+    elif oi_7d >= 15 and oi_3d >= 0:
+        grade = "B"
+    elif oi_7d <= -25 or (oi_3d < -10 and ema_dev < -5):
+        grade = "RISK"
+    else:
+        grade = "C"
+    result["oi_trend_grade"] = grade
+    return result
 
 
 # ── API helpers ───────────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #2a2a50; border-radius: 4px; }
   .terminal { font-family: 'Consolas','Courier New',monospace; font-size: 11.5px; line-height: 1.65; }
-  .card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: 14px; }
+  .card { background: var(--c-card); border: 1px solid var(--c-border); border-radius: 8px; }
   .glow-blue  { box-shadow: 0 0 28px rgba(59,130,246,.1); }
   .glow-orange{ box-shadow: 0 0 28px rgba(249,115,22,.1); }
   .score-fill { transition: width .5s cubic-bezier(.4,0,.2,1); }
@@ -52,6 +52,14 @@
   .sc-square  { background:rgba(234,179,8,.2); color:#fbbf24; }
   .sc-okx     { background:rgba(59,130,246,.2); color:#93c5fd; }
   .sc-futures { background:rgba(239,68,68,.15); color:#fca5a5; }
+  .decision-allow { background:rgba(34,197,94,.15); color:#4ade80; border:1px solid rgba(34,197,94,.25); }
+  .decision-wait  { background:rgba(234,179,8,.15); color:#facc15; border:1px solid rgba(234,179,8,.25); }
+  .decision-ban   { background:rgba(239,68,68,.14); color:#f87171; border:1px solid rgba(239,68,68,.25); }
+  .decision-watch { background:rgba(59,130,246,.12); color:#93c5fd; border:1px solid rgba(59,130,246,.22); }
+  .grade-s { color:#facc15; }
+  .grade-a { color:#4ade80; }
+  .grade-b { color:#93c5fd; }
+  .grade-risk { color:#f87171; }
 </style>
 </head>
 <body x-data="app()" x-cloak>
@@ -170,6 +178,48 @@
         x-text="'OI轮询 '+(cfg.OI_POLL_INTERVAL??10)+'s | 冷却 '+(cfg.SIGNAL_COOLDOWN_SECONDS??30)+'s'"></div>
       <div class="text-xs text-gray-600 mt-1"
         x-text="'SQ Taker≥'+Math.round((cfg.SQUEEZE_TAKER_MIN??0.65)*100)+'% | BO Taker≥'+Math.round((cfg.BREAKOUT_TAKER_MIN??0.62)*100)+'%'"></div>
+    </div>
+  </div>
+
+  <div class="card p-4" x-show="scalpEquity.trades>0">
+    <div class="flex items-center justify-between gap-3 mb-3">
+      <div class="text-sm font-semibold text-orange-300">净值与成本</div>
+      <div class="text-xs text-gray-600" x-text="'基于 '+scalpEquity.trades+' 笔已平仓'"></div>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div>
+        <div class="text-[10px] text-gray-600 uppercase">Realized</div>
+        <div class="text-lg font-bold" :class="scalpEquity.realized_pnl_usdt>=0?'text-green-400':'text-red-400'"
+          x-text="fmtUsdt(scalpEquity.realized_pnl_usdt)"></div>
+      </div>
+      <div>
+        <div class="text-[10px] text-gray-600 uppercase">Max DD</div>
+        <div class="text-lg font-bold text-red-300"
+          x-text="(scalpEquity.max_drawdown_usdt||0).toFixed(2)+'U / '+(scalpEquity.max_drawdown_r||0).toFixed(2)+'R'"></div>
+      </div>
+      <div>
+        <div class="text-[10px] text-gray-600 uppercase">Cost</div>
+        <div class="text-lg font-bold text-yellow-300"
+          x-text="(scalpEquity.total_cost_usdt||0).toFixed(2)+'U'"></div>
+        <div class="text-[10px] text-gray-700" x-text="'毛利占比 '+(scalpEquity.cost_to_gross_profit_pct||0).toFixed(1)+'%'"></div>
+      </div>
+      <div>
+        <div class="text-[10px] text-gray-600 uppercase">Streak</div>
+        <div class="text-lg font-bold" :class="(scalpEquity.current_loss_streak||0)>=3?'text-red-400':'text-gray-300'"
+          x-text="'当前'+(scalpEquity.current_loss_streak||0)+' / 最大'+(scalpEquity.max_loss_streak||0)"></div>
+      </div>
+      <div>
+        <div class="text-[10px] text-gray-600 uppercase">Exit Mix</div>
+        <div class="text-lg font-bold text-gray-300"
+          x-text="'TP3 '+(scalpEquity.tp3_count||0)+' / SL '+(scalpEquity.sl_count||0)"></div>
+      </div>
+    </div>
+    <div class="mt-3 flex items-end gap-0.5 h-10 overflow-hidden">
+      <template x-for="p in (scalpEquity.points||[]).slice(-80)" :key="p.n">
+        <div class="flex-1 min-w-[2px] rounded-t"
+          :class="p.equity>=0?'bg-green-500/60':'bg-red-500/60'"
+          :style="'height:'+equityBarHeight(p.equity)+'%'"></div>
+      </template>
     </div>
   </div>
 
@@ -442,6 +492,14 @@
               <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.cooldown??0"></span>
             </div>
             <div class="flex items-center gap-2">
+              <span class="text-gray-500 w-20 shrink-0">人工禁入</span>
+              <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
+                <div class="h-full bg-red-800/70 rounded-full"
+                  :style="'width:'+Math.min((scalpFilterStats.manual_block/Math.max(scalpFilterStats.checked,1)*100),100)+'%'"></div>
+              </div>
+              <span class="text-gray-400 w-10 text-right" x-text="scalpFilterStats.manual_block??0"></span>
+            </div>
+            <div class="flex items-center gap-2">
               <span class="text-gray-500 w-20 shrink-0">BTC大盘</span>
               <div class="flex-1 h-1.5 bg-[#1a1a30] rounded-full overflow-hidden">
                 <div class="h-full bg-red-700/60 rounded-full"
@@ -633,6 +691,8 @@
             <th class="text-right px-4 py-2 font-medium">平仓价</th>
             <th class="text-right px-4 py-2 font-medium">盈亏</th>
             <th class="text-center px-4 py-2 font-medium">原因</th>
+            <th class="text-right px-4 py-2 font-medium">MFE/后续</th>
+            <th class="text-center px-4 py-2 font-medium">状态</th>
             <th class="text-center px-4 py-2 font-medium">类型</th>
           </tr>
         </thead>
@@ -655,6 +715,14 @@
                 <span class="px-2 py-0.5 rounded text-xs font-semibold"
                   :class="['TP2','TP3'].includes(t.close_reason)?'bg-green-500/20 text-green-300':t.close_reason==='SL_保本'?'bg-blue-500/20 text-blue-300':['时间止损','TP2超时'].includes(t.close_reason)?'bg-yellow-500/20 text-yellow-300':'bg-red-500/20 text-red-400'"
                   x-text="t.close_reason"></span>
+              </td>
+              <td class="px-4 py-2 text-right font-mono">
+                <div class="text-green-400" x-text="fmtPct(t.mfe_pct,2)"></div>
+                <div class="text-gray-600" x-text="t.post_exit_mfe_pct!=null?'后 '+fmtPct(t.post_exit_mfe_pct,2):'后 —'"></div>
+              </td>
+              <td class="px-4 py-2 text-center">
+                <span class="text-xs px-1.5 py-0.5 rounded bg-[#1a1a30] text-gray-400"
+                  x-text="t.market_state||'UNKNOWN'"></span>
               </td>
               <td class="px-4 py-2 text-center">
                 <span class="text-xs px-1.5 py-0.5 rounded" :class="t.paper?'bg-gray-700 text-gray-400':'bg-orange-900/40 text-orange-400'"
@@ -714,7 +782,7 @@
   </div>
 
   <!-- Stats Row -->
-  <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
+  <div class="grid grid-cols-2 sm:grid-cols-6 gap-4">
     <div class="card p-4">
       <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">候选总数</div>
       <div class="text-2xl font-bold text-green-400" x-text="yaobiCandidates.length"></div>
@@ -732,6 +800,12 @@
       <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">异常币雷达</div>
       <div class="text-2xl font-bold text-orange-400" x-text="yaobiCandidates.filter(c=>(c.anomaly_score||0)>=(yaobiStatus.min_anomaly||35)).length"></div>
       <div class="text-xs text-gray-600 mt-0.5" x-text="'阈值 '+(yaobiStatus.min_anomaly||cfg.YAOBI_MIN_ANOMALY_SCORE||35)"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">OI趋势 S/A</div>
+      <div class="text-2xl font-bold text-cyan-300"
+        x-text="yaobiCandidates.filter(c=>['S','A'].includes(c.oi_trend_grade)).length"></div>
+      <div class="text-xs text-gray-600 mt-0.5">合约关注层</div>
     </div>
     <div class="card p-4">
       <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">最低评分</div>
@@ -797,6 +871,8 @@
                 <input class="inp mt-1" type="number" name="YAOBI_OKX_PRICE_BATCH_SIZE" :value="cfg.YAOBI_OKX_PRICE_BATCH_SIZE??100" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">OKX 请求间隔秒</label>
                 <input class="inp mt-1" type="number" step="0.05" name="OKX_MIN_REQUEST_INTERVAL" :value="cfg.OKX_MIN_REQUEST_INTERVAL??0.2" style="border-color:#1a3a2a"></div>
+              <div><label class="text-xs text-gray-500">合约OI扫描 Top N</label>
+                <input class="inp mt-1" type="number" name="YAOBI_FUTURES_TOP_N" :value="cfg.YAOBI_FUTURES_TOP_N??120" style="border-color:#1a3a2a"></div>
             </div>
             <div class="mt-3">
               <label class="text-xs text-gray-500">监控链 (逗号分隔)</label>
@@ -865,6 +941,55 @@
             </div>
           </template>
           <div x-show="!Object.keys(yaobiStatus.provider_metrics||{}).length" class="text-gray-700 text-xs text-center py-2">暂无 API 调用记录</div>
+        </div>
+      </div>
+
+      <!-- Manual Watchlist -->
+      <div class="card p-4" style="border-color:rgba(59,130,246,.18)">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-xs font-semibold text-blue-300 uppercase tracking-wider">我的关注</div>
+          <span class="text-xs text-gray-600" x-text="watchlist.length+' 个'"></span>
+        </div>
+        <form @submit.prevent="addWatch(watchForm.symbol, watchForm.status, watchForm.reason)" class="grid grid-cols-5 gap-2">
+          <input class="inp col-span-2 text-xs" x-model="watchForm.symbol" placeholder="BAS / BTCUSDT">
+          <select class="inp col-span-2 text-xs" x-model="watchForm.status">
+            <option value="观察">观察</option>
+            <option value="等待确认">等待确认</option>
+            <option value="允许交易">允许交易</option>
+            <option value="禁止交易">禁止交易</option>
+            <option value="只看不做">只看不做</option>
+          </select>
+          <button class="rounded-lg bg-blue-700 hover:bg-blue-600 text-white text-xs font-bold" type="submit">添加</button>
+          <input class="inp col-span-5 text-xs" x-model="watchForm.reason" placeholder="关注原因 / 风险备注">
+        </form>
+        <div class="mt-3 space-y-2 max-h-72 overflow-y-auto">
+          <div x-show="watchlist.length===0" class="text-xs text-gray-700 text-center py-3">暂无手动关注</div>
+          <template x-for="item in watchlist.slice(0,12)" :key="item.symbol">
+            <div class="rounded-lg border border-[#1c1c38] bg-[#08081c] p-2">
+              <div class="flex items-center justify-between gap-2">
+                <div class="font-bold text-white text-sm" x-text="item.symbol"></div>
+                <button @click="removeWatch(item.symbol)" class="text-xs text-gray-600 hover:text-red-400">移除</button>
+              </div>
+              <div class="mt-1 flex items-center gap-1.5 flex-wrap">
+                <select class="inp text-[11px] py-1 w-auto min-w-[92px]" x-model="item.status" @change="updateWatchStatus(item)">
+                  <option value="观察">观察</option>
+                  <option value="等待确认">等待确认</option>
+                  <option value="允许交易">允许交易</option>
+                  <option value="禁止交易">禁止交易</option>
+                  <option value="只看不做">只看不做</option>
+                </select>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10"
+                  :class="gradeClass(item.latest_oi_grade)"
+                  x-text="item.latest_oi_grade?'OI '+item.latest_oi_grade:'OI —'"></span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-300"
+                  x-text="'异动 '+(item.latest_anomaly_score||0)"></span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded"
+                  :class="decisionClass(item.latest_decision_action)"
+                  x-text="item.latest_decision_action||'观察'"></span>
+              </div>
+              <div class="text-[11px] text-gray-600 mt-1 truncate" x-text="item.reason||item.latest_decision_note||'—'"></div>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -948,6 +1073,7 @@
         <select x-model="yaobiSort" @change="sortCandidates()" class="text-xs bg-[#0c0c1e] border border-[#1c1c38] rounded-lg px-3 py-1.5 text-gray-400 outline-none">
           <option value="score">按评分</option>
           <option value="anomaly">按异动指数</option>
+          <option value="oiTrend">按OI趋势</option>
           <option value="volume">按成交量</option>
           <option value="change">按涨幅</option>
           <option value="oi">按OI变化</option>
@@ -959,6 +1085,55 @@
         <div class="text-4xl mb-3">🔍</div>
         <div>暂无候选币种，启动扫描器后自动更新</div>
       </div>
+
+      <!-- ── OI趋势榜：只用于关注层分层 ─────────────────────────────────── -->
+      <template x-if="oiTrendCandidates().length>0">
+        <div class="card p-4" style="border-color:rgba(34,211,238,.18)">
+          <div class="flex items-center justify-between gap-3 mb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-bold text-cyan-300">OI趋势榜</span>
+              <span class="text-xs text-cyan-300/70 bg-cyan-500/10 px-2 py-0.5 rounded-full"
+                x-text="oiTrendCandidates().length"></span>
+            </div>
+            <span class="text-xs text-gray-600">S/A 优先，B 只观察，RISK 禁止</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead class="text-gray-600 border-b border-[#1c1c38]">
+                <tr>
+                  <th class="text-left py-2 pr-3 font-medium">币种</th>
+                  <th class="text-center py-2 px-3 font-medium">等级</th>
+                  <th class="text-right py-2 px-3 font-medium">7D OI</th>
+                  <th class="text-right py-2 px-3 font-medium">3D OI</th>
+                  <th class="text-right py-2 px-3 font-medium">一致性</th>
+                  <th class="text-right py-2 px-3 font-medium">EMA偏离</th>
+                  <th class="text-center py-2 px-3 font-medium">动作</th>
+                  <th class="text-left py-2 pl-3 font-medium">解释</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="c in oiTrendCandidates()" :key="'oi-'+(c.key||c.symbol)">
+                  <tr class="border-b border-[#111126] hover:bg-cyan-500/5 transition-colors">
+                    <td class="py-2 pr-3 font-bold text-white" x-text="c.symbol"></td>
+                    <td class="py-2 px-3 text-center font-black" :class="gradeClass(c.oi_trend_grade)" x-text="c.oi_trend_grade"></td>
+                    <td class="py-2 px-3 text-right font-mono" :class="(c.oi_change_7d_pct||0)>=0?'text-green-400':'text-red-400'" x-text="fmtPct(c.oi_change_7d_pct)"></td>
+                    <td class="py-2 px-3 text-right font-mono" :class="(c.oi_change_3d_pct||0)>=0?'text-green-400':'text-red-400'" x-text="fmtPct(c.oi_change_3d_pct)"></td>
+                    <td class="py-2 px-3 text-right text-gray-300" x-text="(c.oi_consistency_score||0)+'%'"></td>
+                    <td class="py-2 px-3 text-right font-mono" :class="(c.ema_deviation_pct||0)>=0?'text-green-400':'text-red-400'" x-text="fmtPct(c.ema_deviation_pct,2)"></td>
+                    <td class="py-2 px-3 text-center">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded" :class="decisionClass(c.decision_action)" x-text="c.decision_action||'观察'"></span>
+                    </td>
+                    <td class="py-2 pl-3 text-gray-500">
+                      <button @click="addWatch(c.symbol,'观察','OI趋势榜')" class="text-cyan-300 hover:text-cyan-200 mr-2">关注</button>
+                      <span x-text="c.decision_note||c.market_filter_note||''"></span>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
 
       <!-- ── 异常币雷达：OKX market-filter / sentiment-tracker 风格 ──────── -->
       <template x-if="anomalyCandidates().length>0">
@@ -1015,6 +1190,10 @@
                           <span class="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 text-orange-200" x-text="t"></span>
                         </template>
                       </div>
+                      <div class="mt-1 flex items-center gap-2">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded" :class="decisionClass(c.decision_action)" x-text="c.decision_action||'观察'"></span>
+                        <button @click="addWatch(c.symbol,'观察','异常币雷达')" class="text-[10px] text-orange-300 hover:text-orange-200">关注</button>
+                      </div>
                     </td>
                   </tr>
                 </template>
@@ -1044,6 +1223,11 @@
                 </div>
                 <div class="mt-1 text-xs text-red-300/70 leading-relaxed"
                   x-text="(c.signals||[]).filter(s=>!s.startsWith('⚠')).slice(0,3).join('·')"></div>
+                <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded" :class="decisionClass(c.decision_action)" x-text="c.decision_action||'观察'"></span>
+                  <span class="text-[10px]" :class="gradeClass(c.oi_trend_grade)" x-text="c.oi_trend_grade?'OI '+c.oi_trend_grade:'OI —'"></span>
+                  <button @click.stop="addWatch(c.symbol,'等待确认','启动预警')" class="text-[10px] text-red-300 hover:text-red-200">关注</button>
+                </div>
                 <!-- OI 死平 details -->
                 <div x-show="c._open" class="mt-2 pt-2 border-t border-red-500/10 space-y-0.5">
                   <template x-for="s in (c.signals||[])" :key="s">
@@ -1083,6 +1267,11 @@
                 </div>
                 <div class="mt-1 text-xs text-yellow-300/70 leading-relaxed"
                   x-text="(c.signals||[]).filter(s=>!s.startsWith('⚠')).slice(0,3).join('·')"></div>
+                <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded" :class="decisionClass(c.decision_action)" x-text="c.decision_action||'观察'"></span>
+                  <span class="text-[10px]" :class="gradeClass(c.oi_trend_grade)" x-text="c.oi_trend_grade?'OI '+c.oi_trend_grade:'OI —'"></span>
+                  <button @click.stop="addWatch(c.symbol,'观察','蓄势观察')" class="text-[10px] text-yellow-300 hover:text-yellow-200">关注</button>
+                </div>
                 <div x-show="c._open" class="mt-2 pt-2 border-t border-yellow-500/10 space-y-0.5">
                   <template x-for="s in (c.signals||[])" :key="s">
                     <div class="text-xs" :class="s.startsWith('⚠')?'text-red-400':'text-gray-500'">• <span x-text="s"></span></div>
@@ -1121,6 +1310,11 @@
                 </div>
                 <div class="mt-1 text-xs text-orange-300/70 leading-relaxed"
                   x-text="(c.signals||[]).slice(0,3).join('·')"></div>
+                <div class="mt-2 flex items-center gap-1.5 flex-wrap">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded" :class="decisionClass(c.decision_action)" x-text="c.decision_action||'禁止交易'"></span>
+                  <span class="text-[10px]" :class="gradeClass(c.oi_trend_grade)" x-text="c.oi_trend_grade?'OI '+c.oi_trend_grade:'OI —'"></span>
+                  <button @click.stop="addWatch(c.symbol,'禁止交易','风险候选')" class="text-[10px] text-orange-300 hover:text-orange-200">禁入</button>
+                </div>
                 <div x-show="c._open" class="mt-2 pt-2 border-t border-orange-500/10 space-y-0.5">
                   <template x-for="s in (c.signals||[])" :key="s">
                     <div class="text-xs text-orange-400/80">• <span x-text="s"></span></div>
@@ -1150,6 +1344,9 @@
                     <span x-show="c.smart_money_signal" class="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">🐋 聪明钱</span>
                     <span x-show="c.gecko_trend_rank>0" class="text-xs px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300"
                       x-text="'趋势#'+c.gecko_trend_rank"></span>
+                    <span class="text-xs px-2 py-0.5 rounded-full" :class="decisionClass(c.decision_action)" x-text="c.decision_action||'观察'"></span>
+                    <span x-show="c.oi_trend_grade" class="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10" :class="gradeClass(c.oi_trend_grade)"
+                      x-text="'OI '+c.oi_trend_grade"></span>
                   </div>
                   <div class="mt-1 flex flex-wrap gap-0.5">
                     <template x-for="s in (c.sources||[])" :key="s">
@@ -1189,6 +1386,21 @@
                   <span x-text="c._open?'▲ 收起':'▼ 评分详情'"></span>
                 </button>
                 <div x-show="c._open" class="mt-2 space-y-1.5">
+                  <div class="rounded-lg border border-[#1c1c38] bg-[#08081c] p-2 text-xs">
+                    <div class="flex items-center justify-between gap-2">
+                      <span :class="decisionClass(c.decision_action)" class="px-2 py-0.5 rounded" x-text="c.decision_action||'观察'"></span>
+                      <button @click.stop="addWatch(c.symbol,'观察','候选池')" class="text-green-400 hover:text-green-300">加入关注</button>
+                    </div>
+                    <div class="mt-1 text-gray-500" x-text="c.decision_note||'暂无决策解释'"></div>
+                    <div class="mt-1 flex flex-wrap gap-1">
+                      <template x-for="r in (c.decision_risks||[]).slice(0,3)" :key="r">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-300" x-text="r"></span>
+                      </template>
+                      <template x-for="m in (c.decision_missing||[]).slice(0,3)" :key="m">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400" x-text="m"></span>
+                      </template>
+                    </div>
+                  </div>
                   <div class="flex flex-wrap gap-1">
                     <template x-for="[k,v] in Object.entries(c.score_breakdown||{})" :key="k">
                       <span class="text-xs px-2 py-0.5 rounded"
@@ -1279,7 +1491,9 @@ function app() {
     scalpPositions: {}, scalpRunning: false, scalpSymbolCount: 0,
     scalpTrades: [], scalpTotalPnl: 0, scalpWinRate: 0, scalpTradeTotal: 0,
     scalpFilterStats: {},
-
+    scalpEquity: { trades:0, points:[] },
+    watchlist: [],
+    watchForm: { symbol:'', status:'观察', reason:'' },
 
 
     yaobiCandidates: [], yaobiRunning: false, yaobiOpen: true,
@@ -1312,6 +1526,8 @@ function app() {
       this.connectAll()
       this.loadScalpSignals()
       this.loadScalpTrades()
+      this.loadScalpEquity()
+      this.loadWatchlist()
       this.loadCsvSymbols()
       this.pollScalpStatus()
       this.pollYaobiStatus()
@@ -1319,6 +1535,8 @@ function app() {
       this.loadObsidianStatus()
       setInterval(() => this.loadScalpPositions(), 2000)
       setInterval(() => this.loadScalpTrades(), 10000)
+      setInterval(() => this.loadScalpEquity(), 10000)
+      setInterval(() => this.loadWatchlist(), 15000)
       setInterval(() => this.pollScalpStatus(), 5000)
       setInterval(() => this.pollYaobiStatus(), 8000)
       setInterval(() => this.loadScalpFilterStats(), 30000)
@@ -1465,10 +1683,51 @@ function app() {
         this.scalpTradeTotal = d.total    || 0
       } catch{}
     },
+    async loadScalpEquity() {
+      try { this.scalpEquity = await(await this.apiFetch('/api/scalp/equity')).json() } catch{}
+    },
     async clearScalpTrades() {
       await this.apiFetch('/api/scalp/trades',{method:'DELETE'})
       this.scalpTrades=[]; this.scalpTotalPnl=0; this.scalpWinRate=0; this.scalpTradeTotal=0
+      this.scalpEquity={trades:0,points:[]}
       this.showToast('✅ 历史成交已清空')
+    },
+    async loadWatchlist() {
+      try { const d=await(await this.apiFetch('/api/watchlist')).json(); this.watchlist=d.items||[] } catch{}
+    },
+    async addWatch(symbol, status='观察', reason='') {
+      const sym=(symbol||'').trim()
+      if(!sym) { this.showToast('❌ 请输入币种','error'); return }
+      const fd=new FormData()
+      fd.set('symbol', sym)
+      fd.set('status', status||'观察')
+      fd.set('reason', reason||this.watchForm.reason||'')
+      fd.set('source', ['异常币雷达','OI趋势榜','候选池','启动预警','蓄势观察','风险候选'].includes(reason)?reason:'manual')
+      try {
+        const d=await(await this.apiFetch('/api/watchlist',{method:'POST',body:fd})).json()
+        this.showToast(d.message||'✅ 已更新关注池', d.status==='success'?'success':'error')
+        this.watchForm.symbol=''; this.watchForm.reason=''
+        await this.loadWatchlist()
+      } catch(e){ this.showToast('❌ 关注池保存失败: '+e,'error') }
+    },
+    async updateWatchStatus(item) {
+      const fd=new FormData()
+      fd.set('symbol', item.symbol)
+      fd.set('status', item.status)
+      fd.set('reason', item.reason||'')
+      fd.set('manual_note', item.manual_note||'')
+      try {
+        const d=await(await this.apiFetch('/api/watchlist',{method:'POST',body:fd})).json()
+        this.showToast(d.message||'✅ 已更新关注池', d.status==='success'?'success':'error')
+        await this.loadWatchlist()
+      } catch(e){ this.showToast('❌ 更新失败: '+e,'error') }
+    },
+    async removeWatch(symbol) {
+      try {
+        const d=await(await this.apiFetch('/api/watchlist/'+encodeURIComponent(symbol),{method:'DELETE'})).json()
+        this.showToast(d.message||'已移除')
+        await this.loadWatchlist()
+      } catch(e){ this.showToast('❌ 移除失败: '+e,'error') }
     },
     async loadScalpPositions() {
       if (!this.scalpRunning) return
@@ -1527,6 +1786,7 @@ function app() {
         const d=await(await this.apiFetch('/api/yaobi/candidates?'+q)).json()
         this.yaobiCandidates=(d.candidates||[]).map(c=>({...c,_open:false}))
         this._applyYaobiFilter()
+        this.loadWatchlist()
       } catch{}
     },
     async clearYaobiCandidates() {
@@ -1581,16 +1841,55 @@ function app() {
         ))
         .slice(0,12)
     },
+    oiTrendCandidates() {
+      const rank={S:5,A:4,B:3,C:1,RISK:0}
+      return [...this.filteredCandidates]
+        .filter(c=>c.oi_trend_grade && c.oi_trend_grade!=='C')
+        .sort((a,b)=>(
+          (rank[b.oi_trend_grade]||0)-(rank[a.oi_trend_grade]||0)
+          || Math.abs(b.oi_change_7d_pct||0)-Math.abs(a.oi_change_7d_pct||0)
+          || (b.score||0)-(a.score||0)
+        ))
+        .slice(0,12)
+    },
     fmtPct(v, digits=1) {
       const n=Number(v)
       if(!Number.isFinite(n)) return '—'
       return (n>0?'+':'')+n.toFixed(digits)+'%'
+    },
+    fmtUsdt(v) {
+      const n=Number(v||0)
+      return (n>=0?'+':'')+n.toFixed(2)+' U'
+    },
+    equityBarHeight(v) {
+      const points=this.scalpEquity.points||[]
+      const vals=points.slice(-80).map(p=>Math.abs(Number(p.equity)||0))
+      const max=Math.max(1, ...vals)
+      return Math.max(8, Math.min(100, Math.abs(Number(v)||0)/max*100))
+    },
+    decisionClass(action) {
+      if(action==='允许交易') return 'decision-allow'
+      if(action==='等待确认') return 'decision-wait'
+      if(action==='禁止交易'||action==='只看不做') return 'decision-ban'
+      return 'decision-watch'
+    },
+    gradeClass(g) {
+      if(g==='S') return 'grade-s'
+      if(g==='A') return 'grade-a'
+      if(g==='B') return 'grade-b'
+      if(g==='RISK') return 'grade-risk'
+      return 'text-gray-500'
     },
     sortCandidates() { this.filteredCandidates=this._sortItems(this.filteredCandidates) },
     _sortItems(items) {
       const k=this.yaobiSort
       return [...items].sort((a,b)=>{
         if(k==='anomaly') return (b.anomaly_score||0)-(a.anomaly_score||0)
+        if(k==='oiTrend') {
+          const rank={S:5,A:4,B:3,C:1,RISK:0}
+          return (rank[b.oi_trend_grade]||0)-(rank[a.oi_trend_grade]||0)
+            || Math.abs(b.oi_change_7d_pct||0)-Math.abs(a.oi_change_7d_pct||0)
+        }
         if(k==='volume') return (b.volume_24h||0)-(a.volume_24h||0)
         if(k==='change') return (b.price_change_24h||0)-(a.price_change_24h||0)
         if(k==='mentions') return (b.square_mentions||0)-(a.square_mentions||0)

@@ -27,6 +27,7 @@ from scanner.sources.surf_api import (
 )
 from signals import add_scalp_signal, set_scalp_position, add_scalp_trade
 from trader import BinanceTrader
+from watchlist import get_watch_item, is_symbol_blocked
 
 logger = logging.getLogger("bot_scalp")
 
@@ -96,9 +97,12 @@ class ScalpPosition:
             "tp2_price":          round(self.tp2_price, 8),
             "tp1_hit":            self.tp1_hit,
             "tp2_hit":            self.tp2_hit,
+            "signal_label":       self.signal_label,
             "market_state":       self.market_state,
             "tp1_ratio":          self.tp1_ratio,
             "tp2_ratio":          self.tp2_ratio,
+            "risk_usdt":          round(self.risk_usdt, 4),
+            "entry_context":      self.entry_context,
             "paper":              self.paper,
             "entry_time":         self.entry_time,
             "realized_pnl":       round(self.realized_pnl, 4),
@@ -151,7 +155,7 @@ class BinanceScalpBot:
             "checked": 0, "no_candidate": 0, "oi_miss": 0,
             "btc_guard": 0, "cooldown": 0,
             "symbol_banned": 0, "vol_miss": 0,
-            "state_block": 0, "atr_block": 0,
+            "state_block": 0, "atr_block": 0, "manual_block": 0,
             "squeeze": 0, "breakout": 0, "passed": 0,
         }
         self._fstat_ts:         float                    = 0.0
@@ -456,6 +460,10 @@ class BinanceScalpBot:
             return
         if ban_until:
             self.symbol_ban_until.pop(symbol, None)
+
+        if is_symbol_blocked(symbol):
+            self._fstat["manual_block"] += 1
+            return
 
         # 观察模式：止损后等待趋势确认（只在K线收盘时更新计数）
         if symbol in self.observe_symbols:
@@ -1355,6 +1363,7 @@ class BinanceScalpBot:
         ret60 = ((closes[-1] - closes[-60]) / closes[-60] * 100
                  if len(closes) >= 60 and closes[-60] else 0.0)
         taker = self._get_taker_ratio(symbol, min_vol_ratio=0.0)
+        watch = get_watch_item(symbol) or {}
         return {
             "symbol": symbol,
             "direction": direction,
@@ -1369,6 +1378,8 @@ class BinanceScalpBot:
             "funding_rate": meta.get("funding_rate", 0.0),
             "fr_squeeze": meta.get("fr_squeeze", False),
             "news_sentiment": meta.get("news_sentiment", "neutral"),
+            "watchlist_status": watch.get("status", ""),
+            "watchlist_reason": watch.get("reason", ""),
             "oi_change_3m_pct": round(self._get_oi_change_pct(symbol) or 0.0, 4),
             "current_taker_ratio": round(taker, 4) if taker is not None else None,
             "atr_pct": round(self._calc_atr_pct(buf), 4) if len(buf) >= 15 else 0.0,
@@ -1733,6 +1744,7 @@ class BinanceScalpBot:
             f"  ❌ 非候选币跳过: {s['no_candidate']:>5}次",
             f"  ❌ 信号冷却中:   {s['cooldown']:>5}次",
             f"  ❌ 单币熔断中:   {s['symbol_banned']:>5}次",
+            f"  ❌ 人工禁入:     {s['manual_block']:>5}次",
             f"  ❌ 当前K量不足:  {s['vol_miss']:>5}次",
             f"  ❌ 状态机过滤:   {s['state_block']:>5}次",
             f"  ❌ ATR区间过滤:  {s['atr_block']:>5}次",
@@ -1756,6 +1768,7 @@ class BinanceScalpBot:
             "btc_guard":    s["btc_guard"],
             "cooldown":     s["cooldown"],
             "symbol_banned": s["symbol_banned"],
+            "manual_block":  s["manual_block"],
             "vol_miss":     s["vol_miss"],
             "state_block":   s["state_block"],
             "atr_block":     s["atr_block"],

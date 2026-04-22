@@ -187,6 +187,7 @@ class ConfigManager:
         "YAOBI_OKX_HOT_LIMIT":         (1,      100),
         "YAOBI_OKX_HEAVY_TOP_N":       (1,      120),
         "YAOBI_OKX_PRICE_BATCH_SIZE":  (1,      100),
+        "YAOBI_FUTURES_TOP_N":         (20,     300),
         "OKX_MIN_REQUEST_INTERVAL":    (0.02,   5.0),
         "SURF_MIN_REQUEST_INTERVAL":   (0.02,   5.0),
     }
@@ -253,6 +254,7 @@ class ConfigManager:
             "YAOBI_OKX_HOT_LIMIT":       50,
             "YAOBI_OKX_HEAVY_TOP_N":     40,
             "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
+            "YAOBI_FUTURES_TOP_N":       120,
             "OKX_MIN_REQUEST_INTERVAL":  0.20,
             "SURF_MIN_REQUEST_INTERVAL": 0.20,
         }

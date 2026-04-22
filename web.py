@@ -31,6 +31,9 @@ from scanner.candidates import (
 )
 from scanner.provider_metrics import provider_metrics_snapshot
 from trader import BinanceTrader
+from watchlist import (
+    list_watch_items, upsert_watch_item, remove_watch_item,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +145,62 @@ async def update_config(request: Request):
 @app.get("/api/config")
 async def get_config():
     return JSONResponse(_redact_config(config_manager.settings))
+
+
+# ─── 人工关注池 API ───────────────────────────────────────────────────────────
+
+async def _payload_from_request(request: Request) -> dict:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            data = await request.json()
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    form = await request.form()
+    return dict(form)
+
+
+@app.get("/api/watchlist")
+async def get_watchlist():
+    candidates = get_sorted_candidates(min_score=0)
+    return JSONResponse({
+        "items": list_watch_items(candidates),
+        "total": len(list_watch_items()),
+    })
+
+
+@app.post("/api/watchlist")
+async def save_watchlist_item(request: Request):
+    try:
+        payload = await _payload_from_request(request)
+        symbol = str(payload.get("symbol", "")).strip()
+        ban_value = payload.get("ban_trade", None)
+        ban_trade = None if ban_value is None else str(ban_value).lower() in ("true", "1", "on")
+        item = upsert_watch_item(
+            symbol,
+            status=str(payload.get("status", "观察")).strip() or "观察",
+            reason=str(payload.get("reason", "")).strip(),
+            manual_note=str(payload.get("manual_note", "")).strip(),
+            ban_trade=ban_trade,
+            watch_until=str(payload.get("watch_until", "")).strip(),
+            source=str(payload.get("source", "manual")).strip() or "manual",
+        )
+        return JSONResponse({"status": "success", "item": item, "message": "✅ 已更新关注池"})
+    except ValueError as e:
+        return JSONResponse({"status": "error", "message": f"❌ {e}"}, status_code=400)
+    except Exception as e:
+        logger.error("关注池保存失败: %s", e, exc_info=True)
+        return JSONResponse({"status": "error", "message": f"❌ 保存失败: {e}"}, status_code=500)
+
+
+@app.delete("/api/watchlist/{symbol}")
+async def delete_watchlist_item(symbol: str):
+    removed = remove_watch_item(symbol)
+    return JSONResponse({
+        "status": "success" if removed else "not_found",
+        "message": "✅ 已移除关注" if removed else "未找到该币种",
+    })
 
 
 # ─── 手动下单 ─────────────────────────────────────────────────────────────────
@@ -300,6 +359,11 @@ async def get_scalp_trades(limit: int = 200):
         "total_pnl": round(sum(t.get("pnl_usdt", 0) for t in scalp_trade_history), 4),
         "win_rate": round(wins / total * 100, 1) if total > 0 else 0,
     })
+
+
+@app.get("/api/scalp/equity")
+async def get_scalp_equity():
+    return JSONResponse(_scalp_equity_summary(list(scalp_trade_history)))
 
 
 @app.delete("/api/scalp/trades")
@@ -473,6 +537,76 @@ def _group_trade_stats(trades: list[dict], key: str) -> dict:
     return dict(sorted(rows.items(), key=lambda x: x[1]["pnl_usdt"]))
 
 
+def _scalp_equity_summary(trades: list[dict]) -> dict:
+    ordered = sorted(
+        trades,
+        key=lambda x: str(x.get("exit_time") or x.get("entry_time") or ""),
+    )
+    cfg = config_manager.settings
+    risk_unit = float(cfg.get("SCALP_RISK_PER_TRADE_USDT", 20.0) or 20.0)
+    cumulative = 0.0
+    high = 0.0
+    max_dd = 0.0
+    loss_streak = 0
+    max_loss_streak = 0
+    points = []
+    tp3_count = 0
+    sl_count = 0
+    total_fee = 0.0
+    total_slippage = 0.0
+    gross_profit = 0.0
+    gross_loss = 0.0
+
+    for idx, t in enumerate(ordered, 1):
+        pnl = float(t.get("pnl_usdt", 0) or 0)
+        gross = float(t.get("gross_pnl_usdt", pnl) or 0)
+        cumulative += pnl
+        high = max(high, cumulative)
+        max_dd = max(max_dd, high - cumulative)
+        if pnl <= 0:
+            loss_streak += 1
+            max_loss_streak = max(max_loss_streak, loss_streak)
+        else:
+            loss_streak = 0
+        if t.get("close_reason") == "TP3":
+            tp3_count += 1
+        if t.get("close_reason") == "SL":
+            sl_count += 1
+        total_fee += float(t.get("fee_usdt", 0) or 0)
+        total_slippage += float(t.get("slippage_usdt", 0) or 0)
+        if gross > 0:
+            gross_profit += gross
+        else:
+            gross_loss += gross
+        points.append({
+            "n": idx,
+            "time": t.get("exit_time") or t.get("entry_time") or "",
+            "pnl": round(pnl, 4),
+            "equity": round(cumulative, 4),
+            "symbol": t.get("symbol", ""),
+            "reason": t.get("close_reason", ""),
+        })
+
+    total_cost = total_fee + total_slippage
+    return {
+        "trades": len(ordered),
+        "realized_pnl_usdt": round(cumulative, 4),
+        "max_drawdown_usdt": round(max_dd, 4),
+        "max_drawdown_r": round(max_dd / risk_unit, 2) if risk_unit > 0 else 0,
+        "current_loss_streak": loss_streak,
+        "max_loss_streak": max_loss_streak,
+        "tp3_count": tp3_count,
+        "sl_count": sl_count,
+        "total_fee_usdt": round(total_fee, 4),
+        "total_slippage_usdt": round(total_slippage, 4),
+        "total_cost_usdt": round(total_cost, 4),
+        "cost_to_gross_profit_pct": round(total_cost / gross_profit * 100, 1) if gross_profit > 0 else 0,
+        "gross_profit_usdt": round(gross_profit, 4),
+        "gross_loss_usdt": round(gross_loss, 4),
+        "points": points[-200:],
+    }
+
+
 def _analysis_markdown(pack: dict) -> str:
     report = pack.get("策略报告") or {}
     stats = report.get("整体统计", {}) if isinstance(report, dict) else {}
@@ -504,6 +638,28 @@ def _analysis_markdown(pack: dict) -> str:
             lines.append(
                 f"- {name}: {row.get('count')}笔, 胜率 {row.get('win_rate_pct')}%, "
                 f"PnL {row.get('pnl_usdt')}U, MFE {row.get('avg_mfe_pct')}%, MAE {row.get('avg_mae_pct')}%"
+            )
+        lines.append("")
+    equity = pack.get("净值曲线摘要", {})
+    if equity:
+        lines += [
+            "## 净值与成本",
+            "",
+            f"- 最大回撤: {equity.get('max_drawdown_usdt', 0)}U / {equity.get('max_drawdown_r', 0)}R",
+            f"- 总成本: {equity.get('total_cost_usdt', 0)}U，成本/毛盈利 {equity.get('cost_to_gross_profit_pct', 0)}%",
+            f"- 最大连亏: {equity.get('max_loss_streak', 0)}，TP3 {equity.get('tp3_count', 0)} 次，SL {equity.get('sl_count', 0)} 次",
+            "",
+        ]
+    watch_items = pack.get("关注池", [])
+    if watch_items:
+        lines += ["## 关注池", ""]
+        for item in watch_items[:20]:
+            lines.append(
+                f"- {item.get('symbol')} {item.get('status')} | "
+                f"OI={item.get('latest_oi_grade') or '-'} | "
+                f"异动={item.get('latest_anomaly_score', 0)} | "
+                f"决策={item.get('latest_decision_action') or '-'} | "
+                f"{item.get('reason') or item.get('manual_note') or ''}"
             )
         lines.append("")
     lines += [
@@ -546,12 +702,14 @@ async def _build_scalp_analysis_pack() -> dict:
         provider_diag["credentials_error"] = str(e)
 
     cfg = _redact_config(config_manager.settings)
+    candidate_snapshot = get_sorted_candidates()[:100]
     pack = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "用途": "把这个 JSON/Markdown 发给 Codex，可用于复盘选币、入场、出场、数据源调用和参数问题。",
         "运行状态": runtime,
         "策略参数": cfg,
         "策略报告": await _scalp_report_or_none(),
+        "净值曲线摘要": _scalp_equity_summary(trades),
         "成交分组统计": {
             "by_signal": _group_trade_stats(trades, "signal_label"),
             "by_direction": _group_trade_stats(trades, "direction"),
@@ -567,13 +725,29 @@ async def _build_scalp_analysis_pack() -> dict:
             "symbols": list(getattr(bot, "candidate_symbols", []) or []),
             "meta": dict(getattr(bot, "candidate_meta", {}) or {}),
         },
+        "关注池": list_watch_items(candidate_snapshot),
         "妖币扫描": {
             "status": dict(scan_status),
-            "top_candidates": get_sorted_candidates()[:100],
+            "top_candidates": candidate_snapshot,
             "anomaly_candidates": get_anomaly_candidates(
                 min_anomaly=int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35)),
                 limit=100,
             ),
+            "decision_cards": [
+                {
+                    "symbol": c.get("symbol"),
+                    "action": c.get("decision_action"),
+                    "confidence": c.get("decision_confidence"),
+                    "reasons": c.get("decision_reasons", []),
+                    "risks": c.get("decision_risks", []),
+                    "missing": c.get("decision_missing", []),
+                    "note": c.get("decision_note", ""),
+                    "oi_trend_grade": c.get("oi_trend_grade", ""),
+                    "anomaly_score": c.get("anomaly_score", 0),
+                    "score": c.get("score", 0),
+                }
+                for c in candidate_snapshot[:50]
+            ],
         },
         "数据源诊断": provider_diag,
         "字段说明": {
@@ -581,6 +755,8 @@ async def _build_scalp_analysis_pack() -> dict:
             "mae_pct": "持仓期间最大逆向波动百分比，用于判断止损是否太紧。",
             "post_exit_*": "平仓后继续观察原方向 15/30/60/120 分钟，用于判断卖飞或方向是否选对。",
             "entry_context": "开仓瞬间的候选池、OI、taker、ATR、短期涨跌和新闻状态快照。",
+            "关注池": "人工关注/禁入/等待确认列表；用于复盘选币，不会自动生成新策略。",
+            "decision_cards": "妖币扫描生成的人工决策解释卡：允许/等待/禁止/观察，只作筛选参考。",
         },
     }
     return pack

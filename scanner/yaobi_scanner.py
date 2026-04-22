@@ -285,8 +285,13 @@ class YaobiScanner:
                     existing = candidates.get(sym)
                     if existing:
                         existing.oi_change_24h_pct = item.get("oi_change_24h_pct", 0)
+                        existing.oi_change_3d_pct  = item.get("oi_change_3d_pct", 0)
+                        existing.oi_change_7d_pct  = item.get("oi_change_7d_pct", 0)
                         existing.oi_acceleration   = item.get("oi_acceleration",   0)
                         existing.oi_flat_days      = item.get("oi_flat_days",      0)
+                        existing.oi_trend_grade    = item.get("oi_trend_grade",    "")
+                        existing.oi_consistency_score = item.get("oi_consistency_score", 0)
+                        existing.ema_deviation_pct = item.get("ema_deviation_pct", 0)
                         existing.volume_ratio      = item.get("volume_ratio",      1)
                         existing.whale_long_ratio  = item.get("whale_long_ratio",  0.5)
                         existing.short_crowd_pct   = item.get("short_crowd_pct",  50)
@@ -307,8 +312,13 @@ class YaobiScanner:
                             has_futures=True,
                             sources=["binance_futures"],
                             oi_change_24h_pct=item.get("oi_change_24h_pct", 0),
+                            oi_change_3d_pct=item.get("oi_change_3d_pct", 0),
+                            oi_change_7d_pct=item.get("oi_change_7d_pct", 0),
                             oi_acceleration=item.get("oi_acceleration",   0),
                             oi_flat_days=item.get("oi_flat_days",      0),
+                            oi_trend_grade=item.get("oi_trend_grade", ""),
+                            oi_consistency_score=item.get("oi_consistency_score", 0),
+                            ema_deviation_pct=item.get("ema_deviation_pct", 0),
                             volume_ratio=item.get("volume_ratio",      1),
                             whale_long_ratio=item.get("whale_long_ratio",  0.5),
                             short_crowd_pct=item.get("short_crowd_pct",  50),
@@ -374,6 +384,7 @@ class YaobiScanner:
 
         # ── 15. 异常币/情绪雷达 (OKX market-filter/sentiment-tracker 风格) ───
         self._apply_anomaly_radar(all_candidates)
+        self._apply_decision_cards(all_candidates)
         min_anomaly = int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35))
         anomaly_count = sum(1 for c in all_candidates if c.anomaly_score >= min_anomaly)
         scored = [
@@ -606,6 +617,15 @@ class YaobiScanner:
             elif c.oi_acceleration >= 15:
                 add(5, "OI加速")
 
+            if c.oi_trend_grade == "S":
+                add(14, "S级OI趋势", f"7D {c.oi_change_7d_pct:+.1f}% / 3D {c.oi_change_3d_pct:+.1f}%")
+            elif c.oi_trend_grade == "A":
+                add(9, "A级OI趋势", f"7D {c.oi_change_7d_pct:+.1f}%")
+            elif c.oi_trend_grade == "B":
+                add(5, "B级OI趋势")
+            elif c.oi_trend_grade == "RISK":
+                add(8, "OI趋势风险", f"7D {c.oi_change_7d_pct:+.1f}%")
+
             if c.volume_ratio >= 20:
                 add(12, "极端放量", f"成交量 {c.volume_ratio:.1f}x")
             elif c.volume_ratio >= 10:
@@ -762,6 +782,101 @@ class YaobiScanner:
                 label = f"异动:{tag}"
                 if label not in c.signals:
                     c.signals.append(label)
+
+    def _apply_decision_cards(self, candidates: list[Candidate]) -> None:
+        """生成一张可解释的人工决策卡；只作筛选/复盘，不替代交易策略。"""
+        for c in candidates:
+            reasons: list[str] = []
+            risks: list[str] = []
+            missing: list[str] = []
+            confidence = 0
+
+            if c.score >= 70:
+                reasons.append(f"综合评分{c.score}")
+                confidence += 18
+            elif c.score >= 50:
+                reasons.append(f"评分{c.score}，可继续观察")
+                confidence += 10
+            else:
+                missing.append("综合评分不足50")
+
+            if c.anomaly_score >= 60:
+                reasons.append(f"异动指数{c.anomaly_score}")
+                confidence += 18
+            elif c.anomaly_score >= 35:
+                reasons.append(f"异动指数{c.anomaly_score}")
+                confidence += 10
+            else:
+                missing.append("异动指数不足")
+
+            if c.oi_trend_grade in {"S", "A"}:
+                reasons.append(f"{c.oi_trend_grade}级OI趋势")
+                confidence += 18 if c.oi_trend_grade == "S" else 12
+            elif c.oi_trend_grade == "B":
+                reasons.append("B级OI趋势")
+                confidence += 6
+            elif c.has_futures:
+                missing.append("OI趋势未形成S/A")
+
+            if c.has_futures:
+                if c.retail_short_pct >= 65 and c.funding_rate_pct <= -0.03:
+                    reasons.append("空头拥挤+负资金费率")
+                    confidence += 10
+                if c.whale_long_ratio >= 0.60:
+                    reasons.append("大户偏多")
+                    confidence += 6
+                elif c.whale_long_ratio <= 0.40:
+                    risks.append("大户偏空")
+
+            if c.sentiment_label == "bullish":
+                reasons.append("情绪偏多")
+                confidence += 8
+            elif c.sentiment_label == "bearish":
+                risks.append("情绪偏空")
+            else:
+                missing.append("情绪未确认")
+
+            if c.okx_large_trade_pct >= 0.15:
+                reasons.append(f"OKX大单{c.okx_large_trade_pct * 100:.0f}%")
+                confidence += 8
+            elif c.has_futures and not c.address:
+                missing.append("链上大单未确认")
+
+            if c.category == "风险":
+                risks.append("候选分类为风险")
+            if c.surf_ai_risk_level == "HIGH":
+                risks.append("Surf AI高风险")
+            if c.surf_news_sentiment == "negative":
+                risks.append("Surf负面新闻")
+            if c.okx_risk_level >= 4:
+                risks.append("OKX高风险")
+            if c.okx_top10_hold_pct >= 75:
+                risks.append(f"Top10持仓{c.okx_top10_hold_pct:.0f}%")
+            if c.price_change_24h >= 80 and c.oi_trend_grade not in {"S", "A"}:
+                risks.append("24h涨幅过快但OI趋势不够强")
+            if c.price_change_24h <= -30:
+                risks.append("24h大跌")
+
+            if risks and any(x in " ".join(risks) for x in ("高风险", "负面", "风险")):
+                action = "禁止交易"
+            elif c.category == "风险":
+                action = "禁止交易"
+            elif confidence >= 55 and not risks:
+                action = "允许交易"
+            elif confidence >= 30:
+                action = "等待确认"
+            else:
+                action = "观察"
+
+            c.decision_action = action
+            c.decision_confidence = max(0, min(100, confidence - len(risks) * 8))
+            c.decision_reasons = reasons[:5]
+            c.decision_risks = risks[:5]
+            c.decision_missing = missing[:5]
+            c.decision_note = (
+                "；".join((reasons or missing or ["暂无确认"])[0:2])
+                + (f"；风险: {risks[0]}" if risks else "")
+            )
 
     # ── 内部辅助 ─────────────────────────────────────────────────────────────
 

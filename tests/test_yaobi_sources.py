@@ -1,7 +1,7 @@
 import unittest
 
 from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, upsert_candidate
-from scanner.sources import binance_square, okx_market, surf_api
+from scanner.sources import binance_futures, binance_square, okx_market, surf_api
 from scanner.yaobi_scanner import YaobiScanner
 
 
@@ -88,6 +88,36 @@ class TestYaobiSources(unittest.TestCase):
         self.assertIn("散户极空", c.anomaly_tags)
         self.assertEqual(c.long_short_text, "多7%/空93%")
         self.assertGreaterEqual(c.sentiment_heat, 12)
+
+    def test_decision_cards_explain_candidate_action(self) -> None:
+        c = Candidate(
+            symbol="HIGH",
+            has_futures=True,
+            score=72,
+            anomaly_score=65,
+            oi_trend_grade="S",
+            oi_change_7d_pct=95,
+            oi_change_3d_pct=36,
+            sentiment_label="bullish",
+            funding_rate_pct=-0.04,
+            retail_short_pct=70,
+        )
+
+        YaobiScanner()._apply_decision_cards([c])
+
+        self.assertEqual(c.decision_action, "允许交易")
+        self.assertGreaterEqual(c.decision_confidence, 55)
+        self.assertTrue(c.decision_reasons)
+
+    def test_oi_trend_fields_grade_sustained_growth(self) -> None:
+        oi_hist = [{"sumOpenInterest": str(100 + i * 3)} for i in range(50)]
+        klines = [[0, 0, 0, 0, str(100 + i)] for i in range(10)]
+
+        fields = binance_futures._calc_oi_trend_fields(oi_hist, klines)
+
+        self.assertIn(fields["oi_trend_grade"], {"A", "S"})
+        self.assertGreater(fields["oi_change_7d_pct"], 40)
+        self.assertGreater(fields["oi_consistency_score"], 80)
 
     def test_anomaly_candidates_sorted_by_anomaly_score(self) -> None:
         clear_candidates()

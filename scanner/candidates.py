@@ -58,8 +58,13 @@ class Candidate:
 
     # ── OI & 合约异动 ─────────────────────────────────────────────────────────
     oi_change_24h_pct: float = 0.0   # OI日增%
+    oi_change_3d_pct:  float = 0.0   # OI 3日变化%
+    oi_change_7d_pct:  float = 0.0   # OI 7日变化%
     oi_acceleration:   float = 0.0   # OI加速% (近4h vs 前4h)
     oi_flat_days:      int   = 0     # OI连续死平天数
+    oi_trend_grade:    str   = ""    # S/A/B/C/RISK，用于关注层分层
+    oi_consistency_score: int = 0     # 最近3日OI上涨一致性 0-100
+    ema_deviation_pct: float = 0.0    # 当前价相对短EMA偏离%
     volume_ratio:      float = 0.0   # 成交量放量倍数 (今日 / 7日均量)
     whale_long_ratio:  float = 0.5   # 大户多头比例 (0~1)
     short_crowd_pct:   float = 50.0  # 空头拥挤度%
@@ -101,6 +106,14 @@ class Candidate:
     long_short_text:    str   = "—/—" # UI 显示: 多x%/空y%
     holder_signal:      str   = ""    # OKX top10/dev/smart-money 摘要
     market_filter_note: str   = ""    # 核心异动解释
+
+    # ── 决策解释卡（只作筛选/复盘，不直接生成交易）──────────────────────────
+    decision_action:     str  = "观察"  # 允许交易 / 等待确认 / 禁止交易 / 观察
+    decision_confidence: int  = 0
+    decision_reasons:    list = field(default_factory=list)
+    decision_risks:      list = field(default_factory=list)
+    decision_missing:    list = field(default_factory=list)
+    decision_note:       str  = ""
 
     # ── 分类 ──────────────────────────────────────────────────────────────────
     category: str = ""   # 启动预警 / 蓄势观察 / 风险
@@ -149,8 +162,13 @@ class Candidate:
             "gecko_trend_rank":   self.gecko_trend_rank,
             "dex_boost_rank":     self.dex_boost_rank,
             "oi_change_24h_pct":  round(self.oi_change_24h_pct, 1),
+            "oi_change_3d_pct":   round(self.oi_change_3d_pct, 1),
+            "oi_change_7d_pct":   round(self.oi_change_7d_pct, 1),
             "oi_acceleration":    round(self.oi_acceleration, 1),
             "oi_flat_days":       self.oi_flat_days,
+            "oi_trend_grade":     self.oi_trend_grade,
+            "oi_consistency_score": self.oi_consistency_score,
+            "ema_deviation_pct":  round(self.ema_deviation_pct, 2),
             "volume_ratio":       round(self.volume_ratio, 1),
             "whale_long_ratio":   round(self.whale_long_ratio, 3),
             "short_crowd_pct":    round(self.short_crowd_pct, 1),
@@ -182,6 +200,12 @@ class Candidate:
             "long_short_text":     self.long_short_text,
             "holder_signal":       self.holder_signal,
             "market_filter_note":  self.market_filter_note,
+            "decision_action":     self.decision_action,
+            "decision_confidence": self.decision_confidence,
+            "decision_reasons":    self.decision_reasons[:5],
+            "decision_risks":      self.decision_risks[:5],
+            "decision_missing":    self.decision_missing[:5],
+            "decision_note":       self.decision_note,
             "category":           self.category,
             "score":              self.score,
             "score_breakdown":    self.score_breakdown,
