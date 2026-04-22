@@ -143,7 +143,7 @@ def okx_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042203
+    PROFILE_VERSION = 2026042204
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -151,14 +151,16 @@ class ConfigManager:
         "SCALP_TP1_RATIO": 0.15,
         "SCALP_TP2_RATIO": 0.25,
         "SCALP_TP3_TRAIL_PCT": 5.0,
-        "SCALP_CANDIDATE_LIMIT": 50,
+        "SCALP_CANDIDATE_LIMIT": 40,
         "SCALP_MAX_DAILY_LOSS_USDT": 200.0,
         "SCALP_MAX_DAILY_LOSS_R": 10.0,
         "SCALP_TP1_RR": 1.5,
         "SCALP_TP2_RR": 3.5,
         "SCALP_TIME_STOP_MINUTES": 30,
         "SCALP_TP2_TIMEOUT_MINUTES": 120,
-        "SCALP_STRUCTURE_TRAIL_BARS": 8,
+        "SCALP_STRUCTURE_TRAIL_BARS": 10,
+        "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
+        "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
         "FEE_RATE_PER_SIDE": 0.0004,
         "SLIPPAGE_RATE_PER_SIDE": 0.0005,
         "SQUEEZE_OI_DROP_MAJOR": 0.5,
@@ -172,6 +174,7 @@ class ConfigManager:
         "BREAKOUT_ATR_MIN_PCT": 0.50,
         "BREAKOUT_ATR_MAX_PCT": 1.20,
         "BREAKOUT_MIN_VOL_RATIO": 0.50,
+        "BREAKOUT_MAX_PREMOVE_30M_PCT": 3.0,
         "SIGNAL_COOLDOWN_SECONDS": 30,
         "OI_POLL_INTERVAL": 10,
         "BTC_GUARD_PCT": 2.0,
@@ -185,8 +188,12 @@ class ConfigManager:
         "SCALP_YAOBI_MIN_SCORE": 30,
         "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
         "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
+        "SCALP_YAOBI_BLOCK_WAIT_CONFIRM": True,
         "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
         "SCALP_YAOBI_DIRECTION_GUARD": False,
+        "SCALP_YAOBI_FUNDING_OI_GUARD": True,
+        "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
+        "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
         "YAOBI_SURF_NEWS_ENABLED": False,
         "YAOBI_SURF_NEWS_TOP_N": 20,
         "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
@@ -218,6 +225,8 @@ class ConfigManager:
         "SCALP_TIME_STOP_MINUTES":     (1,      360),
         "SCALP_TP2_TIMEOUT_MINUTES":   (5,      720),
         "SCALP_STRUCTURE_TRAIL_BARS":  (3,      30),
+        "SCALP_NET_BREAKEVEN_LOCK_PCT": (0.0,   2.0),
+        "SCALP_REVERSAL_STOP_SL_FRACTION": (0.1, 1.0),
         "FEE_RATE_PER_SIDE":           (0.0,    0.01),
         "SLIPPAGE_RATE_PER_SIDE":      (0.0,    0.05),
         # V3.0 轧空猎杀 & 动能突破
@@ -232,6 +241,7 @@ class ConfigManager:
         "BREAKOUT_ATR_MIN_PCT":        (0.0,    5.0),
         "BREAKOUT_ATR_MAX_PCT":        (0.0,    10.0),
         "BREAKOUT_MIN_VOL_RATIO":      (0.01,   5.0),
+        "BREAKOUT_MAX_PREMOVE_30M_PCT": (0.0,   20.0),
         "SIGNAL_COOLDOWN_SECONDS":     (1,      60),
         "OI_POLL_INTERVAL":            (5,      60),
         "BTC_GUARD_PCT":               (0.1,    10.0),
@@ -241,6 +251,8 @@ class ConfigManager:
         "SCALP_YAOBI_CONTEXT_TOP_N":   (0,      120),
         "SCALP_YAOBI_MIN_SCORE":       (0,      100),
         "SCALP_YAOBI_MIN_ANOMALY_SCORE": (0,    100),
+        "SCALP_YAOBI_FUNDING_EXTREME_PCT": (0.0, 1.0),
+        "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": (0.0, 500.0),
         # 妖币扫描器
         "YAOBI_SCAN_INTERVAL":         (1,      1440),
         "YAOBI_MIN_SCORE":             (0,      100),
@@ -273,7 +285,7 @@ class ConfigManager:
             "SCALP_TP2_RATIO":           0.25,
             "SCALP_TP3_TRAIL_PCT":       5.0,
             "SCALP_WATCHLIST":           "",
-            "SCALP_CANDIDATE_LIMIT":     50,
+            "SCALP_CANDIDATE_LIMIT":     40,
             "SCALP_PAPER_TRADE":         False,
             # ── 动态止损 & 风控 ───────────────────────────────────────────────
             "SCALP_USE_DYNAMIC_SL":      True,
@@ -284,7 +296,9 @@ class ConfigManager:
             "SCALP_TP2_RR":              3.5,
             "SCALP_TIME_STOP_MINUTES":   30,
             "SCALP_TP2_TIMEOUT_MINUTES": 120,
-            "SCALP_STRUCTURE_TRAIL_BARS": 8,
+            "SCALP_STRUCTURE_TRAIL_BARS": 10,
+            "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
+            "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
             "FEE_RATE_PER_SIDE":         0.0004,
             "SLIPPAGE_RATE_PER_SIDE":    0.0005,
             # ── V3.0 轧空猎杀参数 ─────────────────────────────────────────────
@@ -300,6 +314,7 @@ class ConfigManager:
             "BREAKOUT_ATR_MIN_PCT":      0.50,
             "BREAKOUT_ATR_MAX_PCT":      1.20,
             "BREAKOUT_MIN_VOL_RATIO":    0.50,
+            "BREAKOUT_MAX_PREMOVE_30M_PCT": 3.0,
             "SIGNAL_COOLDOWN_SECONDS":   30,
             "OI_POLL_INTERVAL":          10,
             "BTC_GUARD_PCT":             2.0,
@@ -314,8 +329,12 @@ class ConfigManager:
             "SCALP_YAOBI_MIN_SCORE":      30,
             "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
             "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
+            "SCALP_YAOBI_BLOCK_WAIT_CONFIRM": True,
             "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
             "SCALP_YAOBI_DIRECTION_GUARD": False,
+            "SCALP_YAOBI_FUNDING_OI_GUARD": True,
+            "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
+            "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
             # ── 妖币扫描器 ────────────────────────────────────────────────────
             "YAOBI_ENABLED":             False,
             "YAOBI_SCAN_INTERVAL":       15,

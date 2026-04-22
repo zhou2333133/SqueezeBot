@@ -159,7 +159,7 @@ class BinanceScalpBot:
             "btc_guard": 0, "cooldown": 0,
             "symbol_banned": 0, "vol_miss": 0,
             "state_block": 0, "atr_block": 0, "manual_block": 0,
-            "yaobi_block": 0,
+            "yaobi_block": 0, "premove_block": 0,
             "squeeze": 0, "breakout": 0, "passed": 0,
         }
         self._fstat_ts:         float                    = 0.0
@@ -377,12 +377,31 @@ class BinanceScalpBot:
         action = str(meta.get("yaobi_decision_action") or "")
         if self.cfg.get("SCALP_YAOBI_BLOCK_DECISION_BAN", True) and action == "禁止交易":
             return False, f"妖币扫描决策=禁止交易: {meta.get('yaobi_decision_note') or meta.get('yaobi_decision_risks')}"
+        if self.cfg.get("SCALP_YAOBI_BLOCK_WAIT_CONFIRM", True) and action == "等待确认":
+            return False, f"妖币扫描决策=等待确认，仅观察不自动交易: {meta.get('yaobi_decision_note') or ''}"
 
         if self.cfg.get("SCALP_YAOBI_BLOCK_HIGH_RISK", True):
             if str(meta.get("yaobi_surf_ai_risk_level") or "").upper() == "HIGH":
                 return False, f"Surf AI高风险: {meta.get('yaobi_decision_note') or ''}"
             if int(meta.get("yaobi_okx_risk_level", 0) or 0) >= 4:
                 return False, f"OKX风险等级{meta.get('yaobi_okx_risk_level')}"
+
+        if self.cfg.get("SCALP_YAOBI_FUNDING_OI_GUARD", True):
+            grade = str(meta.get("yaobi_oi_trend_grade") or "").upper()
+            oi24 = self._as_float(meta.get("yaobi_oi_change_24h_pct"))
+            funding = self._as_float(
+                meta.get("yaobi_funding_rate_pct"),
+                self._as_float(meta.get("funding_rate")),
+            )
+            crowded_oi = (
+                grade in {"S", "A"} or
+                oi24 >= self.cfg.get("SCALP_YAOBI_OI_GUARD_MIN_24H_PCT", 50.0)
+            )
+            funding_extreme = self.cfg.get("SCALP_YAOBI_FUNDING_EXTREME_PCT", 0.05)
+            if crowded_oi and direction == "SHORT" and funding <= -funding_extreme:
+                return False, f"OI强增长/评级{grade or '-'} + 资金费率{funding:.4f}%偏空拥挤，禁止追空"
+            if crowded_oi and direction == "LONG" and funding >= funding_extreme:
+                return False, f"OI强增长/评级{grade or '-'} + 资金费率{funding:.4f}%偏多拥挤，禁止追多"
 
         if self.cfg.get("SCALP_YAOBI_DIRECTION_GUARD", False):
             sentiment = str(meta.get("yaobi_sentiment_label") or "").lower()
@@ -1110,6 +1129,33 @@ class BinanceScalpBot:
             return False
         return True
 
+    def _recent_directional_move_pct(
+        self,
+        symbol: str,
+        direction: str,
+        lookback: int = 30,
+        last_price: float | None = None,
+    ) -> float:
+        buf = self.kline_buffer.get(symbol, [])
+        if len(buf) < lookback:
+            return 0.0
+        base = self._as_float(buf[-lookback]["c"])
+        price = self._as_float(last_price, self._as_float(buf[-1]["c"]))
+        if base <= 0 or price <= 0:
+            return 0.0
+        if direction == "LONG":
+            return (price - base) / base * 100
+        return (base - price) / base * 100
+
+    def _breakout_premove_allowed(self, symbol: str, direction: str, price: float) -> tuple[bool, str]:
+        max_pct = self.cfg.get("BREAKOUT_MAX_PREMOVE_30M_PCT", 0.0)
+        if not max_pct:
+            return True, ""
+        move30 = self._recent_directional_move_pct(symbol, direction, 30, price)
+        if move30 > max_pct:
+            return False, f"30m同向已走{move30:.2f}% > {max_pct:.2f}%，避免突破追晚"
+        return True, ""
+
     def _check_market_state(self, symbol: str, direction: str) -> str:
         buf = self.kline_buffer.get(symbol, [])
         if len(buf) < 60:
@@ -1176,9 +1222,10 @@ class BinanceScalpBot:
 
     def _breakeven_price(self, pos: ScalpPosition) -> float:
         roundtrip_cost = self._cost_rate() * 2
+        lock_pct = self.cfg.get("SCALP_NET_BREAKEVEN_LOCK_PCT", 0.0) / 100
         if pos.direction == "LONG":
-            return pos.entry_price * (1 + roundtrip_cost)
-        return pos.entry_price * (1 - roundtrip_cost)
+            return pos.entry_price * (1 + roundtrip_cost + lock_pct)
+        return pos.entry_price * (1 - roundtrip_cost - lock_pct)
 
     def _get_oi_change_pct(self, symbol: str) -> float | None:
         """计算最近3分钟OI变化%（负值=OI减少=爆仓踩踏）"""
@@ -1351,6 +1398,12 @@ class BinanceScalpBot:
                     self._fstat["state_block"] += 1
                     logger.info("⚡ [%s] 🟡 动能突破多被状态机过滤: RANGE_CHOP", symbol)
                     return
+                premove_ok, premove_reason = self._breakout_premove_allowed(symbol, "LONG", price)
+                if not premove_ok:
+                    self._fstat["premove_block"] += 1
+                    self._breakout_fired[symbol] = True
+                    logger.info("⚡ [%s] 🟡 动能突破多被追涨过滤: %s", symbol, premove_reason)
+                    return
                 self._fstat["breakout"] += 1
                 self._breakout_fired[symbol] = True
                 bo_pct = (price - prev["h"]) / prev["h"] * 100
@@ -1367,6 +1420,12 @@ class BinanceScalpBot:
                 if state == "RANGE_CHOP":
                     self._fstat["state_block"] += 1
                     logger.info("⚡ [%s] 🟠 动能突破空被状态机过滤: RANGE_CHOP", symbol)
+                    return
+                premove_ok, premove_reason = self._breakout_premove_allowed(symbol, "SHORT", price)
+                if not premove_ok:
+                    self._fstat["premove_block"] += 1
+                    self._breakout_fired[symbol] = True
+                    logger.info("⚡ [%s] 🟠 动能突破空被追空过滤: %s", symbol, premove_reason)
                     return
                 self._fstat["breakout"] += 1
                 self._breakout_fired[symbol] = True
@@ -1473,12 +1532,16 @@ class BinanceScalpBot:
             return
 
         # ── 固定风险仓位计算 ──────────────────────────────────────────────
-        risk_usdt    = cfg.get("SCALP_RISK_PER_TRADE_USDT", 20.0)
-        quantity_risk = (risk_usdt / (entry_price * sl_distance_pct / 100)
+        intended_risk_usdt = cfg.get("SCALP_RISK_PER_TRADE_USDT", 20.0)
+        quantity_risk = (intended_risk_usdt / (entry_price * sl_distance_pct / 100)
                          if sl_distance_pct > 0
                          else position_usdt * leverage / entry_price)
         quantity_max = position_usdt * leverage / entry_price
         quantity     = min(quantity_risk, quantity_max)
+        actual_risk_usdt = (
+            entry_price * quantity * sl_distance_pct / 100
+            if sl_distance_pct > 0 else intended_risk_usdt
+        )
         exit_profile = self._exit_profile_for_state(market_state)
         tp1_ratio = exit_profile.get("tp1_ratio", cfg.get("SCALP_TP1_RATIO", 0.15))
         tp2_ratio = exit_profile.get("tp2_ratio", cfg.get("SCALP_TP2_RATIO", 0.25))
@@ -1503,11 +1566,17 @@ class BinanceScalpBot:
         )
         base_signal["entry_context"] = entry_context
         logger.info(
-            "⚡ [%s] ✅ [%s] SL=%.2f%% TP1=%.2f%%(×%.1fR) TP2=%.2f%%(×%.1fR) | qty=%.4f",
+            "⚡ [%s] ✅ [%s] SL=%.2f%% TP1=%.2f%%(×%.1fR) TP2=%.2f%%(×%.1fR) | qty=%.4f | 风险%.2fU/目标%.2fU",
             symbol, signal_label, sl_distance_pct, tp1_dist,
             tp1_dist / max(sl_distance_pct, 0.001), tp2_dist,
             tp2_dist / max(sl_distance_pct, 0.001), quantity,
+            actual_risk_usdt, intended_risk_usdt,
         )
+        base_signal.update({
+            "quantity": round(quantity, 6),
+            "risk_usdt_intended": round(intended_risk_usdt, 4),
+            "risk_usdt_actual": round(actual_risk_usdt, 4),
+        })
         self._fstat["passed"] += 1
 
         paper_mode = cfg.get("SCALP_PAPER_TRADE", False)
@@ -1539,7 +1608,7 @@ class BinanceScalpBot:
                 structure_trail_bars = int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
                 time_stop_minutes  = time_stop_minutes,
                 tp2_timeout_minutes = tp2_timeout_minutes,
-                risk_usdt          = risk_usdt,
+                risk_usdt          = actual_risk_usdt,
                 paper              = True,
                 entry_context      = entry_context,
             )
@@ -1567,6 +1636,10 @@ class BinanceScalpBot:
         entry_price = actual if actual > 0 else entry_price
         quantity    = filled_qty  # 使用实际成交量
         sl_distance_pct = abs(entry_price - sl_price) / entry_price * 100 if entry_price > 0 else sl_distance_pct
+        actual_risk_usdt = (
+            entry_price * quantity * sl_distance_pct / 100
+            if sl_distance_pct > 0 else intended_risk_usdt
+        )
         tp1_dist = sl_distance_pct * cfg.get("SCALP_TP1_RR", 2.0)
         tp2_dist = sl_distance_pct * cfg.get("SCALP_TP2_RR", 4.0)
         if direction == "LONG":
@@ -1579,6 +1652,8 @@ class BinanceScalpBot:
             "entry_price": round(entry_price, 8),
             "tp1_price": round(tp1_price, 8),
             "tp2_price": round(tp2_price, 8),
+            "quantity": round(quantity, 6),
+            "risk_usdt_actual": round(actual_risk_usdt, 4),
         })
 
         sl_resp     = await self.trader.place_stop_loss_order(symbol, exit_s, sl_price)
@@ -1603,7 +1678,7 @@ class BinanceScalpBot:
             structure_trail_bars = int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
             time_stop_minutes  = time_stop_minutes,
             tp2_timeout_minutes = tp2_timeout_minutes,
-            risk_usdt          = risk_usdt,
+            risk_usdt          = actual_risk_usdt,
             paper              = False,
             entry_context      = entry_context,
         )
@@ -1674,6 +1749,11 @@ class BinanceScalpBot:
         max_down = self._as_float(meta.get("scalp_candidate_max_down_pct"))
         pre_entry_favorable = max_up if direction == "LONG" else max_down
         pre_entry_adverse = max_down if direction == "LONG" else max_up
+        current_price = self._as_float(
+            self._live_candle.get(symbol, {}).get("close"),
+            last_price or self._as_float(last.get("c")),
+        )
+        directional_30m = self._recent_directional_move_pct(symbol, direction, 30, current_price)
         return {
             "symbol": symbol,
             "direction": direction,
@@ -1697,6 +1777,8 @@ class BinanceScalpBot:
             "scalp_candidate_max_down_pct": round(max_down, 4),
             "pre_entry_favorable_from_candidate_pct": round(pre_entry_favorable, 4),
             "pre_entry_adverse_from_candidate_pct": round(pre_entry_adverse, 4),
+            "pre_entry_directional_30m_pct": round(directional_30m, 4),
+            "breakout_max_premove_30m_pct": self.cfg.get("BREAKOUT_MAX_PREMOVE_30M_PCT", 0.0),
             "yaobi_context": meta.get("yaobi_context", False),
             "yaobi_score": meta.get("yaobi_score", 0),
             "yaobi_anomaly_score": meta.get("yaobi_anomaly_score", 0),
@@ -1710,6 +1792,7 @@ class BinanceScalpBot:
             "yaobi_oi_change_24h_pct": meta.get("yaobi_oi_change_24h_pct", 0.0),
             "yaobi_oi_change_3d_pct": meta.get("yaobi_oi_change_3d_pct", 0.0),
             "yaobi_oi_change_7d_pct": meta.get("yaobi_oi_change_7d_pct", 0.0),
+            "yaobi_funding_rate_pct": meta.get("yaobi_funding_rate_pct", 0.0),
             "yaobi_volume_ratio": meta.get("yaobi_volume_ratio", 0.0),
             "yaobi_whale_long_ratio": meta.get("yaobi_whale_long_ratio", 0.0),
             "yaobi_short_crowd_pct": meta.get("yaobi_short_crowd_pct", 0.0),
@@ -1898,7 +1981,8 @@ class BinanceScalpBot:
                 if waterfall_against:
                     move_pct = abs(price - pos.entry_price) / pos.entry_price * 100
                     sl_dist  = abs(pos.sl_price - pos.entry_price) / pos.entry_price * 100
-                    if move_pct < sl_dist * 0.65:
+                    stop_fraction = cfg.get("SCALP_REVERSAL_STOP_SL_FRACTION", 0.40)
+                    if move_pct < sl_dist * stop_fraction:
                         logger.info("⚡ [%s] %s⚡ 瀑布反转(%s)提前止损 @ %.6f",
                                     symbol, tag, live_trend, price)
                         closed = await _close_remaining("趋势反转")
@@ -2087,6 +2171,7 @@ class BinanceScalpBot:
             f"  ❌ 单币熔断中:   {s['symbol_banned']:>5}次",
             f"  ❌ 人工禁入:     {s['manual_block']:>5}次",
             f"  ❌ 妖币共享拦截: {s['yaobi_block']:>5}次",
+            f"  ❌ 追涨/追空过滤: {s['premove_block']:>3}次",
             f"  ❌ 当前K量不足:  {s['vol_miss']:>5}次",
             f"  ❌ 状态机过滤:   {s['state_block']:>5}次",
             f"  ❌ ATR区间过滤:  {s['atr_block']:>5}次",
@@ -2112,6 +2197,7 @@ class BinanceScalpBot:
             "symbol_banned": s["symbol_banned"],
             "manual_block":  s["manual_block"],
             "yaobi_block":   s["yaobi_block"],
+            "premove_block": s["premove_block"],
             "vol_miss":     s["vol_miss"],
             "state_block":   s["state_block"],
             "atr_block":     s["atr_block"],
@@ -2127,6 +2213,7 @@ class BinanceScalpBot:
             "cfg_bo_atr_mult":  cfg.get("BREAKOUT_ATR_MULT",      0.7),
             "cfg_bo_atr_min":   cfg.get("BREAKOUT_ATR_MIN_PCT",   0.50),
             "cfg_bo_atr_max":   cfg.get("BREAKOUT_ATR_MAX_PCT",   1.20),
+            "cfg_bo_max_premove_30m": cfg.get("BREAKOUT_MAX_PREMOVE_30M_PCT", 3.0),
             "updated_at":      time.time(),
         }
         for k in self._fstat:

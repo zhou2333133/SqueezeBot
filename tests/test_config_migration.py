@@ -18,6 +18,7 @@ class TestConfigMigration(unittest.TestCase):
                         "SCALP_AUTO_TRADE": True,
                         "SCALP_POSITION_USDT": 10.0,
                         "SCALP_CANDIDATE_LIMIT": 80,
+                        "SCALP_STRUCTURE_TRAIL_BARS": 8,
                         "SIGNAL_COOLDOWN_SECONDS": 5,
                         "SCALP_MAX_DAILY_LOSS_USDT": 5000.0,
                         "BREAKOUT_MIN_PCT": 0.05,
@@ -33,12 +34,20 @@ class TestConfigMigration(unittest.TestCase):
                 manager = config.ConfigManager()
 
                 self.assertEqual(manager.settings["CONFIG_PROFILE_VERSION"], config.ConfigManager.PROFILE_VERSION)
-                self.assertEqual(manager.settings["SCALP_CANDIDATE_LIMIT"], 50)
+                self.assertEqual(manager.settings["SCALP_CANDIDATE_LIMIT"], 40)
+                self.assertEqual(manager.settings["SCALP_STRUCTURE_TRAIL_BARS"], 10)
+                self.assertEqual(manager.settings["SCALP_NET_BREAKEVEN_LOCK_PCT"], 0.15)
+                self.assertEqual(manager.settings["SCALP_REVERSAL_STOP_SL_FRACTION"], 0.40)
                 self.assertEqual(manager.settings["SIGNAL_COOLDOWN_SECONDS"], 30)
                 self.assertEqual(manager.settings["SCALP_MAX_DAILY_LOSS_USDT"], 200.0)
                 self.assertEqual(manager.settings["BREAKOUT_MIN_PCT"], 0.10)
                 self.assertEqual(manager.settings["BREAKOUT_ATR_MULT"], 0.7)
                 self.assertEqual(manager.settings["BREAKOUT_MIN_VOL_RATIO"], 0.50)
+                self.assertEqual(manager.settings["BREAKOUT_MAX_PREMOVE_30M_PCT"], 3.0)
+                self.assertTrue(manager.settings["SCALP_YAOBI_BLOCK_WAIT_CONFIRM"])
+                self.assertTrue(manager.settings["SCALP_YAOBI_FUNDING_OI_GUARD"])
+                self.assertEqual(manager.settings["SCALP_YAOBI_FUNDING_EXTREME_PCT"], 0.05)
+                self.assertEqual(manager.settings["SCALP_YAOBI_OI_GUARD_MIN_24H_PCT"], 50.0)
                 self.assertFalse(manager.settings["SCALP_SURF_NEWS_ENABLED"])
                 self.assertFalse(manager.settings["SCALP_SURF_ENTRY_AI_ENABLED"])
                 self.assertFalse(manager.settings["YAOBI_SURF_NEWS_ENABLED"])

@@ -16,12 +16,18 @@ class TestScalpEngine(unittest.TestCase):
             "BREAKOUT_ATR_MULT": 0.7,
             "BREAKOUT_ATR_MIN_PCT": 0.50,
             "BREAKOUT_ATR_MAX_PCT": 1.20,
+            "BREAKOUT_MAX_PREMOVE_30M_PCT": 3.0,
+            "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
             "SCALP_USE_YAOBI_CONTEXT": True,
             "SCALP_YAOBI_CONTEXT_TOP_N": 30,
             "SCALP_YAOBI_MIN_SCORE": 30,
             "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
             "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
+            "SCALP_YAOBI_BLOCK_WAIT_CONFIRM": True,
             "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
+            "SCALP_YAOBI_FUNDING_OI_GUARD": True,
+            "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
+            "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
         })
 
     def tearDown(self) -> None:
@@ -95,6 +101,60 @@ class TestScalpEngine(unittest.TestCase):
         self.assertFalse(bot._breakout_atr_allowed(0.30))
         self.assertTrue(bot._breakout_atr_allowed(0.75))
         self.assertFalse(bot._breakout_atr_allowed(1.50))
+
+    def test_breakeven_price_includes_roundtrip_cost_and_profit_lock(self) -> None:
+        bot = BinanceScalpBot()
+        pos = ScalpPosition(
+            symbol="BTCUSDT",
+            direction="LONG",
+            entry_price=100.0,
+            quantity=1.0,
+            quantity_remaining=1.0,
+            sl_price=95.0,
+            tp1_price=105.0,
+            tp2_price=110.0,
+        )
+
+        self.assertAlmostEqual(bot._breakeven_price(pos), 100.33, places=6)
+        pos.direction = "SHORT"
+        self.assertAlmostEqual(bot._breakeven_price(pos), 99.67, places=6)
+
+    def test_breakout_premove_filter_blocks_late_chase(self) -> None:
+        bot = BinanceScalpBot()
+        bot.kline_buffer["BASUSDT"] = [
+            {"o": 100.0 + i * 0.1, "h": 100.5 + i * 0.1, "l": 99.5 + i * 0.1, "c": 100.0 + i * 0.1, "q": 1000.0, "Q": 600.0}
+            for i in range(30)
+        ]
+
+        ok, reason = bot._breakout_premove_allowed("BASUSDT", "LONG", 104.0)
+
+        self.assertFalse(ok)
+        self.assertIn("30m同向已走", reason)
+
+    def test_yaobi_wait_confirm_and_crowded_funding_block_entries(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["METUSDT"] = {
+            "yaobi_context": True,
+            "yaobi_decision_action": "等待确认",
+            "yaobi_decision_note": "OI强但仍需确认",
+        }
+
+        ok, reason = bot._yaobi_entry_guard("METUSDT", "LONG")
+
+        self.assertFalse(ok)
+        self.assertIn("等待确认", reason)
+
+        bot.candidate_meta["METUSDT"].update({
+            "yaobi_decision_action": "观察",
+            "yaobi_oi_trend_grade": "A",
+            "yaobi_oi_change_24h_pct": 82.9,
+            "yaobi_funding_rate_pct": -0.1851,
+        })
+
+        ok, reason = bot._yaobi_entry_guard("METUSDT", "SHORT")
+
+        self.assertFalse(ok)
+        self.assertIn("禁止追空", reason)
 
     def test_yaobi_futures_context_is_shared_to_scalp_candidates(self) -> None:
         upsert_candidate(Candidate(
