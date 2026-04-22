@@ -35,9 +35,11 @@ class TestScalpReport(unittest.TestCase):
             "SQUEEZE_TAKER_MIN": 0.65,
             "BREAKOUT_TAKER_MIN": 0.55,
             "BREAKOUT_MIN_PCT": 0.10,
-            "BREAKOUT_ATR_MULT": 0.5,
-            "BREAKOUT_MIN_VOL_RATIO": 0.35,
-            "SIGNAL_COOLDOWN_SECONDS": 20,
+            "BREAKOUT_ATR_MULT": 0.7,
+            "BREAKOUT_ATR_MIN_PCT": 0.50,
+            "BREAKOUT_ATR_MAX_PCT": 1.20,
+            "BREAKOUT_MIN_VOL_RATIO": 0.50,
+            "SIGNAL_COOLDOWN_SECONDS": 30,
             "OI_POLL_INTERVAL": 10,
             "BTC_GUARD_PCT": 2.0,
         })
@@ -98,6 +100,8 @@ class TestScalpReport(unittest.TestCase):
             "突破Taker阈值",
             "突破最小幅度%",
             "突破ATR倍数",
+            "突破ATR最小%",
+            "突破ATR最大%",
             "当前K量比阈值",
         }
         self.assertTrue(expected_keys.issubset(snapshot.keys()))

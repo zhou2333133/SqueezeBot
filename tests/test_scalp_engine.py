@@ -11,7 +11,9 @@ class TestScalpEngine(unittest.TestCase):
             "FEE_RATE_PER_SIDE": 0.0004,
             "SLIPPAGE_RATE_PER_SIDE": 0.0005,
             "BREAKOUT_MIN_PCT": 0.10,
-            "BREAKOUT_ATR_MULT": 0.5,
+            "BREAKOUT_ATR_MULT": 0.7,
+            "BREAKOUT_ATR_MIN_PCT": 0.50,
+            "BREAKOUT_ATR_MAX_PCT": 1.20,
         })
 
     def tearDown(self) -> None:
@@ -77,6 +79,13 @@ class TestScalpEngine(unittest.TestCase):
         self.assertEqual(ctx["symbol"], "TESTUSDT")
         self.assertEqual(ctx["current_taker_ratio"], 0.7)
         self.assertEqual(ctx["candidate_rank"], 1)
+
+    def test_breakout_atr_filter_respects_configured_window(self) -> None:
+        bot = BinanceScalpBot()
+
+        self.assertFalse(bot._breakout_atr_allowed(0.30))
+        self.assertTrue(bot._breakout_atr_allowed(0.75))
+        self.assertFalse(bot._breakout_atr_allowed(1.50))
 
 
 if __name__ == "__main__":

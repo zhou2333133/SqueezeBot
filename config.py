@@ -172,6 +172,8 @@ class ConfigManager:
         "BREAKOUT_TAKER_MIN":          (0.4,    0.9),
         "BREAKOUT_MIN_PCT":            (0.01,   5.0),
         "BREAKOUT_ATR_MULT":           (0.0,    5.0),
+        "BREAKOUT_ATR_MIN_PCT":        (0.0,    5.0),
+        "BREAKOUT_ATR_MAX_PCT":        (0.0,    10.0),
         "BREAKOUT_MIN_VOL_RATIO":      (0.01,   5.0),
         "SIGNAL_COOLDOWN_SECONDS":     (1,      60),
         "OI_POLL_INTERVAL":            (5,      60),
@@ -204,7 +206,7 @@ class ConfigManager:
             "SCALP_TP2_RATIO":           0.25,
             "SCALP_TP3_TRAIL_PCT":       5.0,
             "SCALP_WATCHLIST":           "",
-            "SCALP_CANDIDATE_LIMIT":     80,
+            "SCALP_CANDIDATE_LIMIT":     50,
             "SCALP_PAPER_TRADE":         False,
             # ── 动态止损 & 风控 ───────────────────────────────────────────────
             "SCALP_USE_DYNAMIC_SL":      True,
@@ -227,9 +229,11 @@ class ConfigManager:
             # ── V3.0 动能突破参数 ─────────────────────────────────────────────
             "BREAKOUT_TAKER_MIN":        0.62,
             "BREAKOUT_MIN_PCT":          0.10,
-            "BREAKOUT_ATR_MULT":         0.5,
-            "BREAKOUT_MIN_VOL_RATIO":    0.35,
-            "SIGNAL_COOLDOWN_SECONDS":   20,
+            "BREAKOUT_ATR_MULT":         0.7,
+            "BREAKOUT_ATR_MIN_PCT":      0.50,
+            "BREAKOUT_ATR_MAX_PCT":      1.20,
+            "BREAKOUT_MIN_VOL_RATIO":    0.50,
+            "SIGNAL_COOLDOWN_SECONDS":   30,
             "OI_POLL_INTERVAL":          10,
             "BTC_GUARD_PCT":             2.0,
             # ── 妖币扫描器 ────────────────────────────────────────────────────

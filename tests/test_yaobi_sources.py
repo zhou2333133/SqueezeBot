@@ -1,7 +1,7 @@
 import unittest
 
 from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, upsert_candidate
-from scanner.sources import binance_square, okx_market
+from scanner.sources import binance_square, okx_market, surf_api
 from scanner.yaobi_scanner import YaobiScanner
 
 
@@ -102,6 +102,30 @@ class TestYaobiSources(unittest.TestCase):
             self.assertEqual([r["symbol"] for r in rows], ["HIGH"])
         finally:
             clear_candidates()
+
+    def test_surf_project_terms_and_news_match_symbol_alias(self) -> None:
+        terms = surf_api.project_terms("BTCUSDT")
+        self.assertIn("btc", terms)
+        self.assertIn("bitcoin", terms)
+
+        item = {
+            "project_name": "Bitcoin",
+            "text": "Bitcoin ETF flows remain strong",
+        }
+        self.assertTrue(surf_api.news_matches_symbol(item, "BTCUSDT"))
+
+    def test_surf_normalizes_news_items(self) -> None:
+        rows = surf_api.normalize_news_items([{
+            "id": "n1",
+            "title": "Ethereum upgrade ships",
+            "summary": "Mainnet upgrade completed",
+            "source": "COINDESK",
+            "project_name": "Ethereum",
+            "published_at": 1776810000,
+        }])
+
+        self.assertEqual(rows[0]["title"], "Ethereum upgrade ships")
+        self.assertIn("Mainnet upgrade completed", rows[0]["text"])
 
 
 if __name__ == "__main__":

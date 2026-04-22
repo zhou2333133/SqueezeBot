@@ -14,10 +14,17 @@ from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
-from config import config_manager, configured_surf_keys, next_surf_api_key
+from config import config_manager, configured_surf_keys
 from market_hub import hub
 import signals as _signals_mod
 from scanner.provider_metrics import record_provider_call, record_provider_skip
+from scanner.sources.surf_api import (
+    chat_completion as surf_chat_completion,
+    fetch_news_feed as surf_fetch_news_feed,
+    news_matches_symbol as surf_news_matches_symbol,
+    project_terms as surf_project_terms,
+    search_news as surf_search_news,
+)
 from signals import add_scalp_signal, set_scalp_position, add_scalp_trade
 from trader import BinanceTrader
 
@@ -131,7 +138,7 @@ class BinanceScalpBot:
         self._live_candle:      dict[str, dict]          = {}
         # 突破信号状态锁（每根K线收盘时重置为False）
         self._breakout_fired:   dict[str, bool]          = {}
-        # 信号冷却：同一币5秒内不重复触发
+        # 信号冷却：同一币短时间内不重复触发
         self._signal_cooldown:  dict[str, float]         = {}
         # 平均K线成交量（用于Taker比率噪声过滤）
         self._avg_vol:          dict[str, float]         = {}
@@ -144,7 +151,7 @@ class BinanceScalpBot:
             "checked": 0, "no_candidate": 0, "oi_miss": 0,
             "btc_guard": 0, "cooldown": 0,
             "symbol_banned": 0, "vol_miss": 0,
-            "state_block": 0,
+            "state_block": 0, "atr_block": 0,
             "squeeze": 0, "breakout": 0, "passed": 0,
         }
         self._fstat_ts:         float                    = 0.0
@@ -509,7 +516,7 @@ class BinanceScalpBot:
     async def _surf_news_scan(self, symbols: list[str]) -> None:
         """每5分钟批量扫描新闻，更新 candidate_meta[sym]['news_sentiment']"""
         if not configured_surf_keys():
-            record_provider_skip("surf", "news/curated", "missing_surf_api_key", items=len(symbols))
+            record_provider_skip("surf", "news/feed", "missing_surf_api_key", items=len(symbols))
             return
 
         NEG = {"hack","exploit","rug","scam","delist","suspend","crash","fraud","lawsuit","ponzi"}
@@ -527,52 +534,55 @@ class BinanceScalpBot:
                     idx = text.find(kw, idx + len(kw))
             return False
 
-        async def _check(sym: str) -> None:
-            base = sym.replace("USDT", "")
-            api_key = next_surf_api_key()
-            if not api_key:
-                record_provider_skip("surf", "news/curated", "missing_surf_api_key")
-                return
-            headers = {"Authorization": f"Bearer {api_key}"}
-            try:
-                async with self.session.get(
-                    "https://api.asksurf.ai/v1/news/curated",
-                    params={"q": base, "limit": 3},
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=6),
-                ) as resp:
-                    if resp.status != 200:
-                        record_provider_call("surf", "news/curated", False, status=resp.status)
-                        return
-                    items = (await resp.json()).get("data", [])
-                    record_provider_call("surf", "news/curated", True, status=resp.status, items=len(items))
-                    if not items:
-                        return
-                    text = " ".join(i.get("title", "").lower() for i in items)
-                    if _has_genuine_neg(text):
-                        sentiment = "negative"
-                    elif any(k in text for k in POS):
-                        sentiment = "positive"
-                    else:
-                        return
-                    if sym in self.candidate_meta:
-                        old = self.candidate_meta[sym].get("news_sentiment", "neutral")
-                        if old != sentiment:
-                            logger.info("⚡ [%s] 📰 新闻情绪: %s → %s", sym, old, sentiment)
-                        self.candidate_meta[sym]["news_sentiment"] = sentiment
-            except Exception as e:
-                record_provider_call("surf", "news/curated", False, status="exception", error=f"{type(e).__name__}: {e}")
+        def _chunks(rows: list[str], size: int) -> list[list[str]]:
+            return [rows[i:i + size] for i in range(0, len(rows), size)]
 
-        sem = asyncio.Semaphore(8)
-        async def bounded(s):
-            async with sem:
-                await _check(s)
-        await asyncio.gather(*[bounded(s) for s in symbols])
+        lookup_terms: list[str] = []
+        fallback_searches = 0
+        for sym in symbols:
+            lookup_terms.extend(surf_project_terms(sym, self.candidate_meta.get(sym, {}).get("name", ""))[:2])
+        lookup_terms = list(dict.fromkeys(lookup_terms))
+
+        items: list[dict] = []
+        for chunk in _chunks(lookup_terms, 25):
+            items.extend(await surf_fetch_news_feed(self.session, projects=chunk, limit=50))
+            await asyncio.sleep(0.05)
+        if not items:
+            return
+
+        for sym in symbols:
+            meta = self.candidate_meta.get(sym)
+            if not meta:
+                continue
+            matched = [
+                item for item in items
+                if surf_news_matches_symbol(item, sym, meta.get("name", ""))
+            ][:5]
+            if (not matched
+                    and fallback_searches < 10
+                    and abs(float(meta.get("change_24h", 0.0) or 0.0)) >= 30):
+                query = " ".join(surf_project_terms(sym, meta.get("name", ""))[:2])
+                matched = await surf_search_news(self.session, query)
+                fallback_searches += 1
+            if not matched:
+                continue
+            text = " ".join((item.get("text") or "").lower() for item in matched)
+            if _has_genuine_neg(text):
+                sentiment = "negative"
+            elif any(k in text for k in POS):
+                sentiment = "positive"
+            else:
+                sentiment = "neutral"
+            old = meta.get("news_sentiment", "neutral")
+            if old != sentiment:
+                logger.info("⚡ [%s] 📰 Surf新闻情绪: %s → %s (%d条)",
+                            sym, old, sentiment, len(matched))
+            meta["news_sentiment"] = sentiment
+            meta["surf_news_titles"] = [item.get("title", "") for item in matched[:3]]
 
     async def _surf_entry_check(self, symbol: str, direction: str, price: float) -> tuple[bool, int, str]:
         """仅极端行情（24h涨跌 > ±30%）调用 Surf AI 深度审查，普通行情直接放行"""
-        api_key = next_surf_api_key()
-        if not api_key:
+        if not configured_surf_keys():
             record_provider_skip("surf", "chat/completions", "missing_surf_api_key")
             return True, 100, "未配置"
 
@@ -605,29 +615,25 @@ class BinanceScalpBot:
             f'{{\"score\":0-100,\"risk\":\"LOW|MED|HIGH\",\"reason\":\"max 15 words\"}}'
         )
         try:
-            headers = {"Authorization": f"Bearer {api_key}"}
-            async with self.session.post(
-                "https://api.asksurf.ai/v1/chat/completions",
-                json={"model": "surf-1.5-turbo", "messages": [{"role": "user", "content": prompt}]},
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=12),
-            ) as resp:
-                if resp.status != 200:
-                    record_provider_call("surf", "chat/completions", False, status=resp.status)
-                    return True, 100, f"HTTP {resp.status}"
-                data   = await resp.json()
-                record_provider_call("surf", "chat/completions", True, status=resp.status, items=1)
-                text   = data["choices"][0]["message"]["content"].strip()
-                if "```" in text:
-                    text = text.split("```")[1].lstrip("json").strip()
-                result = json.loads(text)
-                score  = max(0, min(100, int(result.get("score", 50))))
-                risk   = result.get("risk", "?")
-                reason = result.get("reason", "")
-                ok     = score >= 50
-                logger.info("⚡ [%s] 🤖 Surf score=%d [%s] %s → %s",
-                            symbol, score, risk, reason, "✅入场" if ok else "❌拒绝")
-                return ok, score, reason
+            ok_resp, text, status = await surf_chat_completion(
+                self.session,
+                prompt,
+                model="surf-1.5-instant",
+                timeout_sec=30,
+                reasoning_effort="low",
+            )
+            if not ok_resp:
+                return True, 100, f"HTTP {status}"
+            if "```" in text:
+                text = text.split("```")[1].lstrip("json").strip()
+            result = json.loads(text)
+            score  = max(0, min(100, int(result.get("score", 50))))
+            risk   = result.get("risk", "?")
+            reason = result.get("reason", "")
+            ok     = score >= 50
+            logger.info("⚡ [%s] 🤖 Surf score=%d [%s] %s → %s",
+                        symbol, score, risk, reason, "✅入场" if ok else "❌拒绝")
+            return ok, score, reason
         except json.JSONDecodeError as e:
             record_provider_call("surf", "chat/completions", False, status="json_decode", error=str(e))
             logger.warning("⚡ [%s] Surf解析失败(%s)，放行", symbol, e)
@@ -785,10 +791,19 @@ class BinanceScalpBot:
         last_close = rows[-1]["c"]
         return (sum(ranges) / len(ranges)) / last_close * 100 if last_close > 0 and ranges else 0.0
 
-    def _breakout_required_pct(self, buf: list) -> float:
+    def _breakout_required_pct(self, buf: list, atr_pct: float | None = None) -> float:
         min_pct = self.cfg.get("BREAKOUT_MIN_PCT", 0.10)
-        atr_pct = self._calc_atr_pct(buf)
+        atr_pct = self._calc_atr_pct(buf) if atr_pct is None else atr_pct
         return max(min_pct, atr_pct * self.cfg.get("BREAKOUT_ATR_MULT", 0.5))
+
+    def _breakout_atr_allowed(self, atr_pct: float) -> bool:
+        atr_min = self.cfg.get("BREAKOUT_ATR_MIN_PCT", 0.0)
+        atr_max = self.cfg.get("BREAKOUT_ATR_MAX_PCT", 0.0)
+        if atr_min and atr_pct < atr_min:
+            return False
+        if atr_max and atr_pct > atr_max:
+            return False
+        return True
 
     def _check_market_state(self, symbol: str, direction: str) -> str:
         buf = self.kline_buffer.get(symbol, [])
@@ -1010,13 +1025,19 @@ class BinanceScalpBot:
             self._maybe_print_fstat()
             return
 
+        atr_pct = self._calc_atr_pct(buf)
+        if not self._breakout_atr_allowed(atr_pct):
+            self._fstat["atr_block"] += 1
+            self._maybe_print_fstat()
+            return
+
         closes     = [k["c"] for k in buf]
         ma5        = sum(closes[-5:])  / 5
         ma10       = sum(closes[-10:]) / 10
         ma20       = sum(closes[-20:]) / 20
         prev       = buf[-1]  # 最近闭合K线
         bo_taker   = cfg.get("BREAKOUT_TAKER_MIN", 0.60)
-        bo_min_pct = self._breakout_required_pct(buf)
+        bo_min_pct = self._breakout_required_pct(buf, atr_pct=atr_pct)
 
         if allow_long and ma5 > ma10 > ma20 and price > prev["h"] * (1 + bo_min_pct / 100) and taker_ratio >= bo_taker:
             if self._btc_guard("LONG"):
@@ -1714,6 +1735,7 @@ class BinanceScalpBot:
             f"  ❌ 单币熔断中:   {s['symbol_banned']:>5}次",
             f"  ❌ 当前K量不足:  {s['vol_miss']:>5}次",
             f"  ❌ 状态机过滤:   {s['state_block']:>5}次",
+            f"  ❌ ATR区间过滤:  {s['atr_block']:>5}次",
             f"  ❌ OI数据未就绪: {s['oi_miss']:>4}次  (启动30秒后可用)",
             f"  ❌ BTC大盘过滤:  {s['btc_guard']:>4}次",
             f"  🔴 轧空/轧多信号: {s['squeeze']}次",
@@ -1736,6 +1758,7 @@ class BinanceScalpBot:
             "symbol_banned": s["symbol_banned"],
             "vol_miss":     s["vol_miss"],
             "state_block":   s["state_block"],
+            "atr_block":     s["atr_block"],
             "squeeze":      s["squeeze"],
             "breakout":     s["breakout"],
             "passed":       s["passed"],
@@ -1745,7 +1768,9 @@ class BinanceScalpBot:
             "cfg_sq_taker":    cfg.get("SQUEEZE_TAKER_MIN",      0.65),
             "cfg_bo_taker":    cfg.get("BREAKOUT_TAKER_MIN",     0.62),
             "cfg_bo_min_pct":   cfg.get("BREAKOUT_MIN_PCT",       0.10),
-            "cfg_bo_atr_mult":  cfg.get("BREAKOUT_ATR_MULT",      0.5),
+            "cfg_bo_atr_mult":  cfg.get("BREAKOUT_ATR_MULT",      0.7),
+            "cfg_bo_atr_min":   cfg.get("BREAKOUT_ATR_MIN_PCT",   0.50),
+            "cfg_bo_atr_max":   cfg.get("BREAKOUT_ATR_MAX_PCT",   1.20),
             "updated_at":      time.time(),
         }
         for k in self._fstat:

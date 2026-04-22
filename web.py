@@ -394,6 +394,8 @@ async def get_scalp_report():
             "突破Taker阈值":    cfg.get("BREAKOUT_TAKER_MIN"),
             "突破最小幅度%":     cfg.get("BREAKOUT_MIN_PCT"),
             "突破ATR倍数":       cfg.get("BREAKOUT_ATR_MULT"),
+            "突破ATR最小%":      cfg.get("BREAKOUT_ATR_MIN_PCT"),
+            "突破ATR最大%":      cfg.get("BREAKOUT_ATR_MAX_PCT"),
             "当前K量比阈值":     cfg.get("BREAKOUT_MIN_VOL_RATIO"),
         },
         "整体统计": {

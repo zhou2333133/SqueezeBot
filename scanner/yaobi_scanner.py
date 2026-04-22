@@ -15,7 +15,7 @@ from typing import Optional
 
 import aiohttp
 
-from config import config_manager, next_surf_api_key, surf_credentials_status
+from config import config_manager, surf_credentials_status
 from scanner.candidates import (
     Candidate, upsert_candidate, scan_status, candidates_map, clear_candidates,
 )
@@ -36,6 +36,13 @@ from scanner.sources.okx_market import (
 )
 from scanner.sources.binance_square import fetch_hot_posts, extract_ticker_mentions
 from scanner.sources.binance_futures import scan_futures_oi
+from scanner.sources.surf_api import (
+    chat_completion as surf_chat_completion,
+    fetch_news_feed as surf_fetch_news_feed,
+    news_matches_symbol as surf_news_matches_symbol,
+    project_terms as surf_project_terms,
+    search_news as surf_search_news,
+)
 from scanner.provider_metrics import record_provider_call, record_provider_skip
 from scanner.obsidian import (
     init_rulebook, write_daily_candidates, write_daily_digest,
@@ -431,39 +438,36 @@ class YaobiScanner:
                 return "positive"
             return "neutral"
 
-        async def _check(c: Candidate) -> None:
-            base = c.symbol.replace("USDT", "")
-            api_key = next_surf_api_key()
-            if not api_key:
-                record_provider_skip("surf", "news/curated", "missing_surf_api_key")
-                return
-            headers = {"Authorization": f"Bearer {api_key}"}
-            try:
-                async with session.get(
-                    "https://api.asksurf.ai/v1/news/curated",
-                    params={"q": base, "limit": 3},
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=6),
-                ) as resp:
-                    if resp.status != 200:
-                        record_provider_call("surf", "news/curated", False, status=resp.status)
-                        return
-                    items = (await resp.json()).get("data", [])
-                    record_provider_call("surf", "news/curated", True, status=resp.status, items=len(items))
-                    if not items:
-                        return
-                    c.surf_news_titles = [i.get("title", "") for i in items]
-                    combined = " ".join(t.lower() for t in c.surf_news_titles)
-                    c.surf_news_sentiment = _classify(combined)
-            except Exception as e:
-                record_provider_call("surf", "news/curated", False, status="exception", error=f"{type(e).__name__}: {e}")
+        def _chunks(rows: list[str], size: int) -> list[list[str]]:
+            return [rows[i:i + size] for i in range(0, len(rows), size)]
 
-        sem = asyncio.Semaphore(8)
-        async def bounded(c: Candidate) -> None:
-            async with sem:
-                await _check(c)
+        lookup_terms: list[str] = []
+        for c in candidates:
+            lookup_terms.extend(surf_project_terms(c.symbol, c.name)[:2])
+        lookup_terms = list(dict.fromkeys(lookup_terms))
 
-        await asyncio.gather(*[bounded(c) for c in candidates], return_exceptions=True)
+        items: list[dict] = []
+        for chunk in _chunks(lookup_terms, 25):
+            items.extend(await surf_fetch_news_feed(session, projects=chunk, limit=50))
+            await asyncio.sleep(0.05)
+
+        fallback_searches = 0
+        for c in candidates:
+            matched = [
+                item for item in items
+                if surf_news_matches_symbol(item, c.symbol, c.name)
+            ][:5]
+            if (not matched
+                    and fallback_searches < 20
+                    and (abs(c.price_change_24h or 0.0) >= 30 or c.square_mentions >= 8)):
+                query = " ".join(surf_project_terms(c.symbol, c.name)[:2])
+                matched = await surf_search_news(session, query)
+                fallback_searches += 1
+            if not matched:
+                continue
+            c.surf_news_titles = [i.get("title", "") for i in matched[:3]]
+            combined = " ".join((i.get("text") or "").lower() for i in matched)
+            c.surf_news_sentiment = _classify(combined)
         return [c for c in candidates if c.surf_news_sentiment != "negative"]
 
     # ── OKX 多链验证 + 大单分析 ────────────────────────────────────────────────
@@ -524,11 +528,9 @@ class YaobiScanner:
     ) -> None:
         """对高分候选进行 Surf AI 风险审查，设置 surf_ai_risk_level。"""
         async def _review(c: Candidate) -> None:
-            api_key = next_surf_api_key()
-            if not api_key:
+            if not _surf_enabled():
                 record_provider_skip("surf", "chat/completions", "missing_surf_api_key")
                 return
-            headers = {"Authorization": f"Bearer {api_key}"}
             prompt = (
                 f"You are a crypto token risk analyst. Evaluate {c.symbol} as a speculative trade candidate.\n"
                 f"Data: price_change_24h={c.price_change_24h:+.1f}%, "
@@ -542,27 +544,24 @@ class YaobiScanner:
                 f'{{\"score\":0-100,\"risk\":\"LOW|MEDIUM|HIGH\",\"reason\":\"max 12 words\"}}'
             )
             try:
-                async with session.post(
-                    "https://api.asksurf.ai/v1/chat/completions",
-                    json={"model": "surf-1.5-turbo",
-                          "messages": [{"role": "user", "content": prompt}]},
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=12),
-                ) as resp:
-                    if resp.status != 200:
-                        record_provider_call("surf", "chat/completions", False, status=resp.status)
-                        return
-                    data   = await resp.json()
-                    record_provider_call("surf", "chat/completions", True, status=resp.status, items=1)
-                    text   = data["choices"][0]["message"]["content"].strip()
-                    if "```" in text:
-                        text = text.split("```")[1].lstrip("json").strip()
-                    result = json.loads(text)
-                    c.surf_ai_score      = max(0, min(100, int(result.get("score", 50))))
-                    c.surf_ai_risk_level = result.get("risk", "")
-                    c.surf_ai_reason     = result.get("reason", "")
-                    if c.surf_ai_risk_level == "HIGH":
-                        logger.info("🔍 [%s] Surf AI 高风险: %s", c.symbol, c.surf_ai_reason)
+                ok_resp, text, status = await surf_chat_completion(
+                    session,
+                    prompt,
+                    model="surf-1.5-instant",
+                    timeout_sec=30,
+                    reasoning_effort="low",
+                )
+                if not ok_resp:
+                    logger.debug("Surf AI 审查失败 [%s]: HTTP %s", c.symbol, status)
+                    return
+                if "```" in text:
+                    text = text.split("```")[1].lstrip("json").strip()
+                result = json.loads(text)
+                c.surf_ai_score      = max(0, min(100, int(result.get("score", 50))))
+                c.surf_ai_risk_level = result.get("risk", "")
+                c.surf_ai_reason     = result.get("reason", "")
+                if c.surf_ai_risk_level == "HIGH":
+                    logger.info("🔍 [%s] Surf AI 高风险: %s", c.symbol, c.surf_ai_reason)
             except Exception as e:
                 record_provider_call("surf", "chat/completions", False, status="exception", error=f"{type(e).__name__}: {e}")
                 logger.debug("Surf AI 审查异常 [%s]: %s", c.symbol, e)
