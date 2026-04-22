@@ -46,6 +46,22 @@ class TestYaobiSources(unittest.TestCase):
         self.assertEqual(parsed["price_usd"], 1.25)
         self.assertEqual(parsed["tx_count_24h"], 123)
 
+    def test_okx_data_list_accepts_nested_token_list_response(self) -> None:
+        data = {
+            "code": "0",
+            "data": {
+                "cursor": "next",
+                "tokenList": [
+                    {"chainIndex": "1", "tokenSymbol": "WETH"},
+                    {"chainIndex": "501", "tokenSymbol": "SOL"},
+                ],
+            },
+        }
+
+        rows = okx_market._data_list(data)
+
+        self.assertEqual([x["tokenSymbol"] for x in rows], ["WETH", "SOL"])
+
     def test_binance_square_extracts_nested_posts_and_mentions(self) -> None:
         payload = {
             "code": "000000",

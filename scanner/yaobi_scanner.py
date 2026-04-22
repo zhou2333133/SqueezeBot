@@ -485,15 +485,20 @@ class YaobiScanner:
 
     async def _enrich_okx(self, session: aiohttp.ClientSession, c: Candidate) -> None:
         """通过 OKX API 验证代币在多链的部署情况和机构大单占比。"""
-        try:
-            tokens = await search_tokens(session, c.symbol, limit=10)
-            if tokens:
-                if "okx_search" not in c.sources:
-                    c.sources.append("okx_search")
-                chains = list({t.get("chain_id", "") for t in tokens if t.get("chain_id")})
-                c.okx_chain_count  = len(chains)
-                c.okx_chains_found = [CHAIN_NAMES.get(ch, ch) for ch in chains]
-                if not c.address:
+        if c.chain_id:
+            c.okx_chain_count = max(c.okx_chain_count, 1)
+            if not c.okx_chains_found:
+                c.okx_chains_found = [CHAIN_NAMES.get(c.chain_id, c.chain or c.chain_id)]
+
+        if not (c.address and c.chain_id):
+            try:
+                tokens = await search_tokens(session, c.symbol, limit=10)
+                if tokens:
+                    if "okx_search" not in c.sources:
+                        c.sources.append("okx_search")
+                    chains = list({t.get("chain_id", "") for t in tokens if t.get("chain_id")})
+                    c.okx_chain_count  = len(chains)
+                    c.okx_chains_found = [CHAIN_NAMES.get(ch, ch) for ch in chains]
                     primary = max(
                         tokens,
                         key=lambda t: (t.get("liquidity", 0), t.get("market_cap", 0), t.get("volume_24h", 0)),
@@ -504,8 +509,8 @@ class YaobiScanner:
                     c.liquidity = primary.get("liquidity", 0) or c.liquidity
                     c.market_cap = primary.get("market_cap", 0) or c.market_cap
                     c.holder_count = primary.get("holder_count", 0) or c.holder_count
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         if c.address and c.chain_id:
             try:
@@ -558,8 +563,7 @@ class YaobiScanner:
                 ok_resp, text, status = await surf_chat_completion(
                     session,
                     prompt,
-                    model="surf-1.5-instant",
-                    timeout_sec=30,
+                    timeout_sec=18,
                     reasoning_effort="low",
                 )
                 if not ok_resp:

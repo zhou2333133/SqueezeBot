@@ -8,6 +8,7 @@ Official docs:
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 from urllib.parse import urlencode
 
@@ -17,6 +18,9 @@ from config import next_surf_api_key
 from scanner.provider_metrics import record_provider_call, record_provider_skip
 
 SURF_BASE_URL = os.getenv("SURF_API_BASE_URL", "https://api.asksurf.ai/gateway").rstrip("/")
+SURF_CHAT_MODEL = os.getenv("SURF_CHAT_MODEL", "surf-ask").strip() or "surf-ask"
+SURF_CHAT_BACKOFF_SECONDS = int(os.getenv("SURF_CHAT_BACKOFF_SECONDS", "600"))
+_chat_disabled_until = 0.0
 PROJECT_ALIASES = {
     "BTC": "bitcoin",
     "ETH": "ethereum",
@@ -180,18 +184,22 @@ async def search_news(
 async def chat_completion(
     session: aiohttp.ClientSession,
     prompt: str,
-    model: str = "surf-1.5-instant",
-    timeout_sec: float = 30.0,
+    model: str | None = None,
+    timeout_sec: float = 18.0,
     reasoning_effort: str = "low",
 ) -> tuple[bool, str, int | str]:
+    global _chat_disabled_until
     api_key = next_surf_api_key()
     endpoint = "chat/completions"
     if not api_key:
         record_provider_skip("surf", endpoint, "missing_surf_api_key")
         return False, "", "missing_surf_api_key"
+    if time.time() < _chat_disabled_until:
+        record_provider_skip("surf", endpoint, "chat_backoff")
+        return False, "", "chat_backoff"
 
     payload = {
-        "model": model,
+        "model": model or SURF_CHAT_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "reasoning_effort": reasoning_effort,
@@ -205,12 +213,16 @@ async def chat_completion(
             timeout=aiohttp.ClientTimeout(total=timeout_sec),
         ) as resp:
             if resp.status != 200:
-                record_provider_call("surf", endpoint, False, status=resp.status)
+                text = await resp.text()
+                if resp.status in (401, 402, 403, 429, 502):
+                    _chat_disabled_until = time.time() + SURF_CHAT_BACKOFF_SECONDS
+                record_provider_call("surf", endpoint, False, status=resp.status, error=text[:160])
                 return False, "", resp.status
             data = await resp.json()
             record_provider_call("surf", endpoint, True, status=resp.status, items=1)
             text = data["choices"][0]["message"]["content"].strip()
             return True, text, resp.status
     except Exception as e:
+        _chat_disabled_until = time.time() + min(SURF_CHAT_BACKOFF_SECONDS, 120)
         record_provider_call("surf", endpoint, False, status="exception", error=f"{type(e).__name__}: {e}")
         return False, "", f"{type(e).__name__}: {e}"

@@ -626,8 +626,7 @@ class BinanceScalpBot:
             ok_resp, text, status = await surf_chat_completion(
                 self.session,
                 prompt,
-                model="surf-1.5-instant",
-                timeout_sec=30,
+                timeout_sec=18,
                 reasoning_effort="low",
             )
             if not ok_resp:

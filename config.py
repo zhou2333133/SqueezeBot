@@ -143,6 +143,47 @@ def okx_credentials_status() -> dict:
 
 
 class ConfigManager:
+    PROFILE_VERSION = 20260422
+    PROFILE_MIGRATION_DEFAULTS = {
+        # 当前回测/实盘观测后确认要强制落地的策略默认值。
+        # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
+        "SCALP_MAX_POSITIONS": 3,
+        "SCALP_TP1_RATIO": 0.15,
+        "SCALP_TP2_RATIO": 0.25,
+        "SCALP_TP3_TRAIL_PCT": 5.0,
+        "SCALP_CANDIDATE_LIMIT": 50,
+        "SCALP_MAX_DAILY_LOSS_USDT": 200.0,
+        "SCALP_MAX_DAILY_LOSS_R": 10.0,
+        "SCALP_TP1_RR": 1.5,
+        "SCALP_TP2_RR": 3.5,
+        "SCALP_TIME_STOP_MINUTES": 30,
+        "SCALP_TP2_TIMEOUT_MINUTES": 120,
+        "SCALP_STRUCTURE_TRAIL_BARS": 8,
+        "FEE_RATE_PER_SIDE": 0.0004,
+        "SLIPPAGE_RATE_PER_SIDE": 0.0005,
+        "SQUEEZE_OI_DROP_MAJOR": 0.5,
+        "SQUEEZE_OI_DROP_MID": 1.0,
+        "SQUEEZE_OI_DROP_MEME": 1.5,
+        "SQUEEZE_WICK_PCT": 1.0,
+        "SQUEEZE_TAKER_MIN": 0.65,
+        "BREAKOUT_TAKER_MIN": 0.62,
+        "BREAKOUT_MIN_PCT": 0.10,
+        "BREAKOUT_ATR_MULT": 0.7,
+        "BREAKOUT_ATR_MIN_PCT": 0.50,
+        "BREAKOUT_ATR_MAX_PCT": 1.20,
+        "BREAKOUT_MIN_VOL_RATIO": 0.50,
+        "SIGNAL_COOLDOWN_SECONDS": 30,
+        "OI_POLL_INTERVAL": 10,
+        "BTC_GUARD_PCT": 2.0,
+        "YAOBI_SURF_TOP_N": 5,
+        "YAOBI_OKX_HOT_LIMIT": 50,
+        "YAOBI_OKX_HEAVY_TOP_N": 40,
+        "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
+        "YAOBI_FUTURES_TOP_N": 120,
+        "OKX_MIN_REQUEST_INTERVAL": 0.20,
+        "SURF_MIN_REQUEST_INTERVAL": 0.20,
+    }
+
     _BOUNDS: dict[str, tuple] = {
         # 超短线 V3.0
         "SCALP_MAX_POSITIONS":         (1,      20),
@@ -194,6 +235,7 @@ class ConfigManager:
 
     def __init__(self):
         self.default_settings: dict = {
+            "CONFIG_PROFILE_VERSION":   self.PROFILE_VERSION,
             # ── 超短线策略 V3.0 (Squeeze Hunter) ─────────────────────────────
             "SCALP_ENABLED":             False,
             "SCALP_AUTO_TRADE":          False,
@@ -260,6 +302,32 @@ class ConfigManager:
         }
         self.settings: dict = self.load()
 
+    def _coerce_profile_version(self, value) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _persist(self) -> None:
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(self.settings, f, indent=4, ensure_ascii=False)
+
+    def _apply_profile_migration(self, merged: dict, loaded: dict) -> bool:
+        stored_version = self._coerce_profile_version(loaded.get("CONFIG_PROFILE_VERSION", 0))
+        if stored_version >= self.PROFILE_VERSION:
+            return False
+
+        changed = False
+        for key, value in self.PROFILE_MIGRATION_DEFAULTS.items():
+            if key in self.default_settings and merged.get(key) != value:
+                merged[key] = value
+                changed = True
+        if merged.get("CONFIG_PROFILE_VERSION") != self.PROFILE_VERSION:
+            merged["CONFIG_PROFILE_VERSION"] = self.PROFILE_VERSION
+            changed = True
+        return changed
+
     def load(self) -> dict:
         if os.path.exists(CONFIG_FILE):
             try:
@@ -267,6 +335,13 @@ class ConfigManager:
                     data = json.load(f)
                 merged = self.default_settings.copy()
                 merged.update(data)
+                migrated = self._apply_profile_migration(merged, data)
+                self.settings = merged
+                if migrated:
+                    self._persist()
+                    logging.getLogger(__name__).info(
+                        "配置已迁移到默认参数版本 %s", self.PROFILE_VERSION
+                    )
                 return merged
             except Exception as e:
                 logging.getLogger(__name__).warning("配置文件损坏，使用默认值: %s", e)
@@ -292,9 +367,8 @@ class ConfigManager:
                 lo, hi = self._BOUNDS[k]
                 converted = max(lo, min(hi, converted))
             self.settings[k] = converted
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(self.settings, f, indent=4, ensure_ascii=False)
+        self.settings["CONFIG_PROFILE_VERSION"] = self.PROFILE_VERSION
+        self._persist()
 
 
 config_manager = ConfigManager()

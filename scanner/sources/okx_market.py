@@ -19,7 +19,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import aiohttp
 
@@ -54,6 +54,12 @@ CHAIN_IDS.update({
 _cred_cursor = 0
 _request_lock = asyncio.Lock()
 _last_request_at: dict[str, float] = {}
+_endpoint_failures: dict[str, int] = {}
+_endpoint_backoff_until: dict[str, float] = {}
+_unsupported_chain_backoff_until: dict[str, float] = {}
+_ENDPOINT_BACKOFF_SECONDS = 600
+_UNSUPPORTED_CHAIN_BACKOFF_SECONDS = 3600
+_ENDPOINT_FAILURE_LIMIT = 3
 
 
 def _sign(secret: str, ts: str, method: str, path: str, body: str = "") -> str:
@@ -125,6 +131,38 @@ def _json_body(data) -> str:
     return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
 
+def _query_first(path: str, key: str) -> str:
+    try:
+        values = parse_qs(urlsplit(path).query).get(key, [])
+        return str(values[0]) if values else ""
+    except Exception:
+        return ""
+
+
+def _looks_like_unsupported_chain(reason: str) -> bool:
+    text = (reason or "").lower()
+    return "unsupported" in text or "not support" in text or "not supported" in text
+
+
+def _register_endpoint_result(endpoint: str, ok: bool, status: int | str, reason: str, chain: str = "") -> None:
+    if ok:
+        _endpoint_failures.pop(endpoint, None)
+        _endpoint_backoff_until.pop(endpoint, None)
+        return
+
+    reason_text = str(reason or "")
+    if chain and _looks_like_unsupported_chain(reason_text):
+        _unsupported_chain_backoff_until[f"{endpoint}:{chain}"] = time.time() + _UNSUPPORTED_CHAIN_BACKOFF_SECONDS
+        return
+
+    failures = _endpoint_failures.get(endpoint, 0) + 1
+    _endpoint_failures[endpoint] = failures
+    if failures < _ENDPOINT_FAILURE_LIMIT:
+        return
+    if str(status) in {"400", "401", "403", "404", "422", "429", "502"}:
+        _endpoint_backoff_until[endpoint] = time.time() + _ENDPOINT_BACKOFF_SECONDS
+
+
 async def _request_json(
     session: aiohttp.ClientSession,
     method: str,
@@ -134,6 +172,16 @@ async def _request_json(
     endpoint: str,
     expected_items: int = 0,
 ) -> dict | list | None:
+    now = time.time()
+    chain = _query_first(path, "chainIndex")
+    chain_backoff_key = f"{endpoint}:{chain}" if chain else ""
+    if chain_backoff_key and _unsupported_chain_backoff_until.get(chain_backoff_key, 0.0) > now:
+        record_provider_skip("okx", endpoint, f"unsupported_chain_backoff:{chain}", items=expected_items)
+        return None
+    if _endpoint_backoff_until.get(endpoint, 0.0) > now:
+        record_provider_skip("okx", endpoint, "endpoint_backoff", items=expected_items)
+        return None
+
     cred = _next_credential()
     if not cred:
         record_provider_skip("okx", endpoint, "missing_okx_credentials", items=expected_items)
@@ -158,20 +206,24 @@ async def _request_json(
             if ok:
                 payload = data.get("data")
                 items = len(payload) if isinstance(payload, list) else (1 if payload else 0)
+            reason = (data.get("msg") or data.get("message") or "") if isinstance(data, dict) else ""
+            error = "" if ok else text[:160]
             record_provider_call(
                 "okx",
                 endpoint,
                 ok,
                 status=resp.status,
-                reason=(data.get("msg") or data.get("message") or "") if isinstance(data, dict) else "",
-                error="" if ok else text[:160],
+                reason=reason,
+                error=error,
                 items=items,
             )
+            _register_endpoint_result(endpoint, ok, resp.status, f"{reason} {error}", chain)
             if ok:
                 return data
             logger.debug("OKX %s failed status=%s body=%s", endpoint, resp.status, text[:200])
     except Exception as e:
         record_provider_call("okx", endpoint, False, status="exception", error=f"{type(e).__name__}: {e}")
+        _register_endpoint_result(endpoint, False, "exception", f"{type(e).__name__}: {e}", chain)
         logger.debug("OKX %s 异常: %s", endpoint, e)
     return None
 
@@ -183,6 +235,10 @@ def _data_list(data: dict | list | None) -> list[dict]:
     if isinstance(payload, list):
         return [x for x in payload if isinstance(x, dict)]
     if isinstance(payload, dict):
+        for key in ("tokenList", "tokens", "list", "items", "records", "result"):
+            rows = payload.get(key)
+            if isinstance(rows, list):
+                return [x for x in rows if isinstance(x, dict)]
         return [payload]
     return []
 
@@ -253,6 +309,10 @@ async def search_tokens(
     """搜索链上 token（名称/符号/地址），OKX 文档最大返回 100 条。"""
     if not config_manager.settings.get("YAOBI_OKX_ENABLED", True):
         record_provider_skip("okx", "token/search", "YAOBI_OKX_ENABLED=false")
+        return []
+    keyword = (keyword or "").strip()
+    if not keyword:
+        record_provider_skip("okx", "token/search", "empty_keyword")
         return []
     params = {"chains": chains, "search": keyword, "limit": max(1, min(int(limit), 100))}
     path = f"/api/v6/dex/market/token/search?{urlencode(params)}"
