@@ -271,6 +271,53 @@
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">BTC 5 分钟急跌时禁做多，急涨时禁做空，避免逆着大盘开仓。</div>
                 <input class="inp inp-o" type="number" step="0.1" name="BTC_GUARD_PCT" :value="cfg.BTC_GUARD_PCT??2"></div>
             </div>
+            <div class="grid grid-cols-4 gap-3 mt-3">
+              <label class="flex items-center gap-2 cursor-pointer select-none pt-5">
+                <label class="toggle to-toggle">
+                  <input type="checkbox" name="SCALP_USE_YAOBI_CONTEXT" :checked="cfg.SCALP_USE_YAOBI_CONTEXT!==false" @change="cfg.SCALP_USE_YAOBI_CONTEXT=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <div>
+                  <span class="text-sm text-green-300">接入妖币候选</span>
+                  <div class="text-xs text-gray-600 mt-0.5">有币安合约的妖币候选会进入超短线共享上下文。</div>
+                </div>
+              </label>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">妖币共享 Top N</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">每次候选刷新最多合并多少个妖币合约候选。默认 30。</div>
+                <input class="inp inp-o" type="number" name="SCALP_YAOBI_CONTEXT_TOP_N" :value="cfg.SCALP_YAOBI_CONTEXT_TOP_N??30"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">妖币最低分</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">低于该分数且异动不足的候选不共享。默认 30。</div>
+                <input class="inp inp-o" type="number" name="SCALP_YAOBI_MIN_SCORE" :value="cfg.SCALP_YAOBI_MIN_SCORE??30"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">妖币异动阈值</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">异常分达到阈值也会共享到超短线。默认 35。</div>
+                <input class="inp inp-o" type="number" name="SCALP_YAOBI_MIN_ANOMALY_SCORE" :value="cfg.SCALP_YAOBI_MIN_ANOMALY_SCORE??35"></div>
+            </div>
+            <div class="flex flex-wrap gap-5 mt-3">
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <label class="toggle to-toggle">
+                  <input type="checkbox" name="SCALP_YAOBI_BLOCK_DECISION_BAN" :checked="cfg.SCALP_YAOBI_BLOCK_DECISION_BAN!==false" @change="cfg.SCALP_YAOBI_BLOCK_DECISION_BAN=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-orange-300">妖币禁入拦截</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <label class="toggle to-toggle">
+                  <input type="checkbox" name="SCALP_YAOBI_BLOCK_HIGH_RISK" :checked="cfg.SCALP_YAOBI_BLOCK_HIGH_RISK!==false" @change="cfg.SCALP_YAOBI_BLOCK_HIGH_RISK=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-orange-300">OKX/Surf 高风险拦截</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <label class="toggle to-toggle">
+                  <input type="checkbox" name="SCALP_YAOBI_DIRECTION_GUARD" :checked="cfg.SCALP_YAOBI_DIRECTION_GUARD===true" @change="cfg.SCALP_YAOBI_DIRECTION_GUARD=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-gray-400">情绪方向硬过滤</span>
+              </label>
+            </div>
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">仓位 & 风控</p>
             <div class="grid grid-cols-4 gap-3 mt-2">
@@ -1736,7 +1783,7 @@ function app() {
 
     async saveScalpConfig() {
       const fd = new FormData(document.getElementById('scalpForm'))
-      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL']
+      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()

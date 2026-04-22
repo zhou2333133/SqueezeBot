@@ -143,7 +143,7 @@ def okx_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042202
+    PROFILE_VERSION = 2026042203
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -180,6 +180,13 @@ class ConfigManager:
         "SCALP_SURF_NEWS_TOP_N": 8,
         "SCALP_SURF_ENTRY_AI_ENABLED": False,
         "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": 80.0,
+        "SCALP_USE_YAOBI_CONTEXT": True,
+        "SCALP_YAOBI_CONTEXT_TOP_N": 30,
+        "SCALP_YAOBI_MIN_SCORE": 30,
+        "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
+        "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
+        "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
+        "SCALP_YAOBI_DIRECTION_GUARD": False,
         "YAOBI_SURF_NEWS_ENABLED": False,
         "YAOBI_SURF_NEWS_TOP_N": 20,
         "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
@@ -231,6 +238,9 @@ class ConfigManager:
         "SCALP_SURF_NEWS_INTERVAL_MINUTES": (5, 1440),
         "SCALP_SURF_NEWS_TOP_N":       (1,      50),
         "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": (0.0, 500.0),
+        "SCALP_YAOBI_CONTEXT_TOP_N":   (0,      120),
+        "SCALP_YAOBI_MIN_SCORE":       (0,      100),
+        "SCALP_YAOBI_MIN_ANOMALY_SCORE": (0,    100),
         # 妖币扫描器
         "YAOBI_SCAN_INTERVAL":         (1,      1440),
         "YAOBI_MIN_SCORE":             (0,      100),
@@ -299,6 +309,13 @@ class ConfigManager:
             "SCALP_SURF_NEWS_TOP_N":      8,
             "SCALP_SURF_ENTRY_AI_ENABLED": False,
             "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": 80.0,
+            "SCALP_USE_YAOBI_CONTEXT":    True,
+            "SCALP_YAOBI_CONTEXT_TOP_N":  30,
+            "SCALP_YAOBI_MIN_SCORE":      30,
+            "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
+            "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
+            "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
+            "SCALP_YAOBI_DIRECTION_GUARD": False,
             # ── 妖币扫描器 ────────────────────────────────────────────────────
             "YAOBI_ENABLED":             False,
             "YAOBI_SCAN_INTERVAL":       15,

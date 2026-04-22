@@ -17,6 +17,7 @@ import aiohttp
 from config import config_manager, configured_surf_keys
 from market_hub import hub
 import signals as _signals_mod
+from scanner.candidates import get_sorted_candidates
 from scanner.provider_metrics import record_provider_call, record_provider_skip
 from scanner.sources.surf_api import (
     chat_completion as surf_chat_completion,
@@ -158,6 +159,7 @@ class BinanceScalpBot:
             "btc_guard": 0, "cooldown": 0,
             "symbol_banned": 0, "vol_miss": 0,
             "state_block": 0, "atr_block": 0, "manual_block": 0,
+            "yaobi_block": 0,
             "squeeze": 0, "breakout": 0, "passed": 0,
         }
         self._fstat_ts:         float                    = 0.0
@@ -165,6 +167,231 @@ class BinanceScalpBot:
     @property
     def cfg(self) -> dict:
         return config_manager.settings
+
+    @staticmethod
+    def _as_float(value, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _to_binance_perp_symbol(symbol: str) -> str:
+        raw = "".join(ch for ch in str(symbol or "").upper().strip() if ch.isalnum())
+        if not raw:
+            return ""
+        return raw if raw.endswith("USDT") else f"{raw}USDT"
+
+    def _yaobi_context_from_candidate(self, c: dict) -> dict:
+        return {
+            "yaobi_context": True,
+            "yaobi_symbol": c.get("symbol", ""),
+            "yaobi_name": c.get("name", ""),
+            "yaobi_score": int(c.get("score", 0) or 0),
+            "yaobi_anomaly_score": int(c.get("anomaly_score", 0) or 0),
+            "yaobi_category": c.get("category", ""),
+            "yaobi_sources": list(c.get("sources", []) or []),
+            "yaobi_signals": list(c.get("signals", []) or [])[:8],
+            "yaobi_decision_action": c.get("decision_action", ""),
+            "yaobi_decision_confidence": int(c.get("decision_confidence", 0) or 0),
+            "yaobi_decision_reasons": list(c.get("decision_reasons", []) or [])[:5],
+            "yaobi_decision_risks": list(c.get("decision_risks", []) or [])[:5],
+            "yaobi_decision_note": c.get("decision_note", ""),
+            "yaobi_sentiment_label": c.get("sentiment_label", ""),
+            "yaobi_sentiment_score": int(c.get("sentiment_score", 0) or 0),
+            "yaobi_sentiment_heat": int(c.get("sentiment_heat", 0) or 0),
+            "yaobi_oi_trend_grade": c.get("oi_trend_grade", ""),
+            "yaobi_oi_change_24h_pct": self._as_float(c.get("oi_change_24h_pct")),
+            "yaobi_oi_change_3d_pct": self._as_float(c.get("oi_change_3d_pct")),
+            "yaobi_oi_change_7d_pct": self._as_float(c.get("oi_change_7d_pct")),
+            "yaobi_oi_acceleration": self._as_float(c.get("oi_acceleration")),
+            "yaobi_ema_deviation_pct": self._as_float(c.get("ema_deviation_pct")),
+            "yaobi_volume_ratio": self._as_float(c.get("volume_ratio"), 1.0),
+            "yaobi_whale_long_ratio": self._as_float(c.get("whale_long_ratio"), 0.5),
+            "yaobi_short_crowd_pct": self._as_float(c.get("short_crowd_pct"), 50.0),
+            "yaobi_funding_rate_pct": self._as_float(c.get("funding_rate_pct")),
+            "yaobi_retail_short_pct": self._as_float(c.get("retail_short_pct"), 50.0),
+            "yaobi_okx_buy_ratio": self._as_float(c.get("okx_buy_ratio")),
+            "yaobi_okx_large_trade_pct": self._as_float(c.get("okx_large_trade_pct")),
+            "yaobi_okx_risk_level": int(c.get("okx_risk_level", 0) or 0),
+            "yaobi_okx_top10_hold_pct": self._as_float(c.get("okx_top10_hold_pct")),
+            "yaobi_okx_token_tags": list(c.get("okx_token_tags", []) or [])[:8],
+            "yaobi_surf_ai_risk_level": c.get("surf_ai_risk_level", ""),
+            "yaobi_market_filter_note": c.get("market_filter_note", ""),
+            "yaobi_holder_signal": c.get("holder_signal", ""),
+            "yaobi_chain": c.get("chain", ""),
+            "yaobi_chain_id": c.get("chain_id", ""),
+            "yaobi_address": c.get("address", ""),
+            "yaobi_price_usd": self._as_float(c.get("price_usd")),
+            "yaobi_price_change_1h": self._as_float(c.get("price_change_1h")),
+            "yaobi_price_change_4h": self._as_float(c.get("price_change_4h")),
+            "yaobi_price_change_24h": self._as_float(c.get("price_change_24h")),
+            "yaobi_updated_at": c.get("updated_at", ""),
+            "yaobi_found_at": c.get("found_at", ""),
+        }
+
+    def _load_yaobi_futures_context(self) -> dict[str, dict]:
+        if not self.cfg.get("SCALP_USE_YAOBI_CONTEXT", True):
+            return {}
+        top_n = int(self.cfg.get("SCALP_YAOBI_CONTEXT_TOP_N", 30) or 0)
+        if top_n <= 0:
+            return {}
+
+        try:
+            items = get_sorted_candidates(min_score=0)
+        except Exception as e:
+            logger.debug("⚡ 妖币共享候选读取失败: %s", e)
+            return {}
+
+        min_score = int(self.cfg.get("SCALP_YAOBI_MIN_SCORE", 30) or 0)
+        min_anomaly = int(self.cfg.get("SCALP_YAOBI_MIN_ANOMALY_SCORE", 35) or 0)
+        monitored = set(self.monitored_symbols)
+        selected: list[tuple[int, int, str, dict]] = []
+
+        for c in items:
+            if not c.get("has_futures"):
+                continue
+            symbol = self._to_binance_perp_symbol(c.get("symbol", ""))
+            if not symbol or (monitored and symbol not in monitored):
+                continue
+            score = int(c.get("score", 0) or 0)
+            anomaly = int(c.get("anomaly_score", 0) or 0)
+            action = str(c.get("decision_action", "") or "")
+            if score < min_score and anomaly < min_anomaly and action not in ("允许交易", "等待确认", "禁止交易"):
+                continue
+            selected.append((score, anomaly, symbol, c))
+
+        selected.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        contexts: dict[str, dict] = {}
+        for _, _, symbol, c in selected:
+            if symbol in contexts:
+                continue
+            contexts[symbol] = self._yaobi_context_from_candidate(c)
+            if len(contexts) >= top_n:
+                break
+        return contexts
+
+    def _merge_yaobi_context(
+        self,
+        candidates: dict[str, dict],
+        ticker_index: dict[str, dict] | None = None,
+        allow_add: bool = True,
+    ) -> dict:
+        contexts = self._load_yaobi_futures_context()
+        if not contexts:
+            return {"available": 0, "merged": 0, "added": 0, "blocked": 0}
+
+        ticker_index = ticker_index or {}
+        merged = added = blocked = 0
+        for symbol, ctx in contexts.items():
+            meta = candidates.get(symbol)
+            ticker = ticker_index.get(symbol, {})
+            if meta is None:
+                if not allow_add:
+                    continue
+                change = self._as_float(ticker.get("priceChangePercent"), ctx.get("yaobi_price_change_24h", 0.0))
+                volume = self._as_float(ticker.get("quoteVolume"), 0.0)
+                meta = {
+                    "change_24h": change,
+                    "volume_24h": volume,
+                    "rank": len(candidates) + 1,
+                    "direction_bias": "ANY",
+                    "news_sentiment": "neutral",
+                    "vol_surge": 1.0,
+                    "last_price": self._as_float(ticker.get("lastPrice"), ctx.get("yaobi_price_usd", 0.0)),
+                    "candidate_sources": ["yaobi_shared"],
+                }
+                candidates[symbol] = meta
+                added += 1
+            else:
+                sources = set(meta.get("candidate_sources", ["binance_24h"]))
+                sources.add("yaobi_shared")
+                meta["candidate_sources"] = sorted(sources)
+                merged += 1
+
+            if ticker and not meta.get("last_price"):
+                meta["last_price"] = self._as_float(ticker.get("lastPrice"))
+            meta.update(ctx)
+            if ctx.get("yaobi_decision_action") == "禁止交易":
+                blocked += 1
+        return {"available": len(contexts), "merged": merged, "added": added, "blocked": blocked}
+
+    def _prepare_candidate_path_meta(self, candidates: dict[str, dict]) -> None:
+        path_keys = (
+            "scalp_candidate_seen_time",
+            "scalp_candidate_seen_ts",
+            "scalp_candidate_seen_price",
+            "scalp_candidate_last_price",
+            "scalp_candidate_max_up_pct",
+            "scalp_candidate_max_down_pct",
+            "scalp_candidate_elapsed_min",
+        )
+        for symbol, meta in candidates.items():
+            prev = self.candidate_meta.get(symbol, {})
+            for key in path_keys:
+                if key in prev and key not in meta:
+                    meta[key] = prev[key]
+            if not meta.get("scalp_candidate_seen_price"):
+                price = self._as_float(meta.get("last_price") or meta.get("yaobi_price_usd"))
+                if price > 0:
+                    meta["scalp_candidate_seen_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    meta["scalp_candidate_seen_ts"] = time.monotonic()
+                    meta["scalp_candidate_seen_price"] = price
+                    meta["scalp_candidate_last_price"] = price
+                    meta["scalp_candidate_max_up_pct"] = 0.0
+                    meta["scalp_candidate_max_down_pct"] = 0.0
+                    meta["scalp_candidate_elapsed_min"] = 0.0
+
+    def _update_candidate_path(self, symbol: str, price: float) -> None:
+        if price <= 0:
+            return
+        meta = self.candidate_meta.get(symbol)
+        if not meta:
+            return
+        if not meta.get("scalp_candidate_seen_price"):
+            meta["scalp_candidate_seen_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            meta["scalp_candidate_seen_ts"] = time.monotonic()
+            meta["scalp_candidate_seen_price"] = price
+            meta["scalp_candidate_max_up_pct"] = 0.0
+            meta["scalp_candidate_max_down_pct"] = 0.0
+
+        seen_price = self._as_float(meta.get("scalp_candidate_seen_price"))
+        if seen_price <= 0:
+            return
+        up_pct = (price - seen_price) / seen_price * 100
+        down_pct = (seen_price - price) / seen_price * 100
+        meta["scalp_candidate_last_price"] = round(price, 8)
+        meta["scalp_candidate_max_up_pct"] = round(max(self._as_float(meta.get("scalp_candidate_max_up_pct")), up_pct), 4)
+        meta["scalp_candidate_max_down_pct"] = round(max(self._as_float(meta.get("scalp_candidate_max_down_pct")), down_pct), 4)
+        seen_ts = self._as_float(meta.get("scalp_candidate_seen_ts"))
+        if seen_ts > 0:
+            meta["scalp_candidate_elapsed_min"] = round((time.monotonic() - seen_ts) / 60, 2)
+
+    def _yaobi_entry_guard(self, symbol: str, direction: str) -> tuple[bool, str]:
+        if not self.cfg.get("SCALP_USE_YAOBI_CONTEXT", True):
+            return True, ""
+        meta = self.candidate_meta.get(symbol, {})
+        if not meta.get("yaobi_context"):
+            return True, ""
+
+        action = str(meta.get("yaobi_decision_action") or "")
+        if self.cfg.get("SCALP_YAOBI_BLOCK_DECISION_BAN", True) and action == "禁止交易":
+            return False, f"妖币扫描决策=禁止交易: {meta.get('yaobi_decision_note') or meta.get('yaobi_decision_risks')}"
+
+        if self.cfg.get("SCALP_YAOBI_BLOCK_HIGH_RISK", True):
+            if str(meta.get("yaobi_surf_ai_risk_level") or "").upper() == "HIGH":
+                return False, f"Surf AI高风险: {meta.get('yaobi_decision_note') or ''}"
+            if int(meta.get("yaobi_okx_risk_level", 0) or 0) >= 4:
+                return False, f"OKX风险等级{meta.get('yaobi_okx_risk_level')}"
+
+        if self.cfg.get("SCALP_YAOBI_DIRECTION_GUARD", False):
+            sentiment = str(meta.get("yaobi_sentiment_label") or "").lower()
+            if direction == "LONG" and sentiment == "bearish" and action != "允许交易":
+                return False, "妖币情绪偏空，阻止动能多"
+            if direction == "SHORT" and sentiment == "bullish" and action != "允许交易":
+                return False, "妖币情绪偏多，阻止动能空"
+
+        return True, ""
 
     # ─── 启动 ──────────────────────────────────────────────────────────────────
 
@@ -235,9 +462,24 @@ class BinanceScalpBot:
         custom = cfg.get("SCALP_WATCHLIST", "").strip()
         if custom:
             syms = [s.strip().upper() for s in custom.split(",") if s.strip()]
-            self.candidate_symbols = syms
-            self.candidate_meta    = {s: {"change_24h": 0.0, "volume_24h": 0.0} for s in syms}
+            candidates = {
+                s: {
+                    "change_24h": 0.0,
+                    "volume_24h": 0.0,
+                    "rank": i + 1,
+                    "direction_bias": "ANY",
+                    "news_sentiment": self.candidate_meta.get(s, {}).get("news_sentiment", "neutral"),
+                    "candidate_sources": ["manual_watchlist"],
+                }
+                for i, s in enumerate(syms)
+            }
+            yb_stats = self._merge_yaobi_context(candidates, allow_add=False)
+            self._prepare_candidate_path_meta(candidates)
+            self.candidate_symbols = list(candidates.keys())
+            self.candidate_meta    = candidates
             await self._sync_ws_subscriptions()
+            if yb_stats["merged"]:
+                logger.info("⚡ 妖币共享: 自选池已补充 %d 个候选上下文", yb_stats["merged"])
             return
 
         try:
@@ -255,6 +497,7 @@ class BinanceScalpBot:
 
         usdt = [t for t in tickers if str(t.get("symbol", "")).endswith("USDT")]
         usdt.sort(key=lambda t: float(t.get("quoteVolume", 0)), reverse=True)
+        ticker_index = {t.get("symbol"): t for t in usdt if t.get("symbol")}
 
         limit    = cfg.get("SCALP_CANDIDATE_LIMIT", 80)
         min_vol  = 5_000_000.0
@@ -288,7 +531,12 @@ class BinanceScalpBot:
                 "rank":           i + 1,
                 "direction_bias": bias,
                 "news_sentiment": self.candidate_meta.get(sym, {}).get("news_sentiment", "neutral"),
+                "last_price":     float(t.get("lastPrice", 0) or 0),
+                "candidate_sources": ["binance_24h"],
             }
+
+        yb_stats = self._merge_yaobi_context(candidates, ticker_index)
+        self._prepare_candidate_path_meta(candidates)
 
         # 计算vol_surge（异动倍数，用于heartbeat展示）
         for sym, meta in candidates.items():
@@ -323,6 +571,11 @@ class BinanceScalpBot:
         )
         if excluded:
             logger.info("⚡ 排除: %s", ", ".join(excluded[:8]))
+        if yb_stats["available"]:
+            logger.info(
+                "⚡ 妖币共享: 可用%d个 | 合并%d个 | 新增%d个Binance合约候选 | 禁入标记%d个",
+                yb_stats["available"], yb_stats["merged"], yb_stats["added"], yb_stats["blocked"],
+            )
 
         await self._fetch_funding_rates(list(candidates.keys()))
         await self._surf_news_scan(list(candidates.keys()))
@@ -439,6 +692,8 @@ class BinanceScalpBot:
 
         # 平仓后的影子复盘：继续观察原方向是否还有空间
         self._update_post_exit_watch(symbol, price)
+        # 候选池路径复盘：从进入超短线候选池开始记录短线最大上/下波动
+        self._update_candidate_path(symbol, price)
 
         # 更新持仓实时价格 + 检查TP/SL
         if symbol in self.open_positions:
@@ -1150,6 +1405,13 @@ class BinanceScalpBot:
                            symbol, self.daily_realized_r, daily_drawdown_r, max_daily_r)
             return
 
+        yaobi_ok, yaobi_reason = self._yaobi_entry_guard(symbol, direction)
+        if not yaobi_ok:
+            self._fstat["yaobi_block"] += 1
+            self._signal_cooldown[symbol] = time.monotonic()
+            logger.info("⚡ [%s] 🧭 妖币共享数据拦截 %s: %s", symbol, direction, yaobi_reason)
+            return
+
         # 更新信号冷却时间戳
         self._signal_cooldown[symbol] = time.monotonic()
 
@@ -1406,6 +1668,12 @@ class BinanceScalpBot:
                  if len(closes) >= 60 and closes[-60] else 0.0)
         taker = self._get_taker_ratio(symbol, min_vol_ratio=0.0)
         watch = get_watch_item(symbol) or {}
+        seen_price = self._as_float(meta.get("scalp_candidate_seen_price"))
+        last_price = self._as_float(meta.get("scalp_candidate_last_price"))
+        max_up = self._as_float(meta.get("scalp_candidate_max_up_pct"))
+        max_down = self._as_float(meta.get("scalp_candidate_max_down_pct"))
+        pre_entry_favorable = max_up if direction == "LONG" else max_down
+        pre_entry_adverse = max_down if direction == "LONG" else max_up
         return {
             "symbol": symbol,
             "direction": direction,
@@ -1416,10 +1684,41 @@ class BinanceScalpBot:
             "direction_bias": meta.get("direction_bias"),
             "change_24h": meta.get("change_24h", 0.0),
             "volume_24h": meta.get("volume_24h", 0.0),
+            "candidate_sources": meta.get("candidate_sources", []),
             "vol_surge": meta.get("vol_surge", 0.0),
             "funding_rate": meta.get("funding_rate", 0.0),
             "fr_squeeze": meta.get("fr_squeeze", False),
             "news_sentiment": meta.get("news_sentiment", "neutral"),
+            "scalp_candidate_seen_time": meta.get("scalp_candidate_seen_time", ""),
+            "scalp_candidate_seen_price": round(seen_price, 8) if seen_price else 0.0,
+            "scalp_candidate_last_price": round(last_price, 8) if last_price else 0.0,
+            "scalp_candidate_elapsed_min": meta.get("scalp_candidate_elapsed_min", 0.0),
+            "scalp_candidate_max_up_pct": round(max_up, 4),
+            "scalp_candidate_max_down_pct": round(max_down, 4),
+            "pre_entry_favorable_from_candidate_pct": round(pre_entry_favorable, 4),
+            "pre_entry_adverse_from_candidate_pct": round(pre_entry_adverse, 4),
+            "yaobi_context": meta.get("yaobi_context", False),
+            "yaobi_score": meta.get("yaobi_score", 0),
+            "yaobi_anomaly_score": meta.get("yaobi_anomaly_score", 0),
+            "yaobi_category": meta.get("yaobi_category", ""),
+            "yaobi_decision_action": meta.get("yaobi_decision_action", ""),
+            "yaobi_decision_confidence": meta.get("yaobi_decision_confidence", 0),
+            "yaobi_decision_reasons": meta.get("yaobi_decision_reasons", []),
+            "yaobi_decision_risks": meta.get("yaobi_decision_risks", []),
+            "yaobi_sentiment_label": meta.get("yaobi_sentiment_label", ""),
+            "yaobi_oi_trend_grade": meta.get("yaobi_oi_trend_grade", ""),
+            "yaobi_oi_change_24h_pct": meta.get("yaobi_oi_change_24h_pct", 0.0),
+            "yaobi_oi_change_3d_pct": meta.get("yaobi_oi_change_3d_pct", 0.0),
+            "yaobi_oi_change_7d_pct": meta.get("yaobi_oi_change_7d_pct", 0.0),
+            "yaobi_volume_ratio": meta.get("yaobi_volume_ratio", 0.0),
+            "yaobi_whale_long_ratio": meta.get("yaobi_whale_long_ratio", 0.0),
+            "yaobi_short_crowd_pct": meta.get("yaobi_short_crowd_pct", 0.0),
+            "yaobi_okx_buy_ratio": meta.get("yaobi_okx_buy_ratio", 0.0),
+            "yaobi_okx_large_trade_pct": meta.get("yaobi_okx_large_trade_pct", 0.0),
+            "yaobi_okx_risk_level": meta.get("yaobi_okx_risk_level", 0),
+            "yaobi_address": meta.get("yaobi_address", ""),
+            "yaobi_chain": meta.get("yaobi_chain", ""),
+            "yaobi_market_filter_note": meta.get("yaobi_market_filter_note", ""),
             "watchlist_status": watch.get("status", ""),
             "watchlist_reason": watch.get("reason", ""),
             "oi_change_3m_pct": round(self._get_oi_change_pct(symbol) or 0.0, 4),
@@ -1787,6 +2086,7 @@ class BinanceScalpBot:
             f"  ❌ 信号冷却中:   {s['cooldown']:>5}次",
             f"  ❌ 单币熔断中:   {s['symbol_banned']:>5}次",
             f"  ❌ 人工禁入:     {s['manual_block']:>5}次",
+            f"  ❌ 妖币共享拦截: {s['yaobi_block']:>5}次",
             f"  ❌ 当前K量不足:  {s['vol_miss']:>5}次",
             f"  ❌ 状态机过滤:   {s['state_block']:>5}次",
             f"  ❌ ATR区间过滤:  {s['atr_block']:>5}次",
@@ -1811,6 +2111,7 @@ class BinanceScalpBot:
             "cooldown":     s["cooldown"],
             "symbol_banned": s["symbol_banned"],
             "manual_block":  s["manual_block"],
+            "yaobi_block":   s["yaobi_block"],
             "vol_miss":     s["vol_miss"],
             "state_block":   s["state_block"],
             "atr_block":     s["atr_block"],

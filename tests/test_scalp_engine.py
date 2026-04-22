@@ -2,11 +2,13 @@ import unittest
 
 from bot_scalp import BinanceScalpBot, ScalpPosition
 from config import config_manager
+from scanner.candidates import Candidate, clear_candidates, upsert_candidate
 
 
 class TestScalpEngine(unittest.TestCase):
     def setUp(self) -> None:
         self._orig_settings = config_manager.settings.copy()
+        clear_candidates()
         config_manager.settings.update({
             "FEE_RATE_PER_SIDE": 0.0004,
             "SLIPPAGE_RATE_PER_SIDE": 0.0005,
@@ -14,11 +16,18 @@ class TestScalpEngine(unittest.TestCase):
             "BREAKOUT_ATR_MULT": 0.7,
             "BREAKOUT_ATR_MIN_PCT": 0.50,
             "BREAKOUT_ATR_MAX_PCT": 1.20,
+            "SCALP_USE_YAOBI_CONTEXT": True,
+            "SCALP_YAOBI_CONTEXT_TOP_N": 30,
+            "SCALP_YAOBI_MIN_SCORE": 30,
+            "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
+            "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
+            "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
         })
 
     def tearDown(self) -> None:
         config_manager.settings.clear()
         config_manager.settings.update(self._orig_settings)
+        clear_candidates()
 
     def test_close_segment_records_net_after_costs(self) -> None:
         bot = BinanceScalpBot()
@@ -86,6 +95,72 @@ class TestScalpEngine(unittest.TestCase):
         self.assertFalse(bot._breakout_atr_allowed(0.30))
         self.assertTrue(bot._breakout_atr_allowed(0.75))
         self.assertFalse(bot._breakout_atr_allowed(1.50))
+
+    def test_yaobi_futures_context_is_shared_to_scalp_candidates(self) -> None:
+        upsert_candidate(Candidate(
+            symbol="BAS",
+            has_futures=True,
+            score=82,
+            anomaly_score=44,
+            sources=["binance_futures", "okx_hot"],
+            decision_action="允许交易",
+            decision_confidence=70,
+            oi_trend_grade="A",
+            okx_buy_ratio=0.68,
+            address="0xabc",
+            chain="base",
+        ))
+        bot = BinanceScalpBot()
+        bot.monitored_symbols = ["BASUSDT"]
+
+        candidates: dict[str, dict] = {}
+        stats = bot._merge_yaobi_context(candidates)
+
+        self.assertEqual(stats["added"], 1)
+        self.assertIn("BASUSDT", candidates)
+        self.assertTrue(candidates["BASUSDT"]["yaobi_context"])
+        self.assertEqual(candidates["BASUSDT"]["yaobi_score"], 82)
+        self.assertEqual(candidates["BASUSDT"]["yaobi_address"], "0xabc")
+
+    def test_entry_context_includes_candidate_path_and_yaobi_context(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["BASUSDT"] = {
+            "rank": 3,
+            "direction_bias": "ANY",
+            "change_24h": 20.0,
+            "volume_24h": 2_000_000,
+            "candidate_sources": ["binance_24h", "yaobi_shared"],
+            "yaobi_context": True,
+            "yaobi_score": 75,
+            "yaobi_decision_action": "允许交易",
+            "yaobi_oi_trend_grade": "A",
+            "scalp_candidate_seen_price": 1.0,
+            "scalp_candidate_seen_ts": 1.0,
+            "scalp_candidate_seen_time": "2026-04-22 10:00:00",
+            "scalp_candidate_max_up_pct": 0.0,
+            "scalp_candidate_max_down_pct": 0.0,
+        }
+        bot._update_candidate_path("BASUSDT", 1.12)
+        bot.kline_buffer["BASUSDT"] = [
+            {"o": 1.0, "h": 1.1, "l": 0.99, "c": 1.0 + i * 0.001, "q": 1000.0, "Q": 600.0}
+            for i in range(60)
+        ]
+        bot._live_candle["BASUSDT"] = {
+            "h": 1.13,
+            "l": 1.10,
+            "taker_buy": 700.0,
+            "total_vol": 1000.0,
+            "close": 1.12,
+            "open": 1.10,
+        }
+
+        ctx = bot._entry_context_snapshot("BASUSDT", "LONG", 0.3, "动能突破多", "TREND_EARLY")
+
+        self.assertTrue(ctx["yaobi_context"])
+        self.assertEqual(ctx["yaobi_score"], 75)
+        self.assertEqual(ctx["candidate_sources"], ["binance_24h", "yaobi_shared"])
+        self.assertAlmostEqual(ctx["scalp_candidate_max_up_pct"], 12.0, places=3)
+        self.assertAlmostEqual(ctx["pre_entry_favorable_from_candidate_pct"], 12.0, places=3)
 
 
 if __name__ == "__main__":
