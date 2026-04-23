@@ -1227,6 +1227,52 @@ class BinanceScalpBot:
             return pos.entry_price * (1 + roundtrip_cost + lock_pct)
         return pos.entry_price * (1 - roundtrip_cost - lock_pct)
 
+    def _apply_tp3_trailing_stop(self, pos: ScalpPosition, price: float) -> None:
+        if not pos.tp2_hit or pos.quantity_remaining <= 0 or pos.trail_ref_price <= 0:
+            return
+
+        trail_pct = pos.trail_pct
+        if pos.direction == "LONG" and price > pos.trail_ref_price:
+            pos.trail_ref_price = price
+        elif pos.direction == "SHORT" and price < pos.trail_ref_price:
+            pos.trail_ref_price = price
+
+        candidates: list[float] = []
+        buf_trail = self.kline_buffer.get(pos.symbol, [])
+        if len(buf_trail) >= 20:
+            ema20 = sum(k["c"] for k in buf_trail[-20:]) / 20
+            candidates.append(
+                ema20 * (1 - trail_pct / 100)
+                if pos.direction == "LONG"
+                else ema20 * (1 + trail_pct / 100)
+            )
+            structure_bars = int(pos.structure_trail_bars)
+            recent = buf_trail[-structure_bars:] if len(buf_trail) >= structure_bars else buf_trail
+            candidates.append(
+                min(k["l"] for k in recent)
+                if pos.direction == "LONG"
+                else max(k["h"] for k in recent)
+            )
+
+        candidates.append(
+            pos.trail_ref_price * (1 - trail_pct / 100)
+            if pos.direction == "LONG"
+            else pos.trail_ref_price * (1 + trail_pct / 100)
+        )
+        candidates = [c for c in candidates if c > 0]
+        if not candidates:
+            return
+
+        aggressive_runner = self.cfg.get("SCALP_TP3_AGGRESSIVE_RUNNER", True)
+        if pos.direction == "LONG":
+            ordered = sorted(candidates)
+            new_sl = ordered[len(ordered) // 2] if aggressive_runner else ordered[-1]
+            pos.sl_price = max(new_sl, pos.sl_price)
+        else:
+            ordered = sorted(candidates)
+            new_sl = ordered[len(ordered) // 2] if aggressive_runner else ordered[0]
+            pos.sl_price = min(new_sl, pos.sl_price)
+
     def _get_oi_change_pct(self, symbol: str) -> float | None:
         """计算最近3分钟OI变化%（负值=OI减少=爆仓踩踏）"""
         cache = self._oi_cache.get(symbol, [])
@@ -1604,7 +1650,7 @@ class BinanceScalpBot:
                 market_state       = market_state,
                 tp1_ratio          = tp1_ratio,
                 tp2_ratio          = tp2_ratio,
-                trail_pct          = cfg.get("SCALP_TP3_TRAIL_PCT", 5.0),
+                trail_pct          = cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
                 structure_trail_bars = int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
                 time_stop_minutes  = time_stop_minutes,
                 tp2_timeout_minutes = tp2_timeout_minutes,
@@ -1674,7 +1720,7 @@ class BinanceScalpBot:
             market_state       = market_state,
             tp1_ratio          = tp1_ratio,
             tp2_ratio          = tp2_ratio,
-            trail_pct          = cfg.get("SCALP_TP3_TRAIL_PCT", 5.0),
+            trail_pct          = cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
             structure_trail_bars = int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
             time_stop_minutes  = time_stop_minutes,
             tp2_timeout_minutes = tp2_timeout_minutes,
@@ -2101,32 +2147,7 @@ class BinanceScalpBot:
 
         # ── TP3：EMA20 + 市场结构 + 固定%三轨追踪止损（只向有利方向棘轮）──
         if pos.tp2_hit and pos.quantity_remaining > 0 and pos.trail_ref_price > 0:
-            if pos.direction == "LONG" and price > pos.trail_ref_price:
-                pos.trail_ref_price = price
-            elif pos.direction == "SHORT" and price < pos.trail_ref_price:
-                pos.trail_ref_price = price
-
-            buf_trail = self.kline_buffer.get(symbol, [])
-            structure_bars = int(pos.structure_trail_bars)
-            if len(buf_trail) >= 20:
-                ema20     = sum(k["c"] for k in buf_trail[-20:]) / 20
-                ema20_sl  = ema20 * (1 - trail_pct / 100) if pos.direction == "LONG" else ema20 * (1 + trail_pct / 100)
-                recent    = buf_trail[-structure_bars:] if len(buf_trail) >= structure_bars else buf_trail
-                struct_sl = min(k["l"] for k in recent) if pos.direction == "LONG" else max(k["h"] for k in recent)
-                fixed_sl = (pos.trail_ref_price * (1 - trail_pct / 100)
-                            if pos.direction == "LONG"
-                            else pos.trail_ref_price * (1 + trail_pct / 100))
-                if pos.direction == "LONG":
-                    new_sl = max(ema20_sl, struct_sl, fixed_sl)
-                    pos.sl_price = max(new_sl, pos.sl_price)  # 只棘轮上移
-                else:
-                    new_sl = min(ema20_sl, struct_sl, fixed_sl)
-                    pos.sl_price = min(new_sl, pos.sl_price)  # 只棘轮下移
-            else:
-                if pos.direction == "LONG":
-                    pos.sl_price = max(pos.trail_ref_price * (1 - trail_pct / 100), pos.sl_price)
-                else:
-                    pos.sl_price = min(pos.trail_ref_price * (1 + trail_pct / 100), pos.sl_price)
+            self._apply_tp3_trailing_stop(pos, price)
 
         # ── 止损检查（初始SL / 保本SL / TP3追踪SL 统一走这里）──────────
         sl_crossed = (pos.direction == "LONG"  and price <= pos.sl_price * 0.999) or \

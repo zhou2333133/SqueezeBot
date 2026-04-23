@@ -143,14 +143,14 @@ def okx_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042204
+    PROFILE_VERSION = 2026042301
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
         "SCALP_MAX_POSITIONS": 3,
         "SCALP_TP1_RATIO": 0.15,
         "SCALP_TP2_RATIO": 0.25,
-        "SCALP_TP3_TRAIL_PCT": 5.0,
+        "SCALP_TP3_TRAIL_PCT": 8.0,
         "SCALP_CANDIDATE_LIMIT": 40,
         "SCALP_MAX_DAILY_LOSS_USDT": 200.0,
         "SCALP_MAX_DAILY_LOSS_R": 10.0,
@@ -158,7 +158,8 @@ class ConfigManager:
         "SCALP_TP2_RR": 3.5,
         "SCALP_TIME_STOP_MINUTES": 30,
         "SCALP_TP2_TIMEOUT_MINUTES": 120,
-        "SCALP_STRUCTURE_TRAIL_BARS": 10,
+        "SCALP_STRUCTURE_TRAIL_BARS": 14,
+        "SCALP_TP3_AGGRESSIVE_RUNNER": True,
         "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
         "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
         "FEE_RATE_PER_SIDE": 0.0004,
@@ -215,7 +216,7 @@ class ConfigManager:
         "SCALP_STOP_LOSS_PCT":         (0.1,    50.0),
         "SCALP_TP1_RATIO":             (0.1,    0.9),
         "SCALP_TP2_RATIO":             (0.1,    0.9),
-        "SCALP_TP3_TRAIL_PCT":         (0.1,    5.0),
+        "SCALP_TP3_TRAIL_PCT":         (0.1,    15.0),
         "SCALP_CANDIDATE_LIMIT":       (20,     500),
         "SCALP_RISK_PER_TRADE_USDT":   (1,      1_000_000),
         "SCALP_MAX_DAILY_LOSS_USDT":   (1,      1_000_000),
@@ -283,7 +284,7 @@ class ConfigManager:
             "SCALP_STOP_LOSS_PCT":       50.0,
             "SCALP_TP1_RATIO":           0.15,
             "SCALP_TP2_RATIO":           0.25,
-            "SCALP_TP3_TRAIL_PCT":       5.0,
+            "SCALP_TP3_TRAIL_PCT":       8.0,
             "SCALP_WATCHLIST":           "",
             "SCALP_CANDIDATE_LIMIT":     40,
             "SCALP_PAPER_TRADE":         False,
@@ -296,7 +297,8 @@ class ConfigManager:
             "SCALP_TP2_RR":              3.5,
             "SCALP_TIME_STOP_MINUTES":   30,
             "SCALP_TP2_TIMEOUT_MINUTES": 120,
-            "SCALP_STRUCTURE_TRAIL_BARS": 10,
+            "SCALP_STRUCTURE_TRAIL_BARS": 14,
+            "SCALP_TP3_AGGRESSIVE_RUNNER": True,
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
             "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
             "FEE_RATE_PER_SIDE":         0.0004,

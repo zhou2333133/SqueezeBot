@@ -18,6 +18,7 @@ class TestConfigMigration(unittest.TestCase):
                         "SCALP_AUTO_TRADE": True,
                         "SCALP_POSITION_USDT": 10.0,
                         "SCALP_CANDIDATE_LIMIT": 80,
+                        "SCALP_TP3_TRAIL_PCT": 5.0,
                         "SCALP_STRUCTURE_TRAIL_BARS": 8,
                         "SIGNAL_COOLDOWN_SECONDS": 5,
                         "SCALP_MAX_DAILY_LOSS_USDT": 5000.0,
@@ -35,7 +36,9 @@ class TestConfigMigration(unittest.TestCase):
 
                 self.assertEqual(manager.settings["CONFIG_PROFILE_VERSION"], config.ConfigManager.PROFILE_VERSION)
                 self.assertEqual(manager.settings["SCALP_CANDIDATE_LIMIT"], 40)
-                self.assertEqual(manager.settings["SCALP_STRUCTURE_TRAIL_BARS"], 10)
+                self.assertEqual(manager.settings["SCALP_TP3_TRAIL_PCT"], 8.0)
+                self.assertEqual(manager.settings["SCALP_STRUCTURE_TRAIL_BARS"], 14)
+                self.assertTrue(manager.settings["SCALP_TP3_AGGRESSIVE_RUNNER"])
                 self.assertEqual(manager.settings["SCALP_NET_BREAKEVEN_LOCK_PCT"], 0.15)
                 self.assertEqual(manager.settings["SCALP_REVERSAL_STOP_SL_FRACTION"], 0.40)
                 self.assertEqual(manager.settings["SIGNAL_COOLDOWN_SECONDS"], 30)

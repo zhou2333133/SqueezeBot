@@ -478,7 +478,7 @@
             <div class="grid grid-cols-4 gap-3 mt-3">
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP3追踪缓冲 %</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP3使用EMA20、结构低/高点与固定%三轨追踪。默认5%。</div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP3使用EMA20、结构低/高点与固定%三轨追踪。火热行情默认8%。</div>
                 <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP3_TRAIL_PCT" :value="cfg.SCALP_TP3_TRAIL_PCT"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">结构追踪K数</label>
@@ -493,6 +493,14 @@
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">TP1后N分钟未触达TP2，退出剩余仓位。</div>
                 <input class="inp inp-o" type="number" step="5" name="SCALP_TP2_TIMEOUT_MINUTES" :value="cfg.SCALP_TP2_TIMEOUT_MINUTES??120"></div>
             </div>
+            <label class="flex items-center gap-2 cursor-pointer select-none mt-3">
+              <label class="toggle to-toggle">
+                <input type="checkbox" name="SCALP_TP3_AGGRESSIVE_RUNNER" :checked="cfg.SCALP_TP3_AGGRESSIVE_RUNNER!==false" @change="cfg.SCALP_TP3_AGGRESSIVE_RUNNER=$event.target.checked">
+                <span class="ttrack"></span>
+              </label>
+              <span class="text-sm text-orange-300">TP3 Runner 激进持仓</span>
+              <span class="text-xs text-gray-600">开启后 TP3 三轨取更宽松止损，优先吃火热行情尾部。</span>
+            </label>
             <div class="grid grid-cols-4 gap-3 mt-3">
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP后净保本锁利%</label>
@@ -765,6 +773,7 @@
         <a :href="auth.required?'/api/scalp/analysis-pack.md?token='+encodeURIComponent(auth.token):'/api/scalp/analysis-pack.md'"
           download class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="下载 Markdown 摘要复盘包">⬇ MD摘要</a>
         <button @click="copyScalpReport()" class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="生成策略分析报告并复制到剪贴板">📋 复制报告</button>
+        <button @click="resetScalpReviewData()" class="text-xs text-gray-500 hover:text-red-300 transition-colors" title="清空成交、信号、模拟仓位、平仓后观察和候选路径基准">一键清空复盘</button>
         <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
       </div>
     </div>
@@ -1821,7 +1830,7 @@ function app() {
 
     async saveScalpConfig() {
       const fd = new FormData(document.getElementById('scalpForm'))
-      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_WAIT_CONFIRM','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD','SCALP_YAOBI_FUNDING_OI_GUARD']
+      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_TP3_AGGRESSIVE_RUNNER','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_WAIT_CONFIRM','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD','SCALP_YAOBI_FUNDING_OI_GUARD']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()
@@ -1862,6 +1871,18 @@ function app() {
       this.scalpTrades=[]; this.scalpTotalPnl=0; this.scalpWinRate=0; this.scalpTradeTotal=0
       this.scalpEquity={trades:0,points:[]}
       this.showToast('✅ 历史成交已清空')
+    },
+    async resetScalpReviewData() {
+      if(!confirm('清空成交、信号、模拟仓位、平仓后观察和候选路径基准？真实仓位不会清除。')) return
+      try {
+        const d = await(await this.apiFetch('/api/scalp/review-data',{method:'DELETE'})).json()
+        this.scalpTrades=[]; this.scalpSignals=[]
+        this.scalpTotalPnl=0; this.scalpWinRate=0; this.scalpTradeTotal=0
+        this.scalpEquity={trades:0,points:[]}
+        await Promise.all([this.loadScalpTrades(), this.loadScalpSignals(), this.loadScalpEquity(), this.loadScalpPositions()])
+        const c=d.cleared||{}
+        this.showToast(`✅ 复盘已重置: 成交${c.trades||0} 信号${c.signals||0} 模拟仓${c.paper_positions||0}`, 'success')
+      } catch(e) { this.showToast('❌ 复盘清空失败: '+e,'error') }
     },
     async loadWatchlist() {
       try { const d=await(await this.apiFetch('/api/watchlist')).json(); this.watchlist=d.items||[] } catch{}

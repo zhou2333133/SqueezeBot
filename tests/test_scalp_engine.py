@@ -18,6 +18,7 @@ class TestScalpEngine(unittest.TestCase):
             "BREAKOUT_ATR_MAX_PCT": 1.20,
             "BREAKOUT_MAX_PREMOVE_30M_PCT": 3.0,
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
+            "SCALP_TP3_AGGRESSIVE_RUNNER": True,
             "SCALP_USE_YAOBI_CONTEXT": True,
             "SCALP_YAOBI_CONTEXT_TOP_N": 30,
             "SCALP_YAOBI_MIN_SCORE": 30,
@@ -155,6 +156,40 @@ class TestScalpEngine(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIn("禁止追空", reason)
+
+    def test_tp3_aggressive_runner_uses_looser_trailing_candidate(self) -> None:
+        bot = BinanceScalpBot()
+        bot.kline_buffer["RUNUSDT"] = [
+            {"o": 100 + i, "h": 101 + i, "l": 99 + i, "c": 100 + i, "q": 1000.0, "Q": 600.0}
+            for i in range(25)
+        ]
+        pos = ScalpPosition(
+            symbol="RUNUSDT",
+            direction="LONG",
+            entry_price=100.0,
+            quantity=1.0,
+            quantity_remaining=0.6,
+            sl_price=100.3,
+            tp1_price=102.0,
+            tp2_price=104.0,
+            tp2_hit=True,
+            trail_ref_price=120.0,
+            trail_pct=8.0,
+            structure_trail_bars=14,
+        )
+
+        bot._apply_tp3_trailing_stop(pos, 124.0)
+
+        self.assertAlmostEqual(pos.trail_ref_price, 124.0)
+        self.assertAlmostEqual(pos.sl_price, 110.0, places=6)
+
+        config_manager.settings["SCALP_TP3_AGGRESSIVE_RUNNER"] = False
+        pos.sl_price = 100.3
+        pos.trail_ref_price = 120.0
+
+        bot._apply_tp3_trailing_stop(pos, 124.0)
+
+        self.assertGreater(pos.sl_price, 114.0)
 
     def test_yaobi_futures_context_is_shared_to_scalp_candidates(self) -> None:
         upsert_candidate(Candidate(

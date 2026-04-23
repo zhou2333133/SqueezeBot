@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import queue as std_queue
+import time
 from datetime import datetime
 from ipaddress import ip_address
 
@@ -372,6 +373,146 @@ async def clear_scalp_trades():
     return JSONResponse({"status": "success", "message": "✅ 历史成交已清空"})
 
 
+def _drain_queue(q: std_queue.Queue) -> int:
+    drained = 0
+    while True:
+        try:
+            q.get_nowait()
+            drained += 1
+        except std_queue.Empty:
+            return drained
+
+
+def _empty_scalp_filter_stats() -> dict:
+    cfg = config_manager.settings
+    return {
+        "checked": 0,
+        "no_candidate": 0,
+        "oi_miss": 0,
+        "btc_guard": 0,
+        "cooldown": 0,
+        "symbol_banned": 0,
+        "manual_block": 0,
+        "yaobi_block": 0,
+        "premove_block": 0,
+        "vol_miss": 0,
+        "state_block": 0,
+        "atr_block": 0,
+        "squeeze": 0,
+        "breakout": 0,
+        "passed": 0,
+        "cfg_sq_oi_major": cfg.get("SQUEEZE_OI_DROP_MAJOR", 0.5),
+        "cfg_sq_oi_mid": cfg.get("SQUEEZE_OI_DROP_MID", 1.0),
+        "cfg_sq_oi_meme": cfg.get("SQUEEZE_OI_DROP_MEME", 1.5),
+        "cfg_sq_taker": cfg.get("SQUEEZE_TAKER_MIN", 0.65),
+        "cfg_bo_taker": cfg.get("BREAKOUT_TAKER_MIN", 0.62),
+        "cfg_bo_min_pct": cfg.get("BREAKOUT_MIN_PCT", 0.10),
+        "cfg_bo_atr_mult": cfg.get("BREAKOUT_ATR_MULT", 0.7),
+        "cfg_bo_atr_min": cfg.get("BREAKOUT_ATR_MIN_PCT", 0.50),
+        "cfg_bo_atr_max": cfg.get("BREAKOUT_ATR_MAX_PCT", 1.20),
+        "cfg_bo_max_premove_30m": cfg.get("BREAKOUT_MAX_PREMOVE_30M_PCT", 3.0),
+        "updated_at": time.time(),
+    }
+
+
+def _reset_scalp_candidate_paths(bot) -> int:
+    if not bot:
+        return 0
+    reset = 0
+    now_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_ts = time.monotonic()
+    for meta in getattr(bot, "candidate_meta", {}).values():
+        price = 0.0
+        for key in ("scalp_candidate_last_price", "last_price", "yaobi_price_usd"):
+            try:
+                price = float(meta.get(key) or 0)
+            except (TypeError, ValueError):
+                price = 0.0
+            if price > 0:
+                break
+        if price <= 0:
+            for key in (
+                "scalp_candidate_seen_time",
+                "scalp_candidate_seen_ts",
+                "scalp_candidate_seen_price",
+                "scalp_candidate_last_price",
+                "scalp_candidate_max_up_pct",
+                "scalp_candidate_max_down_pct",
+                "scalp_candidate_elapsed_min",
+            ):
+                meta.pop(key, None)
+            continue
+        meta["scalp_candidate_seen_time"] = now_label
+        meta["scalp_candidate_seen_ts"] = now_ts
+        meta["scalp_candidate_seen_price"] = price
+        meta["scalp_candidate_last_price"] = price
+        meta["scalp_candidate_max_up_pct"] = 0.0
+        meta["scalp_candidate_max_down_pct"] = 0.0
+        meta["scalp_candidate_elapsed_min"] = 0.0
+        reset += 1
+    return reset
+
+
+@app.delete("/api/scalp/review-data")
+async def reset_scalp_review_data():
+    trade_count = len(scalp_trade_history)
+    signal_count = len(scalp_signals_history)
+    scalp_trade_history.clear()
+    scalp_signals_history.clear()
+    drained_signals = _drain_queue(scalp_signal_queue)
+    drained_logs = _drain_queue(log_queue)
+    drained_scalp_logs = _drain_queue(scalp_log_queue)
+
+    bot = bot_state.scalp_bot
+    post_exit_count = 0
+    paper_cleared = 0
+    real_symbols: set[str] = set()
+    if bot:
+        post_exit_count = sum(len(v) for v in getattr(bot, "_post_exit_watch", {}).values())
+        getattr(bot, "_post_exit_watch", {}).clear()
+        for k in getattr(bot, "_fstat", {}):
+            bot._fstat[k] = 0
+        bot._fstat_ts = 0.0
+
+        for symbol, pos in list(getattr(bot, "open_positions", {}).items()):
+            if getattr(pos, "paper", False):
+                bot.open_positions.pop(symbol, None)
+                scalp_positions.pop(symbol, None)
+                paper_cleared += 1
+            else:
+                real_symbols.add(symbol)
+
+    for symbol, pos in list(scalp_positions.items()):
+        if pos.get("paper"):
+            scalp_positions.pop(symbol, None)
+            paper_cleared += 1
+        else:
+            real_symbols.add(symbol)
+
+    candidate_paths = _reset_scalp_candidate_paths(bot)
+    _signals_mod.scalp_filter_stats = _empty_scalp_filter_stats()
+
+    logger.info(
+        "超短线复盘数据已重置: trades=%d signals=%d paper=%d post_exit=%d candidate_paths=%d real_left=%d",
+        trade_count, signal_count, paper_cleared, post_exit_count, candidate_paths, len(real_symbols),
+    )
+    return JSONResponse({
+        "status": "success",
+        "message": "✅ 复盘数据已清空，新下载的分析包将从现在重新累计",
+        "cleared": {
+            "trades": trade_count,
+            "signals": signal_count,
+            "queued_signals": drained_signals,
+            "logs": drained_logs,
+            "scalp_logs": drained_scalp_logs,
+            "paper_positions": paper_cleared,
+            "post_exit_watches": post_exit_count,
+            "candidate_paths": candidate_paths,
+        },
+        "real_positions_left": len(real_symbols),
+    })
+
+
 @app.get("/api/scalp/trades/csv")
 async def export_scalp_trades_csv():
     trades = list(scalp_trade_history)
@@ -443,6 +584,7 @@ async def get_scalp_report():
             "TP1平仓比例":      cfg.get("SCALP_TP1_RATIO"),
             "TP2平仓比例":      cfg.get("SCALP_TP2_RATIO"),
             "TP3追踪%":         cfg.get("SCALP_TP3_TRAIL_PCT"),
+            "TP3激进Runner":     cfg.get("SCALP_TP3_AGGRESSIVE_RUNNER"),
             "结构追踪K数":       cfg.get("SCALP_STRUCTURE_TRAIL_BARS"),
             "TP后净保本锁利%":   cfg.get("SCALP_NET_BREAKEVEN_LOCK_PCT"),
             "趋势反转止损比例":   cfg.get("SCALP_REVERSAL_STOP_SL_FRACTION"),
