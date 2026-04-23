@@ -26,6 +26,7 @@ from scanner.sources.surf_api import (
     project_terms as surf_project_terms,
     search_news as surf_search_news,
 )
+from scalp_diagnostics import apply_trade_diagnosis, build_entry_1m_profile
 from signals import add_scalp_signal, set_scalp_position, add_scalp_trade
 from trader import BinanceTrader
 from watchlist import get_watch_item, is_symbol_blocked
@@ -1849,6 +1850,14 @@ class BinanceScalpBot:
             last_price or self._as_float(last.get("c")),
         )
         directional_30m = self._recent_directional_move_pct(symbol, direction, 30, current_price)
+        atr_pct = self._calc_atr_pct(buf) if len(buf) >= 15 else 0.0
+        entry_profile = build_entry_1m_profile(
+            buf=buf,
+            live=self._live_candle.get(symbol, {}),
+            direction=direction,
+            current_price=current_price,
+            atr_pct=atr_pct,
+        )
         return {
             "symbol": symbol,
             "direction": direction,
@@ -1901,7 +1910,15 @@ class BinanceScalpBot:
             "watchlist_reason": watch.get("reason", ""),
             "oi_change_3m_pct": round(self._get_oi_change_pct(symbol) or 0.0, 4),
             "current_taker_ratio": round(taker, 4) if taker is not None else None,
-            "atr_pct": round(self._calc_atr_pct(buf), 4) if len(buf) >= 15 else 0.0,
+            "atr_pct": round(atr_pct, 4),
+            "entry_1m_profile": entry_profile,
+            "pre_entry_3m_pct": entry_profile.get("pre_entry_3m_pct", 0.0),
+            "pre_entry_5m_pct": entry_profile.get("pre_entry_5m_pct", 0.0),
+            "pre_entry_15m_pct": entry_profile.get("pre_entry_15m_pct", 0.0),
+            "ema20_deviation_pct": entry_profile.get("ema20_deviation_pct", 0.0),
+            "directional_ema20_deviation_pct": entry_profile.get("directional_ema20_deviation_pct", 0.0),
+            "breakout_after_pullback": entry_profile.get("breakout_after_pullback", False),
+            "taker_trend_5m": entry_profile.get("taker_trend_5m", "flat"),
             "ret20m_pct": round(ret20, 4),
             "ret60m_pct": round(ret60, 4),
             "last_kline_close": last.get("c"),
@@ -1958,6 +1975,7 @@ class BinanceScalpBot:
                 remaining.append(watch)
             else:
                 trade["post_exit_status"] = "complete"
+            apply_trade_diagnosis(trade)
         if remaining:
             self._post_exit_watch[symbol] = remaining
         else:
@@ -2009,6 +2027,9 @@ class BinanceScalpBot:
             "market_state": pos.market_state,
             "entry_price":  round(pos.entry_price, 8),
             "exit_price":   round(exit_price, 8),
+            "sl_price":     round(pos.sl_price, 8),
+            "tp1_price":    round(pos.tp1_price, 8),
+            "tp2_price":    round(pos.tp2_price, 8),
             "entry_time":   pos.entry_time,
             "exit_time":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "pnl_usdt":     round(total_pnl, 4),
@@ -2030,6 +2051,7 @@ class BinanceScalpBot:
             "leverage":     self.cfg.get("SCALP_LEVERAGE", 10),
             "quantity":     round(pos.quantity, 6),
         }
+        apply_trade_diagnosis(trade)
         self._start_post_exit_watch(trade, pos, exit_price)
         add_scalp_trade(trade)
 

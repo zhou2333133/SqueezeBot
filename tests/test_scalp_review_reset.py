@@ -66,6 +66,7 @@ class TestScalpReviewReset(unittest.TestCase):
         self.assertEqual(pack["运行状态"]["scalp_trades"], 0)
         self.assertEqual(pack["运行状态"]["scalp_signals"], 0)
         self.assertEqual(pack["成交明细"], [])
+        self.assertEqual(pack["学习报告"]["样本数"], 0)
         self.assertEqual(pack["信号样本"], [])
         self.assertEqual(pack["当前持仓"], {})
         self.assertEqual(signals_mod.scalp_filter_stats["checked"], 0)

@@ -22,6 +22,7 @@ from config import (
     SENSITIVE_SETTING_KEYS,
 )
 from log_manager import log_queue, scalp_log_queue
+from scalp_diagnostics import apply_trade_diagnosis, build_learning_report
 import signals as _signals_mod
 from signals import (
     scalp_signal_queue, scalp_signals_history, scalp_positions, scalp_trade_history,
@@ -543,7 +544,7 @@ async def export_scalp_trades_csv():
 
 @app.get("/api/scalp/report")
 async def get_scalp_report():
-    trades = list(scalp_trade_history)
+    trades = [apply_trade_diagnosis(t) for t in list(scalp_trade_history)]
     cfg    = config_manager.settings
     if not trades:
         return JSONResponse({"error": "暂无成交记录"}, status_code=404)
@@ -563,6 +564,7 @@ async def get_scalp_report():
     by_reason = dict(collections.Counter(t.get("close_reason", "?") for t in trades))
     by_label  = dict(collections.Counter(trade_signal_label(t) for t in trades).most_common(10))
     by_state  = dict(collections.Counter(t.get("market_state", "?") for t in trades).most_common(10))
+    by_diag   = dict(collections.Counter(t.get("trade_diagnosis", "?") for t in trades).most_common(10))
     by_symbol = collections.Counter()
     sym_pnl: dict[str, float] = {}
     for t in trades:
@@ -657,6 +659,7 @@ async def get_scalp_report():
         "平仓原因分布":   by_reason,
         "信号类型分布":   by_label,
         "市场状态分布":   by_state,
+        "交易诊断分布":   by_diag,
         "盈利最多币种TOP5":  dict(top5),
         "亏损最多币种TOP5":  dict(bot5),
         "过滤统计快照":  _signals_mod.scalp_filter_stats or "（5分钟后刷新）",
@@ -807,6 +810,32 @@ def _analysis_markdown(pack: dict) -> str:
                 f"PnL {row.get('pnl_usdt')}U, MFE {row.get('avg_mfe_pct')}%, MAE {row.get('avg_mae_pct')}%"
             )
         lines.append("")
+    learning = pack.get("学习报告", {})
+    if learning:
+        lines += [
+            "## 学习报告",
+            "",
+            f"- 样本状态: {learning.get('样本状态')}",
+            f"- 诊断分布: {learning.get('诊断分布', {})}",
+            "",
+            "### 亏损归因",
+            "",
+        ]
+        loss_attr = learning.get("亏损归因", {})
+        if loss_attr:
+            for name, row in loss_attr.items():
+                lines.append(
+                    f"- {name}: {row.get('count')}笔, PnL {row.get('pnl_usdt')}U, "
+                    f"亏损笔数占比 {row.get('pct_of_losing_trades')}%, 亏损金额占比 {row.get('pct_of_loss_usdt')}%"
+                )
+        else:
+            lines.append("- 无亏损样本")
+        lines += ["", "### 下一轮参数建议", ""]
+        for item in learning.get("下一轮参数建议", []):
+            lines.append(
+                f"- {item.get('topic')}: {item.get('condition')}；{item.get('suggestion')}"
+            )
+        lines.append("")
     equity = pack.get("净值曲线摘要", {})
     if equity:
         lines += [
@@ -837,15 +866,17 @@ def _analysis_markdown(pack: dict) -> str:
         lines.append(
             f"- {t.get('exit_time', '')} {t.get('symbol')} {t.get('direction')} "
             f"{t.get('signal_label') or t.get('signal')} {t.get('close_reason')} "
-            f"PnL={t.get('pnl_usdt')}U MFE={t.get('mfe_pct')}% MAE={t.get('mae_pct')}% "
+            f"Diag={t.get('trade_diagnosis', 'NA')} PnL={t.get('pnl_usdt')}U "
+            f"MFE={t.get('mfe_pct')}% MAE={t.get('mae_pct')}% "
             f"Post30={t.get('post_exit_30m_favorable_pct', 'NA')}%"
         )
     return "\n".join(lines) + "\n"
 
 
 async def _build_scalp_analysis_pack() -> dict:
-    trades = list(scalp_trade_history)
+    trades = [apply_trade_diagnosis(t) for t in list(scalp_trade_history)]
     bot = bot_state.scalp_bot
+    learning_report = build_learning_report(trades)
     runtime = {
         "scalp_running": bool(bot_state.scalp_task and not bot_state.scalp_task.done()),
         "yaobi_running": bool(bot_state.yaobi_task and not bot_state.yaobi_task.done()),
@@ -882,8 +913,10 @@ async def _build_scalp_analysis_pack() -> dict:
             "by_direction": _group_trade_stats(trades, "direction"),
             "by_market_state": _group_trade_stats(trades, "market_state"),
             "by_close_reason": _group_trade_stats(trades, "close_reason"),
+            "by_diagnosis": _group_trade_stats(trades, "trade_diagnosis"),
             "by_symbol": _group_trade_stats(trades, "symbol"),
         },
+        "学习报告": learning_report,
         "成交明细": trades,
         "信号样本": scalp_signals_history[-120:],
         "当前持仓": dict(scalp_positions),
@@ -921,7 +954,11 @@ async def _build_scalp_analysis_pack() -> dict:
             "mfe_pct": "持仓期间原方向最大有利波动百分比，用于判断是否拿住。",
             "mae_pct": "持仓期间最大逆向波动百分比，用于判断止损是否太紧。",
             "post_exit_*": "平仓后继续观察原方向 15/30/60/120 分钟，用于判断卖飞或方向是否选对。",
+            "trade_diagnosis": "规则化交易主诊断：entry_bad点位错、direction_wrong方向错、valid_runner_missed/exit_too_early卖飞、stop_too_tight止损过紧等。",
+            "diagnosis_tags": "一笔交易可同时命中多个标签；学习报告按这些标签做样本归因。",
+            "学习报告": "按规则汇总亏损归因、点位错样本、方向错样本、卖飞样本和下一轮参数建议；只做复盘建议，不会自动改策略。",
             "entry_context": "开仓瞬间的候选池、妖币共享上下文、候选入池后路径、OI、taker、ATR、短期涨跌快照。",
+            "entry_1m_profile": "开仓时的1分钟画像：pre 3m/5m/15m、EMA20偏离、ATR、回踩突破、Taker趋势和当前K量比。",
             "scalp_candidate_*": "从进入超短线候选池开始到开仓/当前的短线最大上/下波动，用于判断扫描器是否选到可交易波动。",
             "关注池": "人工关注/禁入/等待确认列表；用于复盘选币，不会自动生成新策略。",
             "decision_cards": "妖币扫描生成的人工决策解释卡：允许/等待/禁止/观察，只作筛选参考。",

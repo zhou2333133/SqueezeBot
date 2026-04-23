@@ -96,6 +96,10 @@ class TestScalpEngine(unittest.TestCase):
         self.assertEqual(ctx["symbol"], "TESTUSDT")
         self.assertEqual(ctx["current_taker_ratio"], 0.7)
         self.assertEqual(ctx["candidate_rank"], 1)
+        self.assertIn("entry_1m_profile", ctx)
+        self.assertIn("pre_entry_3m_pct", ctx)
+        self.assertIn("ema20_deviation_pct", ctx)
+        self.assertIn(ctx["taker_trend_5m"], {"rising", "flat", "falling"})
 
     def test_breakout_atr_filter_respects_configured_window(self) -> None:
         bot = BinanceScalpBot()

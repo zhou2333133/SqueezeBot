@@ -4,7 +4,7 @@ import unittest
 
 from config import config_manager
 from signals import scalp_trade_history
-from web import get_scalp_report
+from web import get_scalp_report, _build_scalp_analysis_pack
 
 
 class TestScalpReport(unittest.TestCase):
@@ -153,8 +153,17 @@ class TestScalpReport(unittest.TestCase):
         payload = json.loads(response.body.decode("utf-8"))
 
         self.assertEqual(payload["信号类型分布"], {"动能突破多": 1, "动能突破空": 1})
+        self.assertIn("交易诊断分布", payload)
         self.assertEqual(payload["最佳单笔"]["信号"], "动能突破多")
         self.assertEqual(payload["最差单笔"]["信号"], "动能突破空")
+
+    def test_analysis_pack_includes_learning_report(self) -> None:
+        pack = asyncio.run(_build_scalp_analysis_pack())
+
+        self.assertIn("学习报告", pack)
+        self.assertEqual(pack["学习报告"]["样本数"], 2)
+        self.assertIn("by_diagnosis", pack["成交分组统计"])
+        self.assertIn("trade_diagnosis", pack["成交明细"][0])
 
 
 if __name__ == "__main__":
