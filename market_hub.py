@@ -176,7 +176,7 @@ class MarketHub:
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    logger.warning("📡 MarketHub 刷新异常: %s", e)
+                    logger.warning("📡 MarketHub 刷新异常: %r", e)
                 await asyncio.sleep(60)  # 每60s检查一次是否到刷新时间
         self.running = False
         logger.info("📡 MarketHub 已停止")
@@ -358,7 +358,7 @@ class MarketHub:
                     self._calc_oi_concentration(sym)
                 logger.debug("📡 OKX OI更新%d个合约", count)
         except Exception as e:
-            logger.debug("📡 OKX OI异常: %s", e)
+            logger.debug("📡 OKX OI异常: %r", e)
 
     def _calc_oi_concentration(self, symbol: str) -> None:
         """计算币安OI在两所合计中的占比"""
@@ -392,7 +392,7 @@ class MarketHub:
                     logger.info("📡 MarketHub 监控 %d 个合约", len(syms))
                     return syms
         except Exception as e:
-            logger.warning("📡 获取合约列表失败: %s", e)
+            logger.warning("📡 获取合约列表失败: %r", e)
         return []
 
     def stats(self) -> dict:

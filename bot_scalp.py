@@ -459,14 +459,14 @@ class BinanceScalpBot:
                     ]
                     logger.info("⚡ 自动检测: %d 个 USDT 永续合约", len(self.monitored_symbols))
         except Exception as e:
-            logger.error("⚡ 获取币种列表失败: %s，使用兜底列表", e)
+            logger.error("⚡ 获取币种列表失败: %r，使用兜底列表", e)
             self.monitored_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
 
     # ─── 候选币预筛选（每5分钟）───────────────────────────────────────────────
 
     async def _refresh_candidates_loop(self) -> None:
         while self.running:
-            await asyncio.sleep(300)
+            await asyncio.sleep(30 if not self.candidate_symbols else 300)
             await self._do_refresh_candidates()
             await self._emergency_position_news_check()
 
@@ -511,7 +511,7 @@ class BinanceScalpBot:
                     return
                 tickers = await resp.json()
         except Exception as e:
-            logger.warning("⚡ 候选币刷新异常: %s", e)
+            logger.warning("⚡ 候选币刷新异常: %r", e)
             return
 
         usdt = [t for t in tickers if str(t.get("symbol", "")).endswith("USDT")]
@@ -623,7 +623,7 @@ class BinanceScalpBot:
                     await self._ws.send_str(json.dumps({"method": "SUBSCRIBE", "params": chunk, "id": 20_000 + i}))
                     await asyncio.sleep(0.1)
         except Exception as e:
-            logger.debug("⚡ WS订阅同步失败: %s", e)
+            logger.debug("⚡ WS订阅同步失败: %r", e)
             return
         self._subscribed_streams = desired
         if to_sub or to_unsub:
@@ -640,7 +640,7 @@ class BinanceScalpBot:
                 break
             except Exception as e:
                 if self.running:
-                    logger.warning("⚡ WS 断线: %s，%ds 后重连...", e, backoff)
+                    logger.warning("⚡ WS 断线: %r，%ds 后重连...", e, backoff)
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60)
 
