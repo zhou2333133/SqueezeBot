@@ -57,8 +57,8 @@ class ScalpPosition:
     trail_ref_price:    float      = 0.0
     signal_label:       str        = ""
     market_state:       str        = "UNKNOWN"
-    tp1_ratio:          float      = 0.15
-    tp2_ratio:          float      = 0.25
+    tp1_ratio:          float      = 0.40
+    tp2_ratio:          float      = 0.30
     trail_pct:          float      = 5.0
     structure_trail_bars: int      = 5
     time_stop_minutes:  float      = 30.0
@@ -1095,7 +1095,7 @@ class BinanceScalpBot:
         else:
             avg_vol = self._avg_vol.get(symbol, 0.0)
 
-        ratio_required = self.cfg.get("BREAKOUT_MIN_VOL_RATIO", 0.20) if min_vol_ratio is None else min_vol_ratio
+        ratio_required = self.cfg.get("BREAKOUT_MIN_VOL_RATIO", 0.60) if min_vol_ratio is None else min_vol_ratio
         if total_vol > 0 and (avg_vol == 0 or total_vol >= avg_vol * ratio_required):
             return live["taker_buy"] / total_vol
 
@@ -1116,7 +1116,7 @@ class BinanceScalpBot:
         return (sum(ranges) / len(ranges)) / last_close * 100 if last_close > 0 and ranges else 0.0
 
     def _breakout_required_pct(self, buf: list, atr_pct: float | None = None) -> float:
-        min_pct = self.cfg.get("BREAKOUT_MIN_PCT", 0.10)
+        min_pct = self.cfg.get("BREAKOUT_MIN_PCT", 0.15)
         atr_pct = self._calc_atr_pct(buf) if atr_pct is None else atr_pct
         return max(min_pct, atr_pct * self.cfg.get("BREAKOUT_ATR_MULT", 0.5))
 
@@ -1204,7 +1204,10 @@ class BinanceScalpBot:
     def _exit_profile_for_state(self, state: str) -> dict:
         cfg = self.cfg
         if state == "TREND_EARLY":
-            return {"tp1_ratio": 0.10, "tp2_ratio": 0.20}
+            return {
+                "tp1_ratio": cfg.get("SCALP_TP1_RATIO", 0.40),
+                "tp2_ratio": cfg.get("SCALP_TP2_RATIO", 0.30),
+            }
         if state == "TREND_LATE":
             return {
                 "tp1_ratio": 0.40,
@@ -1213,8 +1216,8 @@ class BinanceScalpBot:
                 "tp2_timeout_minutes": min(cfg.get("SCALP_TP2_TIMEOUT_MINUTES", 120), 60),
             }
         return {
-            "tp1_ratio": cfg.get("SCALP_TP1_RATIO", 0.15),
-            "tp2_ratio": cfg.get("SCALP_TP2_RATIO", 0.25),
+            "tp1_ratio": cfg.get("SCALP_TP1_RATIO", 0.40),
+            "tp2_ratio": cfg.get("SCALP_TP2_RATIO", 0.30),
         }
 
     def _cost_rate(self) -> float:
@@ -1226,6 +1229,23 @@ class BinanceScalpBot:
         if pos.direction == "LONG":
             return pos.entry_price * (1 + roundtrip_cost + lock_pct)
         return pos.entry_price * (1 - roundtrip_cost - lock_pct)
+
+    def _tp1_soft_breakeven_price(self, pos: ScalpPosition) -> float:
+        """TP1后给剩余仓位留呼吸空间，只向有利方向移动止损，不放宽原始SL。"""
+        soft_pct = self.cfg.get("SCALP_TP1_SOFT_BREAKEVEN_PCT", 0.30) / 100
+        buf = self.kline_buffer.get(pos.symbol, [])
+        recent = buf[-5:] if len(buf) >= 5 else buf
+
+        if pos.direction == "LONG":
+            breathing = pos.entry_price * (1 - soft_pct)
+            structure = min((k.get("l", k.get("c", pos.entry_price)) for k in recent), default=breathing) * 0.998
+            candidate = min(breathing, structure)
+            return max(pos.sl_price, candidate)
+
+        breathing = pos.entry_price * (1 + soft_pct)
+        structure = max((k.get("h", k.get("c", pos.entry_price)) for k in recent), default=breathing) * 1.002
+        candidate = max(breathing, structure)
+        return min(pos.sl_price, candidate)
 
     def _apply_tp3_trailing_stop(self, pos: ScalpPosition, price: float) -> None:
         if not pos.tp2_hit or pos.quantity_remaining <= 0 or pos.trail_ref_price <= 0:
@@ -1561,8 +1581,8 @@ class BinanceScalpBot:
         sl_distance_pct = abs(entry_price - sl_price) / entry_price * 100
 
         # ── RR倍数TP ─────────────────────────────────────────────────────
-        tp1_dist = sl_distance_pct * cfg.get("SCALP_TP1_RR", 2.0)
-        tp2_dist = sl_distance_pct * cfg.get("SCALP_TP2_RR", 4.0)
+        tp1_dist = sl_distance_pct * cfg.get("SCALP_TP1_RR", 1.2)
+        tp2_dist = sl_distance_pct * cfg.get("SCALP_TP2_RR", 3.0)
 
         if direction == "LONG":
             tp1_price = entry_price * (1 + tp1_dist / 100)
@@ -1589,8 +1609,8 @@ class BinanceScalpBot:
             if sl_distance_pct > 0 else intended_risk_usdt
         )
         exit_profile = self._exit_profile_for_state(market_state)
-        tp1_ratio = exit_profile.get("tp1_ratio", cfg.get("SCALP_TP1_RATIO", 0.15))
-        tp2_ratio = exit_profile.get("tp2_ratio", cfg.get("SCALP_TP2_RATIO", 0.25))
+        tp1_ratio = exit_profile.get("tp1_ratio", cfg.get("SCALP_TP1_RATIO", 0.40))
+        tp2_ratio = exit_profile.get("tp2_ratio", cfg.get("SCALP_TP2_RATIO", 0.30))
         time_stop_minutes = exit_profile.get("time_stop_minutes", cfg.get("SCALP_TIME_STOP_MINUTES", 30))
         tp2_timeout_minutes = exit_profile.get("tp2_timeout_minutes", cfg.get("SCALP_TP2_TIMEOUT_MINUTES", 120))
 
@@ -1705,8 +1725,8 @@ class BinanceScalpBot:
             entry_price * quantity * sl_distance_pct / 100
             if sl_distance_pct > 0 else intended_risk_usdt
         )
-        tp1_dist = sl_distance_pct * cfg.get("SCALP_TP1_RR", 2.0)
-        tp2_dist = sl_distance_pct * cfg.get("SCALP_TP2_RR", 4.0)
+        tp1_dist = sl_distance_pct * cfg.get("SCALP_TP1_RR", 1.2)
+        tp2_dist = sl_distance_pct * cfg.get("SCALP_TP2_RR", 3.0)
         if direction == "LONG":
             tp1_price = entry_price * (1 + tp1_dist / 100)
             tp2_price = entry_price * (1 + tp2_dist / 100)
@@ -2084,13 +2104,14 @@ class BinanceScalpBot:
             await _close_remaining("TP2超时")
             return
 
-        # ── TP1：小比例拿利，SL移至成本调整后的保本位 ────────────────────
+        # ── TP1：先锁定较大比例利润，剩余仓位进入软保本呼吸区 ───────────
         if not pos.tp1_hit and _tp_hit(pos.tp1_price):
             buf_tp   = self.kline_buffer.get(symbol, [])
             tp_trend = self._detect_trend(buf_tp) if len(buf_tp) >= 20 else "FLAT"
-            # 飞升全仓追踪：趋势仍是瀑布方向时跳过减仓，全仓保本追踪大行情
-            if (pos.direction == "LONG"  and tp_trend == "WATERFALL_UP") or \
-               (pos.direction == "SHORT" and tp_trend == "WATERFALL_DOWN"):
+            # 默认关闭全仓跳过TP1，避免火热行情里只靠Runner导致利润回吐。
+            if cfg.get("SCALP_SKIP_TP1_IN_STRONG_TREND", False) and (
+               (pos.direction == "LONG"  and tp_trend == "WATERFALL_UP") or
+               (pos.direction == "SHORT" and tp_trend == "WATERFALL_DOWN")):
                 new_sl              = self._breakeven_price(pos)
                 if not is_paper and auto and self.trader:
                     old_sl_order_id = pos.sl_order_id
@@ -2111,7 +2132,7 @@ class BinanceScalpBot:
                 set_scalp_position(symbol, pos.to_dict())
                 return
             qty     = pos.quantity * tp1_ratio
-            new_sl  = self._breakeven_price(pos)
+            new_sl  = self._tp1_soft_breakeven_price(pos)
             if is_paper:
                 segment = self._apply_close_segment(pos, price, qty)
                 pos.tp1_hit = True
@@ -2131,13 +2152,13 @@ class BinanceScalpBot:
                         await self.trader.cancel_order(symbol, old_sl_order_id)
                     pos.sl_price    = new_sl
                 else:
-                    logger.error("⚡ [%s] TP1后保本止损挂单失败，保留原止损单", symbol)
+                    logger.error("⚡ [%s] TP1后软保本止损挂单失败，保留原止损单", symbol)
             else:
                 segment = {"net": 0.0}
                 pos.tp1_hit = True
             pct_margin = segment["net"] / (pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)) * 100
-            logger.info("⚡ [%s] %s🟡 TP1 @ %.6f | 锁%.0f%%仓 | 净保证金+%.1f%% | SL→成本保本",
-                        symbol, tag, price, tp1_ratio * 100, pct_margin)
+            logger.info("⚡ [%s] %s🟡 TP1 @ %.6f | 锁%.0f%%仓 | 净保证金+%.1f%% | SL→软保本 %.6f",
+                        symbol, tag, price, tp1_ratio * 100, pct_margin, new_sl)
             set_scalp_position(symbol, pos.to_dict())
 
         # ── TP2：再锁一部分，剩余大头进入EMA20/结构追踪 ──────────────────
@@ -2190,8 +2211,8 @@ class BinanceScalpBot:
                 reason = "TP3"
                 logger.info("⚡ [%s] %s🏁 TP3追踪止损 @ %.6f", symbol, tag, price)
             elif pos.tp1_hit:
-                reason = "SL_保本"
-                logger.info("⚡ [%s] %s🔵 SL_保本 @ %.6f", symbol, tag, price)
+                reason = "SL_软保本"
+                logger.info("⚡ [%s] %s🔵 SL_软保本 @ %.6f", symbol, tag, price)
             else:
                 reason = "SL"
                 loss_margin_pct = (abs(close_pnl + pos.realized_pnl) /
@@ -2259,7 +2280,7 @@ class BinanceScalpBot:
             "cfg_sq_oi_meme":  cfg.get("SQUEEZE_OI_DROP_MEME",  1.5),
             "cfg_sq_taker":    cfg.get("SQUEEZE_TAKER_MIN",      0.65),
             "cfg_bo_taker":    cfg.get("BREAKOUT_TAKER_MIN",     0.62),
-            "cfg_bo_min_pct":   cfg.get("BREAKOUT_MIN_PCT",       0.10),
+            "cfg_bo_min_pct":   cfg.get("BREAKOUT_MIN_PCT",       0.15),
             "cfg_bo_atr_mult":  cfg.get("BREAKOUT_ATR_MULT",      0.7),
             "cfg_bo_atr_min":   cfg.get("BREAKOUT_ATR_MIN_PCT",   0.50),
             "cfg_bo_atr_max":   cfg.get("BREAKOUT_ATR_MAX_PCT",   1.20),

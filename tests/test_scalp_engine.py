@@ -12,12 +12,13 @@ class TestScalpEngine(unittest.TestCase):
         config_manager.settings.update({
             "FEE_RATE_PER_SIDE": 0.0004,
             "SLIPPAGE_RATE_PER_SIDE": 0.0005,
-            "BREAKOUT_MIN_PCT": 0.10,
+            "BREAKOUT_MIN_PCT": 0.15,
             "BREAKOUT_ATR_MULT": 0.7,
             "BREAKOUT_ATR_MIN_PCT": 0.50,
             "BREAKOUT_ATR_MAX_PCT": 1.20,
             "BREAKOUT_MAX_PREMOVE_30M_PCT": 3.0,
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
+            "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
             "SCALP_TP3_AGGRESSIVE_RUNNER": True,
             "SCALP_USE_YAOBI_CONTEXT": True,
             "SCALP_YAOBI_CONTEXT_TOP_N": 30,
@@ -119,6 +120,32 @@ class TestScalpEngine(unittest.TestCase):
         self.assertAlmostEqual(bot._breakeven_price(pos), 100.33, places=6)
         pos.direction = "SHORT"
         self.assertAlmostEqual(bot._breakeven_price(pos), 99.67, places=6)
+
+    def test_tp1_soft_breakeven_gives_breathing_room_without_loosening_stop(self) -> None:
+        bot = BinanceScalpBot()
+        bot.kline_buffer["RUNUSDT"] = [
+            {"o": 100.0, "h": 100.8, "l": 99.85, "c": 100.2, "q": 1000.0, "Q": 600.0}
+            for _ in range(5)
+        ]
+        pos = ScalpPosition(
+            symbol="RUNUSDT",
+            direction="LONG",
+            entry_price=100.0,
+            quantity=1.0,
+            quantity_remaining=1.0,
+            sl_price=95.0,
+            tp1_price=101.2,
+            tp2_price=103.0,
+        )
+
+        self.assertAlmostEqual(bot._tp1_soft_breakeven_price(pos), 99.6503, places=4)
+
+        pos.sl_price = 99.9
+        self.assertAlmostEqual(bot._tp1_soft_breakeven_price(pos), 99.9, places=6)
+
+        pos.direction = "SHORT"
+        pos.sl_price = 105.0
+        self.assertAlmostEqual(bot._tp1_soft_breakeven_price(pos), 101.0016, places=4)
 
     def test_breakout_premove_filter_blocks_late_chase(self) -> None:
         bot = BinanceScalpBot()

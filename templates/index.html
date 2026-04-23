@@ -429,12 +429,12 @@
                 <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_TAKER_MIN" :value="cfg.BREAKOUT_TAKER_MIN??0.62"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">突破最小幅度 %</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态突破底线，实际阈值=max(此值, ATR×倍数)。</div>
-                <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_MIN_PCT" :value="cfg.BREAKOUT_MIN_PCT??0.10"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态突破底线，实际阈值=max(此值, ATR×倍数)，默认0.15。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_MIN_PCT" :value="cfg.BREAKOUT_MIN_PCT??0.15"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">当前K量比</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">当前1m K线成交量至少达到近5根均量的比例，默认0.50。</div>
-                <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_MIN_VOL_RATIO" :value="cfg.BREAKOUT_MIN_VOL_RATIO??0.50"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">当前1m K线成交量至少达到近5根均量的比例，默认0.60。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_MIN_VOL_RATIO" :value="cfg.BREAKOUT_MIN_VOL_RATIO??0.60"></div>
             </div>
             <div class="grid grid-cols-4 gap-3 mt-3">
               <div>
@@ -460,19 +460,19 @@
             <div class="grid grid-cols-4 gap-3 mt-2">
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP1 Risk:Reward倍数</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP1 = SL距离 × N倍。默认1.5R。</div>
-                <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP1_RR" :value="cfg.SCALP_TP1_RR??1.5"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP1 = SL距离 × N倍。默认1.2R。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP1_RR" :value="cfg.SCALP_TP1_RR??1.2"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP1平仓比例</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP1触发时小比例拿利并推成本保本。默认0.15。</div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP1先锁定确定利润，剩余仓位进入软保本。默认0.40。</div>
                 <input class="inp inp-o" type="number" step="0.05" name="SCALP_TP1_RATIO" :value="cfg.SCALP_TP1_RATIO"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP2 Risk:Reward倍数</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP2 = SL距离 × N倍。默认3.5R。</div>
-                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP2_RR" :value="cfg.SCALP_TP2_RR??3.5"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">动态止损模式：TP2 = SL距离 × N倍。默认3.0R。</div>
+                <input class="inp inp-o" type="number" step="0.5" name="SCALP_TP2_RR" :value="cfg.SCALP_TP2_RR??3.0"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP2平仓比例</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP2触发时再平掉多少仓位。默认0.25，保留60% Runner。</div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP2触发时再锁利润。默认0.30，保留30% Runner。</div>
                 <input class="inp inp-o" type="number" step="0.05" name="SCALP_TP2_RATIO" :value="cfg.SCALP_TP2_RATIO"></div>
             </div>
             <div class="grid grid-cols-4 gap-3 mt-3">
@@ -504,8 +504,12 @@
             <div class="grid grid-cols-4 gap-3 mt-3">
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP后净保本锁利%</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP1后止损推到覆盖手续费滑点后再多锁一点，默认0.15%。</div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">强趋势全仓追踪时使用的硬保本锁利，默认0.15%。</div>
                 <input class="inp inp-o" type="number" step="0.01" name="SCALP_NET_BREAKEVEN_LOCK_PCT" :value="cfg.SCALP_NET_BREAKEVEN_LOCK_PCT??0.15"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">TP1软保本呼吸%</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">TP1后剩余仓位允许回撤到成本附近，默认0.30%。</div>
+                <input class="inp inp-o" type="number" step="0.05" name="SCALP_TP1_SOFT_BREAKEVEN_PCT" :value="cfg.SCALP_TP1_SOFT_BREAKEVEN_PCT??0.30"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">反转止损比例</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">未到TP1前，反向瀑布只在亏损接近SL该比例内触发。默认0.40。</div>
@@ -811,7 +815,7 @@
               </td>
               <td class="px-4 py-2 text-center">
                 <span class="px-2 py-0.5 rounded text-xs font-semibold"
-                  :class="['TP2','TP3'].includes(t.close_reason)?'bg-green-500/20 text-green-300':t.close_reason==='SL_保本'?'bg-blue-500/20 text-blue-300':['时间止损','TP2超时'].includes(t.close_reason)?'bg-yellow-500/20 text-yellow-300':'bg-red-500/20 text-red-400'"
+                  :class="['TP2','TP3'].includes(t.close_reason)?'bg-green-500/20 text-green-300':['SL_保本','SL_软保本'].includes(t.close_reason)?'bg-blue-500/20 text-blue-300':['时间止损','TP2超时'].includes(t.close_reason)?'bg-yellow-500/20 text-yellow-300':'bg-red-500/20 text-red-400'"
                   x-text="t.close_reason"></span>
               </td>
               <td class="px-4 py-2 text-right font-mono">
