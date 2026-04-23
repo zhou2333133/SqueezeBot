@@ -1667,7 +1667,26 @@ class BinanceScalpBot:
             return
 
         # ── 真实开仓（IOC 限价单，防飞单追高）─────────────────────────────
-        await self.trader.set_leverage(symbol, leverage)
+        if not self.trader:
+            logger.error("⚡ [%s] 真实开仓失败：交易模块未初始化", symbol)
+            return
+
+        hedge_mode = await self.trader.is_hedge_mode()
+        if hedge_mode is None:
+            logger.error("⚡ [%s] 真实开仓跳过：无法确认账户持仓模式，避免 Hedge/One-way 参数错配", symbol)
+            return
+        if hedge_mode:
+            logger.error(
+                "⚡ [%s] 真实开仓跳过：当前账户为双向持仓 Hedge Mode，本机器人实盘保护链仅支持单向持仓 One-way Mode",
+                symbol,
+            )
+            return
+
+        lev_resp = await self.trader.set_leverage(symbol, leverage)
+        if not lev_resp:
+            logger.error("⚡ [%s] 杠杆设置失败，跳过真实开仓", symbol)
+            return
+
         ioc_price  = entry_price * 1.003 if direction == "LONG" else entry_price * 0.997
         trade_resp = await self.trader.place_limit_ioc_order(symbol, side, quantity, ioc_price)
         if not trade_resp:
@@ -1704,6 +1723,16 @@ class BinanceScalpBot:
 
         sl_resp     = await self.trader.place_stop_loss_order(symbol, exit_s, sl_price)
         sl_order_id = sl_resp.get("orderId") if sl_resp else None
+        if not sl_order_id:
+            logger.critical("⚡ [%s] 交易所止损单挂单失败，立即 reduceOnly 市价撤出，禁止裸仓继续运行", symbol)
+            emergency_resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, quantity)
+            if emergency_resp:
+                add_scalp_signal({**base_signal, "auto_traded": False, "paper": False,
+                                  "order_id": trade_resp.get("orderId"),
+                                  "rejected_reason": "stop_loss_order_failed_emergency_closed"})
+                logger.critical("⚡ [%s] 裸仓保护已执行：真实仓位已 reduceOnly 市价撤出", symbol)
+                return
+            logger.critical("⚡ [%s] 裸仓紧急撤出失败：保留本地仓位继续监控，请人工检查交易所持仓", symbol)
 
         pos = ScalpPosition(
             symbol             = symbol,

@@ -143,7 +143,7 @@ def okx_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042301
+    PROFILE_VERSION = 2026042302
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -216,7 +216,7 @@ class ConfigManager:
         "SCALP_STOP_LOSS_PCT":         (0.1,    50.0),
         "SCALP_TP1_RATIO":             (0.1,    0.9),
         "SCALP_TP2_RATIO":             (0.1,    0.9),
-        "SCALP_TP3_TRAIL_PCT":         (0.1,    15.0),
+        "SCALP_TP3_TRAIL_PCT":         (0.1,    10.0),
         "SCALP_CANDIDATE_LIMIT":       (20,     500),
         "SCALP_RISK_PER_TRADE_USDT":   (1,      1_000_000),
         "SCALP_MAX_DAILY_LOSS_USDT":   (1,      1_000_000),
@@ -288,6 +288,7 @@ class ConfigManager:
             "SCALP_WATCHLIST":           "",
             "SCALP_CANDIDATE_LIMIT":     40,
             "SCALP_PAPER_TRADE":         False,
+            "MANUAL_REAL_TRADE_ENABLED": False,
             # ── 动态止损 & 风控 ───────────────────────────────────────────────
             "SCALP_USE_DYNAMIC_SL":      True,
             "SCALP_RISK_PER_TRADE_USDT": 20.0,

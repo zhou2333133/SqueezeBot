@@ -208,6 +208,12 @@ async def delete_watchlist_item(symbol: str):
 
 @app.post("/api/trade")
 async def manual_trade(request: Request):
+    if not config_manager.settings.get("MANUAL_REAL_TRADE_ENABLED", False):
+        return JSONResponse({
+            "status": "error",
+            "message": "❌ 手动实盘下单默认禁用：该入口不会自动挂止损，实盘请使用超短线策略自动开仓。",
+        }, status_code=403)
+
     try:
         form = await request.form()
         symbol   = str(form.get("symbol", "")).strip().upper()
