@@ -14,12 +14,16 @@ MAX_CANDIDATES = 200
 # ── 共享状态 ───────────────────────────────────────────────────────────────────
 candidates_map:   dict[str, dict] = {}   # key = chain:address or symbol
 candidates_queue: std_queue.Queue = std_queue.Queue(maxsize=200)
+opportunity_queue: list[dict] = []
+opportunity_update_queue: std_queue.Queue = std_queue.Queue(maxsize=100)
 scan_status: dict = {
     "last_scan":      None,
     "scanning":       False,
     "total_scanned":  0,
     "errors":         [],
     "sources":        {},   # source_name -> {"count": int, "last_run": str}
+    "opportunity_count": 0,
+    "ai_status": {},
 }
 
 
@@ -92,6 +96,17 @@ class Candidate:
     funding_rate_pct:  float = 0.0    # 当前资金费率%
     fr_extreme_short:  bool  = False  # 资金费率 < -0.05%
     retail_short_pct:  float = 0.0    # 全局账户多空比空头侧%
+    oi_change_5m_pct:  float = 0.0
+    oi_change_15m_pct: float = 0.0
+    volume_5m_ratio:   float = 0.0
+    taker_buy_ratio_5m: float = 0.5
+    taker_sell_ratio_5m: float = 0.5
+    long_account_pct:  float = 50.0
+    top_trader_long_pct: float = 50.0
+    liquidation_5m_usd: float = 0.0
+    liquidation_15m_usd: float = 0.0
+    oi_volume_ratio:   float = 0.0
+    contract_activity_score: int = 0
 
     # ── 链上交易加速 ──────────────────────────────────────────────────────────
     txs_5m:       int   = 0
@@ -114,6 +129,22 @@ class Candidate:
     decision_risks:      list = field(default_factory=list)
     decision_missing:    list = field(default_factory=list)
     decision_note:       str  = ""
+
+    # ── AI/机会队列（只作上游筛选，不直接下单）──────────────────────────────
+    opportunity_rank:       int  = 0
+    opportunity_score:      int  = 0
+    opportunity_action:     str  = "OBSERVE"  # WATCH_LONG / WATCH_SHORT / OBSERVE / BLOCK
+    opportunity_permission: str  = "OBSERVE"  # ALLOW_IF_1M_SIGNAL / OBSERVE / BLOCK
+    opportunity_confidence: int  = 0
+    opportunity_reasons:    list = field(default_factory=list)
+    opportunity_risks:      list = field(default_factory=list)
+    opportunity_required_confirmation: list = field(default_factory=list)
+    ai_provider:            str  = ""
+    ai_cached:              bool = False
+    ai_updated_at:          str  = ""
+    knowledge_refs:         list = field(default_factory=list)
+    intelligence_summary:   str  = ""
+    alpha_status:           str  = ""
 
     # ── 分类 ──────────────────────────────────────────────────────────────────
     category: str = ""   # 启动预警 / 蓄势观察 / 风险
@@ -190,6 +221,17 @@ class Candidate:
             "funding_rate_pct":   round(self.funding_rate_pct, 4),
             "fr_extreme_short":   self.fr_extreme_short,
             "retail_short_pct":   round(self.retail_short_pct, 1),
+            "oi_change_5m_pct":   round(self.oi_change_5m_pct, 3),
+            "oi_change_15m_pct":  round(self.oi_change_15m_pct, 3),
+            "volume_5m_ratio":    round(self.volume_5m_ratio, 2),
+            "taker_buy_ratio_5m": round(self.taker_buy_ratio_5m, 3),
+            "taker_sell_ratio_5m": round(self.taker_sell_ratio_5m, 3),
+            "long_account_pct":   round(self.long_account_pct, 1),
+            "top_trader_long_pct": round(self.top_trader_long_pct, 1),
+            "liquidation_5m_usd": round(self.liquidation_5m_usd, 2),
+            "liquidation_15m_usd": round(self.liquidation_15m_usd, 2),
+            "oi_volume_ratio":    round(self.oi_volume_ratio, 4),
+            "contract_activity_score": self.contract_activity_score,
             "txs_5m":             self.txs_5m,
             "txs_5m_accel":       round(self.txs_5m_accel, 2),
             "anomaly_score":       self.anomaly_score,
@@ -206,6 +248,20 @@ class Candidate:
             "decision_risks":      self.decision_risks[:5],
             "decision_missing":    self.decision_missing[:5],
             "decision_note":       self.decision_note,
+            "opportunity_rank":       self.opportunity_rank,
+            "opportunity_score":      self.opportunity_score,
+            "opportunity_action":     self.opportunity_action,
+            "opportunity_permission": self.opportunity_permission,
+            "opportunity_confidence": self.opportunity_confidence,
+            "opportunity_reasons":    self.opportunity_reasons[:6],
+            "opportunity_risks":      self.opportunity_risks[:6],
+            "opportunity_required_confirmation": self.opportunity_required_confirmation[:6],
+            "ai_provider":            self.ai_provider,
+            "ai_cached":              self.ai_cached,
+            "ai_updated_at":          self.ai_updated_at,
+            "knowledge_refs":         self.knowledge_refs[:5],
+            "intelligence_summary":   self.intelligence_summary,
+            "alpha_status":           self.alpha_status,
             "category":           self.category,
             "score":              self.score,
             "score_breakdown":    self.score_breakdown,
@@ -263,3 +319,24 @@ def get_anomaly_candidates(min_anomaly: int = 1, limit: int = 100) -> list[dict]
 
 def clear_candidates() -> None:
     candidates_map.clear()
+    set_opportunity_queue([])
+
+
+def set_opportunity_queue(items: list[dict]) -> None:
+    global opportunity_queue
+    opportunity_queue = list(items)
+    scan_status["opportunity_count"] = len(opportunity_queue)
+    msg = json.dumps({"type": "opportunity", "items": opportunity_queue}, ensure_ascii=False, default=str)
+    if opportunity_update_queue.full():
+        try:
+            opportunity_update_queue.get_nowait()
+        except std_queue.Empty:
+            pass
+    try:
+        opportunity_update_queue.put_nowait(msg)
+    except std_queue.Full:
+        pass
+
+
+def get_opportunity_queue(limit: int = 20) -> list[dict]:
+    return opportunity_queue[:limit]

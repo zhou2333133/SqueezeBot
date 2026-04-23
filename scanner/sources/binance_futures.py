@@ -65,6 +65,42 @@ async def scan_futures_oi(
     return results
 
 
+async def scan_short_term_intel(
+    session: aiohttp.ClientSession,
+    top_n: int = 120,
+) -> list[dict]:
+    """扫描 Binance 原生 5m/15m 合约异动，用于机会队列，不直接开仓。"""
+    tickers = await _get_24h_tickers(session)
+    if not tickers:
+        logger.warning("合约短线情报: 无法获取行情数据")
+        return []
+
+    usdt = [
+        t for t in tickers
+        if isinstance(t, dict)
+        and t.get("symbol", "").endswith("USDT")
+        and "_" not in t.get("symbol", "")
+    ]
+    usdt.sort(key=lambda x: float(x.get("quoteVolume", 0) or 0), reverse=True)
+    ticker_index = {t["symbol"]: t for t in usdt}
+    top_symbols = [t["symbol"] for t in usdt[:top_n]]
+
+    results: list[dict] = []
+    batch_size = 10
+    for i in range(0, len(top_symbols), batch_size):
+        batch = top_symbols[i:i + batch_size]
+        rows = await asyncio.gather(
+            *[_analyze_short_symbol(session, sym, ticker_index) for sym in batch],
+            return_exceptions=True,
+        )
+        for row in rows:
+            if isinstance(row, dict) and row:
+                results.append(row)
+        if i + batch_size < len(top_symbols):
+            await asyncio.sleep(0.25)
+    return results
+
+
 # ── 单币分析 ─────────────────────────────────────────────────────────────────
 
 async def _analyze_symbol(
@@ -264,6 +300,139 @@ async def _analyze_symbol(
         return {}
 
 
+async def _analyze_short_symbol(
+    session: aiohttp.ClientSession,
+    symbol: str,
+    ticker_index: dict,
+) -> dict:
+    try:
+        oi_5m, klines_5m, funding_rate, global_ls, top_ratio, taker = await asyncio.gather(
+            _get_oi_hist(session, symbol, period="5m", limit=6),
+            _get_klines(session, symbol, interval="5m", limit=24),
+            _get_funding_rate(session, symbol),
+            _get_global_ls_ratio(session, symbol),
+            _get_top_trader_ratio(session, symbol),
+            _get_taker_buy_sell(session, symbol),
+            return_exceptions=True,
+        )
+        if not isinstance(oi_5m, list) or len(oi_5m) < 2:
+            return {}
+        t = ticker_index.get(symbol, {})
+        values = [float(x.get("sumOpenInterest", 0) or 0) for x in oi_5m]
+        value_usdt = [float(x.get("sumOpenInterestValue", 0) or 0) for x in oi_5m]
+        oi_now = values[-1]
+        oi_5m_pct = _pct_change(oi_now, values[-2])
+        oi_15m_pct = _pct_change(oi_now, values[-4]) if len(values) >= 4 else oi_5m_pct
+        oi_usdt_now = value_usdt[-1] if value_usdt else 0.0
+
+        vol_now = 0.0
+        vol_avg = 0.0
+        if isinstance(klines_5m, list) and len(klines_5m) >= 2:
+            quote_vols = []
+            for k in klines_5m:
+                try:
+                    quote_vols.append(float(k[7]))
+                except Exception:
+                    quote_vols.append(float(k[5]))
+            vol_now = quote_vols[-1]
+            prev = quote_vols[:-1][-12:]
+            vol_avg = sum(prev) / len(prev) if prev else 0.0
+        volume_5m_ratio = vol_now / vol_avg if vol_avg > 0 else 1.0
+
+        taker_buy_ratio = 0.5
+        if isinstance(taker, dict):
+            taker_buy_ratio = taker.get("taker_buy_ratio_5m", 0.5)
+        taker_sell_ratio = 1.0 - taker_buy_ratio
+
+        top_long_pct = 50.0
+        if isinstance(top_ratio, list) and top_ratio:
+            ls = float(top_ratio[-1].get("longShortRatio", 1.0) or 1.0)
+            top_long_pct = ls / (1 + ls) * 100
+        long_account_pct = round((1 - global_ls) * 100, 1) if isinstance(global_ls, float) else 50.0
+        funding_pct = funding_rate * 100 if isinstance(funding_rate, float) else 0.0
+        price_24h = float(t.get("priceChangePercent", 0) or 0)
+        oi_volume_ratio = oi_usdt_now / vol_now if vol_now > 0 else 0.0
+
+        score = _short_activity_score(
+            oi_5m_pct=oi_5m_pct,
+            oi_15m_pct=oi_15m_pct,
+            volume_5m_ratio=volume_5m_ratio,
+            taker_buy_ratio=taker_buy_ratio,
+            funding_pct=funding_pct,
+            long_account_pct=long_account_pct,
+            top_long_pct=top_long_pct,
+            price_24h=price_24h,
+            oi_volume_ratio=oi_volume_ratio,
+        )
+        return {
+            "symbol": symbol.replace("USDT", ""),
+            "has_futures": True,
+            "price_usd": float(t.get("lastPrice", 0) or 0),
+            "price_change_24h": round(price_24h, 2),
+            "volume_24h": float(t.get("quoteVolume", 0) or 0),
+            "futures_oi": round(oi_usdt_now, 2),
+            "oi_change_5m_pct": round(oi_5m_pct, 3),
+            "oi_change_15m_pct": round(oi_15m_pct, 3),
+            "volume_5m_ratio": round(volume_5m_ratio, 2),
+            "taker_buy_ratio_5m": round(taker_buy_ratio, 3),
+            "taker_sell_ratio_5m": round(taker_sell_ratio, 3),
+            "funding_rate_pct": round(funding_pct, 4),
+            "retail_short_pct": round(100.0 - long_account_pct, 1),
+            "long_account_pct": long_account_pct,
+            "top_trader_long_pct": round(top_long_pct, 1),
+            "oi_volume_ratio": round(oi_volume_ratio, 4),
+            "contract_activity_score": score,
+        }
+    except Exception as e:
+        logger.debug("短线情报 %s 异常: %s", symbol, e)
+        return {}
+
+
+def _short_activity_score(
+    oi_5m_pct: float,
+    oi_15m_pct: float,
+    volume_5m_ratio: float,
+    taker_buy_ratio: float,
+    funding_pct: float,
+    long_account_pct: float,
+    top_long_pct: float,
+    price_24h: float,
+    oi_volume_ratio: float,
+) -> int:
+    score = 0
+    if abs(oi_15m_pct) >= 8:
+        score += 24
+    elif abs(oi_15m_pct) >= 4:
+        score += 16
+    elif abs(oi_15m_pct) >= 1.5:
+        score += 8
+    if abs(oi_5m_pct) >= 3:
+        score += 14
+    elif abs(oi_5m_pct) >= 1:
+        score += 8
+    if volume_5m_ratio >= 5:
+        score += 18
+    elif volume_5m_ratio >= 2.5:
+        score += 12
+    elif volume_5m_ratio >= 1.5:
+        score += 6
+    if abs(taker_buy_ratio - 0.5) >= 0.18:
+        score += 12
+    elif abs(taker_buy_ratio - 0.5) >= 0.10:
+        score += 6
+    if abs(funding_pct) >= 0.05:
+        score += 8
+    if long_account_pct >= 65 or long_account_pct <= 35:
+        score += 8
+    if top_long_pct >= 65 or top_long_pct <= 35:
+        score += 6
+    if abs(price_24h) >= 20:
+        score += 8
+    if oi_volume_ratio >= 8:
+        score += 4
+    return max(0, min(100, int(round(score))))
+
+
 def _calc_flat_days(oi_hist_4h: list) -> int:
     """计算最近连续OI死平天数 (每天=6个4h周期, 日变化<5% = 死平)"""
     n = len(oi_hist_4h)
@@ -455,3 +624,28 @@ async def _get_top_trader_ratio(session, symbol) -> list:
     except Exception:
         pass
     return []
+
+
+async def _get_taker_buy_sell(session: aiohttp.ClientSession, symbol: str) -> dict:
+    try:
+        async with session.get(
+            f"{_BASE}/futures/data/takerlongshortRatio",
+            params={"symbol": symbol, "period": "5m", "limit": 1},
+            headers=_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data and isinstance(data, list):
+                    row = data[-1]
+                    buy = float(row.get("buyVol", 0) or 0)
+                    sell = float(row.get("sellVol", 0) or 0)
+                    if buy + sell > 0:
+                        ratio = buy / (buy + sell)
+                    else:
+                        buy_sell = float(row.get("buySellRatio", 1) or 1)
+                        ratio = buy_sell / (1 + buy_sell) if buy_sell > 0 else 0.5
+                    return {"taker_buy_ratio_5m": max(0.0, min(1.0, ratio))}
+    except Exception:
+        pass
+    return {"taker_buy_ratio_5m": 0.5}

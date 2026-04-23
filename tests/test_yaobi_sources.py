@@ -1,7 +1,8 @@
 import unittest
 
-from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, upsert_candidate
+from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, get_opportunity_queue, upsert_candidate
 from scanner.sources import binance_futures, binance_square, okx_market, surf_api
+from scanner.sources.binance_liquidations import liquidation_stats, record_liquidation_event
 from scanner.yaobi_scanner import YaobiScanner
 
 
@@ -61,6 +62,15 @@ class TestYaobiSources(unittest.TestCase):
         rows = okx_market._data_list(data)
 
         self.assertEqual([x["tokenSymbol"] for x in rows], ["WETH", "SOL"])
+
+    def test_okx_trade_side_and_usd_parsing_accepts_common_field_variants(self) -> None:
+        buy = {"side": "BUY", "usdValue": "1200"}
+        sell = {"transactionType": "swap_sell", "amountUsd": "800"}
+
+        self.assertEqual(okx_market._trade_side(buy), "buy")
+        self.assertEqual(okx_market._trade_usd(buy), 1200.0)
+        self.assertEqual(okx_market._trade_side(sell), "sell")
+        self.assertEqual(okx_market._trade_usd(sell), 800.0)
 
     def test_binance_square_extracts_nested_posts_and_mentions(self) -> None:
         payload = {
@@ -134,6 +144,58 @@ class TestYaobiSources(unittest.TestCase):
         self.assertIn(fields["oi_trend_grade"], {"A", "S"})
         self.assertGreater(fields["oi_change_7d_pct"], 40)
         self.assertGreater(fields["oi_consistency_score"], 80)
+
+    def test_short_activity_score_reacts_to_oi_volume_and_taker(self) -> None:
+        score = binance_futures._short_activity_score(
+            oi_5m_pct=2.5,
+            oi_15m_pct=6.0,
+            volume_5m_ratio=3.0,
+            taker_buy_ratio=0.66,
+            funding_pct=-0.06,
+            long_account_pct=34,
+            top_long_pct=67,
+            price_24h=18,
+            oi_volume_ratio=9,
+        )
+
+        self.assertGreaterEqual(score, 60)
+
+    def test_liquidation_cache_rolls_up_windows(self) -> None:
+        record_liquidation_event({"o": {"s": "TESTUSDT", "S": "SELL", "ap": "2", "q": "1000"}})
+
+        stats = liquidation_stats({"TESTUSDT"}, windows_min=(5,))
+
+        self.assertEqual(stats["TESTUSDT"]["liquidation_5m_usd"], 2000.0)
+
+    def test_opportunity_queue_prefers_short_term_confirmed_direction(self) -> None:
+        clear_candidates()
+        try:
+            c = Candidate(
+                symbol="BAS",
+                has_futures=True,
+                score=62,
+                anomaly_score=55,
+                contract_activity_score=70,
+                oi_change_15m_pct=5.2,
+                oi_change_5m_pct=1.4,
+                volume_5m_ratio=2.8,
+                taker_buy_ratio_5m=0.64,
+                funding_rate_pct=-0.07,
+                retail_short_pct=68,
+            )
+            scanner = YaobiScanner()
+            scanner._apply_anomaly_radar([c])
+            scanner._apply_decision_cards([c])
+            import asyncio
+            asyncio.run(scanner._apply_opportunity_queue([c]))
+
+            rows = get_opportunity_queue()
+
+            self.assertEqual(rows[0]["symbol"], "BAS")
+            self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG")
+            self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
+        finally:
+            clear_candidates()
 
     def test_anomaly_candidates_sorted_by_anomaly_score(self) -> None:
         clear_candidates()

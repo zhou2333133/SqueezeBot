@@ -80,6 +80,8 @@ class ScalpPosition:
     max_favorable_time: str        = ""
     max_adverse_time:   str        = ""
     entry_context:      dict       = field(default_factory=dict)
+    protection_failed:  bool       = False
+    protection_reason:  str        = ""
 
     def to_dict(self) -> dict:
         unreal = 0.0
@@ -105,6 +107,8 @@ class ScalpPosition:
             "tp2_ratio":          self.tp2_ratio,
             "risk_usdt":          round(self.risk_usdt, 4),
             "entry_context":      self.entry_context,
+            "protection_failed":  self.protection_failed,
+            "protection_reason":  self.protection_reason,
             "paper":              self.paper,
             "entry_time":         self.entry_time,
             "realized_pnl":       round(self.realized_pnl, 4),
@@ -150,6 +154,8 @@ class BinanceScalpBot:
         self._avg_vol:          dict[str, float]         = {}
         # 平仓后继续观察，用于判断卖飞/方向是否选对（不额外 REST 调用）
         self._post_exit_watch:   dict[str, list]          = {}
+        self._live_trading_suspended: bool                = False
+        self._live_trading_suspended_reason: str          = ""
         # Surf 成本控制：后台新闻扫描按配置限频，默认关闭。
         self._last_surf_news_scan_at: float                = 0.0
         # OI暖机截止时间（首轮OI就绪后静默60秒，防信号井喷）
@@ -175,6 +181,35 @@ class BinanceScalpBot:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    def _suspend_live_trading(self, reason: str) -> None:
+        if not self._live_trading_suspended:
+            logger.critical("⚡ 真实自动开仓已暂停: %s", reason)
+        self._live_trading_suspended = True
+        self._live_trading_suspended_reason = reason
+
+    def _clear_live_trading_suspension_if_safe(self) -> None:
+        if not self._live_trading_suspended:
+            return
+        if any(p.protection_failed for p in self.open_positions.values() if not p.paper):
+            return
+        logger.warning("⚡ 保护失败仓位已清空，真实自动开仓暂停状态解除")
+        self._live_trading_suspended = False
+        self._live_trading_suspended_reason = ""
+
+    def _latest_known_price(self, pos: ScalpPosition) -> float:
+        live = self._live_candle.get(pos.symbol, {})
+        for value in (
+            live.get("close"),
+            live.get("c"),
+            (self.kline_buffer.get(pos.symbol) or [{}])[-1].get("c"),
+            pos.current_price,
+            pos.entry_price,
+        ):
+            price = self._as_float(value)
+            if price > 0:
+                return price
+        return pos.entry_price
 
     @staticmethod
     def _to_binance_perp_symbol(symbol: str) -> str:
@@ -212,6 +247,13 @@ class BinanceScalpBot:
             "yaobi_short_crowd_pct": self._as_float(c.get("short_crowd_pct"), 50.0),
             "yaobi_funding_rate_pct": self._as_float(c.get("funding_rate_pct")),
             "yaobi_retail_short_pct": self._as_float(c.get("retail_short_pct"), 50.0),
+            "yaobi_oi_change_5m_pct": self._as_float(c.get("oi_change_5m_pct")),
+            "yaobi_oi_change_15m_pct": self._as_float(c.get("oi_change_15m_pct")),
+            "yaobi_volume_5m_ratio": self._as_float(c.get("volume_5m_ratio")),
+            "yaobi_taker_buy_ratio_5m": self._as_float(c.get("taker_buy_ratio_5m"), 0.5),
+            "yaobi_top_trader_long_pct": self._as_float(c.get("top_trader_long_pct"), 50.0),
+            "yaobi_liquidation_5m_usd": self._as_float(c.get("liquidation_5m_usd")),
+            "yaobi_contract_activity_score": int(c.get("contract_activity_score", 0) or 0),
             "yaobi_okx_buy_ratio": self._as_float(c.get("okx_buy_ratio")),
             "yaobi_okx_large_trade_pct": self._as_float(c.get("okx_large_trade_pct")),
             "yaobi_okx_risk_level": int(c.get("okx_risk_level", 0) or 0),
@@ -227,6 +269,15 @@ class BinanceScalpBot:
             "yaobi_price_change_1h": self._as_float(c.get("price_change_1h")),
             "yaobi_price_change_4h": self._as_float(c.get("price_change_4h")),
             "yaobi_price_change_24h": self._as_float(c.get("price_change_24h")),
+            "yaobi_opportunity_rank": int(c.get("opportunity_rank", 0) or 0),
+            "yaobi_opportunity_score": int(c.get("opportunity_score", 0) or 0),
+            "yaobi_opportunity_action": c.get("opportunity_action", ""),
+            "yaobi_opportunity_permission": c.get("opportunity_permission", ""),
+            "yaobi_opportunity_confidence": int(c.get("opportunity_confidence", 0) or 0),
+            "yaobi_opportunity_reasons": list(c.get("opportunity_reasons", []) or [])[:5],
+            "yaobi_opportunity_risks": list(c.get("opportunity_risks", []) or [])[:5],
+            "yaobi_intelligence_summary": c.get("intelligence_summary", ""),
+            "yaobi_ai_provider": c.get("ai_provider", ""),
             "yaobi_updated_at": c.get("updated_at", ""),
             "yaobi_found_at": c.get("found_at", ""),
         }
@@ -258,9 +309,15 @@ class BinanceScalpBot:
             score = int(c.get("score", 0) or 0)
             anomaly = int(c.get("anomaly_score", 0) or 0)
             action = str(c.get("decision_action", "") or "")
-            if score < min_score and anomaly < min_anomaly and action not in ("允许交易", "等待确认", "禁止交易"):
+            op_score = int(c.get("opportunity_score", 0) or 0)
+            op_permission = str(c.get("opportunity_permission", "") or "")
+            if (score < min_score
+                    and anomaly < min_anomaly
+                    and action not in ("允许交易", "等待确认", "禁止交易")
+                    and op_permission not in ("ALLOW_IF_1M_SIGNAL", "BLOCK")
+                    and op_score < min_anomaly):
                 continue
-            selected.append((score, anomaly, symbol, c))
+            selected.append((max(score, op_score), anomaly, symbol, c))
 
         selected.sort(key=lambda x: (x[0], x[1]), reverse=True)
         contexts: dict[str, dict] = {}
@@ -386,6 +443,19 @@ class BinanceScalpBot:
                 return False, f"Surf AI高风险: {meta.get('yaobi_decision_note') or ''}"
             if int(meta.get("yaobi_okx_risk_level", 0) or 0) >= 4:
                 return False, f"OKX风险等级{meta.get('yaobi_okx_risk_level')}"
+
+        if self.cfg.get("SCALP_OPPORTUNITY_GUARD_ENABLED", True):
+            op_action = str(meta.get("yaobi_opportunity_action") or "")
+            op_permission = str(meta.get("yaobi_opportunity_permission") or "")
+            op_rank = int(meta.get("yaobi_opportunity_rank", 0) or 0)
+            if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_QUEUE", False) and not op_rank:
+                return False, "未进入妖币机会队列Top名单"
+            if op_action == "BLOCK" or op_permission == "BLOCK":
+                return False, f"机会队列BLOCK: {meta.get('yaobi_intelligence_summary') or meta.get('yaobi_opportunity_risks')}"
+            if op_action == "WATCH_LONG" and direction == "SHORT":
+                return False, "机会队列只允许等待多头1m确认，禁止反向追空"
+            if op_action == "WATCH_SHORT" and direction == "LONG":
+                return False, "机会队列只允许等待空头1m确认，禁止反向追多"
 
         if self.cfg.get("SCALP_YAOBI_FUNDING_OI_GUARD", True):
             grade = str(meta.get("yaobi_oi_trend_grade") or "").upper()
@@ -1652,6 +1722,14 @@ class BinanceScalpBot:
             logger.info("⚡ [%s] 信号发出 (自动交易关闭)", symbol)
             return
 
+        if cfg.get("SCALP_AUTO_TRADE", False) and not paper_mode and self._live_trading_suspended:
+            reason = self._live_trading_suspended_reason or "live_trading_suspended"
+            add_scalp_signal({**base_signal, "auto_traded": False, "paper": False,
+                              "rejected_reason": "live_trading_suspended",
+                              "suspended_reason": reason})
+            logger.critical("⚡ [%s] 真实开仓跳过：自动开仓已暂停 (%s)", symbol, reason)
+            return
+
         side   = "BUY"  if direction == "LONG" else "SELL"
         exit_s = "SELL" if direction == "LONG" else "BUY"
 
@@ -1744,6 +1822,8 @@ class BinanceScalpBot:
 
         sl_resp     = await self.trader.place_stop_loss_order(symbol, exit_s, sl_price)
         sl_order_id = sl_resp.get("orderId") if sl_resp else None
+        protection_failed = False
+        protection_reason = ""
         if not sl_order_id:
             logger.critical("⚡ [%s] 交易所止损单挂单失败，立即 reduceOnly 市价撤出，禁止裸仓继续运行", symbol)
             emergency_resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, quantity)
@@ -1753,7 +1833,10 @@ class BinanceScalpBot:
                                   "rejected_reason": "stop_loss_order_failed_emergency_closed"})
                 logger.critical("⚡ [%s] 裸仓保护已执行：真实仓位已 reduceOnly 市价撤出", symbol)
                 return
-            logger.critical("⚡ [%s] 裸仓紧急撤出失败：保留本地仓位继续监控，请人工检查交易所持仓", symbol)
+            protection_failed = True
+            protection_reason = "stop_loss_order_failed_emergency_failed"
+            self._suspend_live_trading(f"{symbol}: {protection_reason}")
+            logger.critical("⚡ [%s] 裸仓紧急撤出失败：纳入故障仓位监控并持续重试撤出，请人工检查交易所持仓", symbol)
 
         pos = ScalpPosition(
             symbol             = symbol,
@@ -1777,14 +1860,27 @@ class BinanceScalpBot:
             risk_usdt          = actual_risk_usdt,
             paper              = False,
             entry_context      = entry_context,
+            protection_failed  = protection_failed,
+            protection_reason  = protection_reason,
         )
         self.open_positions[symbol] = pos
         set_scalp_position(symbol, pos.to_dict())
-        add_scalp_signal({**base_signal, "auto_traded": True, "paper": False,
+        signal_payload = {**base_signal, "auto_traded": True, "paper": False,
                           "quantity": round(quantity, 6), "leverage": leverage,
-                          "order_id": trade_resp.get("orderId")})
-        logger.info("⚡ [%s] 开仓成功 %s ×%.6f @ %.6f | SL %.6f | TP1 %.6f | TP2 %.6f",
-                    symbol, direction, quantity, entry_price, sl_price, tp1_price, tp2_price)
+                          "order_id": trade_resp.get("orderId")}
+        if protection_failed:
+            signal_payload.update({
+                "protection_failed": True,
+                "rejected_reason": protection_reason,
+                "requires_manual_attention": True,
+            })
+            add_scalp_signal(signal_payload)
+            logger.critical("⚡ [%s] 开仓已成交但保护失败 %s ×%.6f @ %.6f | 本地SL %.6f | 自动开仓暂停",
+                            symbol, direction, quantity, entry_price, sl_price)
+        else:
+            add_scalp_signal(signal_payload)
+            logger.info("⚡ [%s] 开仓成功 %s ×%.6f @ %.6f | SL %.6f | TP1 %.6f | TP2 %.6f",
+                        symbol, direction, quantity, entry_price, sl_price, tp1_price, tp2_price)
 
     # ─── TP / SL 实时检查 ──────────────────────────────────────────────────────
 
@@ -1896,8 +1992,13 @@ class BinanceScalpBot:
             "yaobi_oi_change_24h_pct": meta.get("yaobi_oi_change_24h_pct", 0.0),
             "yaobi_oi_change_3d_pct": meta.get("yaobi_oi_change_3d_pct", 0.0),
             "yaobi_oi_change_7d_pct": meta.get("yaobi_oi_change_7d_pct", 0.0),
+            "yaobi_oi_change_5m_pct": meta.get("yaobi_oi_change_5m_pct", 0.0),
+            "yaobi_oi_change_15m_pct": meta.get("yaobi_oi_change_15m_pct", 0.0),
             "yaobi_funding_rate_pct": meta.get("yaobi_funding_rate_pct", 0.0),
             "yaobi_volume_ratio": meta.get("yaobi_volume_ratio", 0.0),
+            "yaobi_volume_5m_ratio": meta.get("yaobi_volume_5m_ratio", 0.0),
+            "yaobi_taker_buy_ratio_5m": meta.get("yaobi_taker_buy_ratio_5m", 0.0),
+            "yaobi_contract_activity_score": meta.get("yaobi_contract_activity_score", 0),
             "yaobi_whale_long_ratio": meta.get("yaobi_whale_long_ratio", 0.0),
             "yaobi_short_crowd_pct": meta.get("yaobi_short_crowd_pct", 0.0),
             "yaobi_okx_buy_ratio": meta.get("yaobi_okx_buy_ratio", 0.0),
@@ -1906,6 +2007,15 @@ class BinanceScalpBot:
             "yaobi_address": meta.get("yaobi_address", ""),
             "yaobi_chain": meta.get("yaobi_chain", ""),
             "yaobi_market_filter_note": meta.get("yaobi_market_filter_note", ""),
+            "yaobi_opportunity_rank": meta.get("yaobi_opportunity_rank", 0),
+            "yaobi_opportunity_score": meta.get("yaobi_opportunity_score", 0),
+            "yaobi_opportunity_action": meta.get("yaobi_opportunity_action", ""),
+            "yaobi_opportunity_permission": meta.get("yaobi_opportunity_permission", ""),
+            "yaobi_opportunity_confidence": meta.get("yaobi_opportunity_confidence", 0),
+            "yaobi_opportunity_reasons": meta.get("yaobi_opportunity_reasons", []),
+            "yaobi_opportunity_risks": meta.get("yaobi_opportunity_risks", []),
+            "yaobi_intelligence_summary": meta.get("yaobi_intelligence_summary", ""),
+            "yaobi_ai_provider": meta.get("yaobi_ai_provider", ""),
             "watchlist_status": watch.get("status", ""),
             "watchlist_reason": watch.get("reason", ""),
             "oi_change_3m_pct": round(self._get_oi_change_pct(symbol) or 0.0, 4),
@@ -2051,9 +2161,14 @@ class BinanceScalpBot:
             "leverage":     self.cfg.get("SCALP_LEVERAGE", 10),
             "quantity":     round(pos.quantity, 6),
         }
-        apply_trade_diagnosis(trade)
         self._start_post_exit_watch(trade, pos, exit_price)
+        apply_trade_diagnosis(trade)
         add_scalp_trade(trade)
+        try:
+            from scanner.knowledge_base import record_trade_feedback
+            record_trade_feedback(trade)
+        except Exception as e:
+            logger.debug("⚡ [%s] 写入AI复盘知识库失败: %s", pos.symbol, e)
 
     async def _check_tp_sl(self, symbol: str, price: float) -> None:
         pos = self.open_positions.get(symbol)
@@ -2084,6 +2199,7 @@ class BinanceScalpBot:
             self._record_scalp_trade(pos, price, reason)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
+            self._clear_live_trading_suspension_if_safe()
             return True
 
         # ── 趋势反转提前止损（瀑布反向时减少损失）───────────────────────
@@ -2195,12 +2311,6 @@ class BinanceScalpBot:
                     logger.error("⚡ [%s] TP2减仓失败，保留本地仓位等待下一次检查", symbol)
                     return
                 self._apply_close_segment(pos, price, qty)
-                if pos.quantity_remaining > 0:
-                    activ = (price * (1 - trail_pct / 200) if pos.direction == "LONG"
-                             else price * (1 + trail_pct / 200))
-                    await self.trader.place_trailing_stop_order(
-                        symbol, exit_s, activ, trail_pct, pos.quantity_remaining,
-                    )
                 pos.tp2_hit = True
             else:
                 pos.tp2_hit = True
@@ -2214,6 +2324,7 @@ class BinanceScalpBot:
                 self._record_scalp_trade(pos, price, "TP2")
                 del self.open_positions[symbol]
                 set_scalp_position(symbol, None)
+                self._clear_live_trading_suspension_if_safe()
                 return
             set_scalp_position(symbol, pos.to_dict())
 
@@ -2328,6 +2439,8 @@ class BinanceScalpBot:
             auto       = cfg.get("SCALP_AUTO_TRADE", False)
             paper_mode = cfg.get("SCALP_PAPER_TRADE", False)
             mode_str   = "模拟开仓" if paper_mode else ("自动下单" if auto else "仅信号")
+            if self._live_trading_suspended:
+                mode_str += f"/暂停:{self._live_trading_suspended_reason}"
             logger.info(
                 "⚡ V3心跳 | 策略%s | 候选%d个 | OI覆盖%d个 | 已就绪%d个 | "
                 "仓位%d个(真实%d/模拟%d) | 观察中%d个 | 模式:%s",
@@ -2340,19 +2453,50 @@ class BinanceScalpBot:
 
     # ─── REST 仓位同步（防WS漏消息）──────────────────────────────────────────
 
+    async def _sync_live_position_once(self, symbol: str) -> None:
+        pos = self.open_positions.get(symbol)
+        if not pos or pos.paper or not self.trader:
+            return
+        pos_data = await self.trader.get_position(symbol)
+        if pos_data is None:
+            exit_price = self._latest_known_price(pos)
+            logger.warning("⚡ [%s] 仓位已关闭 (REST 同步)，补记成交 @ %.6f", symbol, exit_price)
+            try:
+                await self.trader.cancel_all_orders(symbol)
+            except Exception as e:
+                logger.debug("⚡ [%s] REST同步撤残单异常: %s", symbol, e)
+            self._record_scalp_trade(pos, exit_price, "EXCHANGE_SYNC_CLOSED")
+            self.open_positions.pop(symbol, None)
+            set_scalp_position(symbol, None)
+            self._clear_live_trading_suspension_if_safe()
+            return
+
+        if pos.protection_failed:
+            amt = self._as_float(pos_data.get("positionAmt"), pos.quantity_remaining)
+            qty = abs(amt) if amt else pos.quantity_remaining
+            exit_s = "SELL" if amt > 0 else ("BUY" if amt < 0 else ("SELL" if pos.direction == "LONG" else "BUY"))
+            logger.critical("⚡ [%s] 保护失败仓位仍存在，重试 reduceOnly 市价撤出 qty=%.6f", symbol, qty)
+            resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty)
+            if not resp:
+                logger.critical("⚡ [%s] 保护失败仓位撤出重试失败，请立即人工检查交易所持仓", symbol)
+                return
+            exit_price = self._latest_known_price(pos)
+            try:
+                await self.trader.cancel_all_orders(symbol)
+            except Exception as e:
+                logger.debug("⚡ [%s] 保护失败撤出后撤残单异常: %s", symbol, e)
+            self._record_scalp_trade(pos, exit_price, "PROTECTION_FAILED_FORCE_EXIT")
+            self.open_positions.pop(symbol, None)
+            set_scalp_position(symbol, None)
+            self._clear_live_trading_suspension_if_safe()
+
     async def _position_monitor_loop(self) -> None:
         while self.running:
             await asyncio.sleep(30)
             if not self.open_positions or not self.trader:
                 continue
             for symbol in list(self.open_positions.keys()):
-                if self.open_positions[symbol].paper:
-                    continue
                 try:
-                    pos_data = await self.trader.get_position(symbol)
-                    if pos_data is None:
-                        logger.info("⚡ [%s] 仓位已关闭 (REST 同步)", symbol)
-                        self.open_positions.pop(symbol, None)
-                        set_scalp_position(symbol, None)
+                    await self._sync_live_position_once(symbol)
                 except Exception as e:
                     logger.debug("⚡ 仓位同步异常 [%s]: %s", symbol, e)

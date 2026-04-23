@@ -315,10 +315,10 @@ class BinanceTrader:
     async def get_position(self, symbol: str) -> dict | None:
         """查询当前合约持仓（可选用，用于监控或平仓逻辑）"""
         resp = await self._request("GET", "/fapi/v2/positionRisk", {"symbol": symbol})
-        if resp:
-            positions = [p for p in resp if float(p.get("positionAmt", 0)) != 0]
-            return positions[0] if positions else None
-        return None
+        if resp is None:
+            raise RuntimeError("positionRisk request failed")
+        positions = [p for p in resp if float(p.get("positionAmt", 0)) != 0]
+        return positions[0] if positions else None
 
     async def place_limit_ioc_order(self, symbol: str, side: str, quantity: float, price: float) -> dict | None:
         """IOC 限价单（Immediate Or Cancel）— 防飞单追高核心机制"""

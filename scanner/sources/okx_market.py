@@ -261,6 +261,22 @@ def _float_any(d: dict, *keys: str) -> float:
     return 0.0
 
 
+def _trade_usd(t: dict) -> float:
+    return _float_any(t, "volume", "usdValue", "volumeUsd", "amountUsd", "tradeAmountUsd", "turnover")
+
+
+def _trade_side(t: dict) -> str:
+    for key in ("type", "side", "tradeType", "transactionType", "txType", "direction", "action"):
+        raw = str(t.get(key, "")).strip().lower()
+        if not raw:
+            continue
+        if raw in ("buy", "bought", "bid") or "buy" in raw:
+            return "buy"
+        if raw in ("sell", "sold", "ask") or "sell" in raw:
+            return "sell"
+    return ""
+
+
 def _int_any(d: dict, *keys: str) -> int:
     for key in keys:
         val = d.get(key)
@@ -489,14 +505,14 @@ async def get_token_trades(
     if not trades:
         return {"large_trade_pct": 0.0, "total_usd": 0.0, "trade_count": 0}
 
-    total_usd = sum(_float_any(t, "volume", "usdValue", "volumeUsd", "amountUsd") for t in trades)
+    total_usd = sum(_trade_usd(t) for t in trades)
     large_usd = sum(
-        _float_any(t, "volume", "usdValue", "volumeUsd", "amountUsd")
+        _trade_usd(t)
         for t in trades
-        if _float_any(t, "volume", "usdValue", "volumeUsd", "amountUsd") >= 5000
+        if _trade_usd(t) >= 5000
     )
-    buy_usd = sum(_float_any(t, "volume") for t in trades if str(t.get("type", "")).lower() == "buy")
-    sell_usd = sum(_float_any(t, "volume") for t in trades if str(t.get("type", "")).lower() == "sell")
+    buy_usd = sum(_trade_usd(t) for t in trades if _trade_side(t) == "buy")
+    sell_usd = sum(_trade_usd(t) for t in trades if _trade_side(t) == "sell")
     large_pct = large_usd / total_usd if total_usd > 0 else 0.0
     buy_ratio = buy_usd / (buy_usd + sell_usd) if (buy_usd + sell_usd) > 0 else 0.0
     return {

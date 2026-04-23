@@ -15,6 +15,9 @@ SURF_API_KEY       = os.getenv("SURF_API_KEY",       "YOUR_SURF_API_KEY")
 OKX_API_KEY        = os.getenv("OKX_API_KEY",        "YOUR_OKX_API_KEY")
 OKX_SECRET_KEY     = os.getenv("OKX_SECRET_KEY",     "YOUR_OKX_SECRET_KEY")
 OKX_PASSPHRASE     = os.getenv("OKX_PASSPHRASE",     "")
+OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY",     "")
+GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY",     "")
+ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY",  "")
 BINANCE_SQUARE_COOKIE      = os.getenv("BINANCE_SQUARE_COOKIE",      "")
 BINANCE_SQUARE_CSRF_TOKEN  = os.getenv("BINANCE_SQUARE_CSRF_TOKEN",  "")
 BINANCE_SQUARE_BNC_UUID    = os.getenv("BINANCE_SQUARE_BNC_UUID",    "")
@@ -142,8 +145,21 @@ def okx_credentials_status() -> dict:
     }
 
 
+def ai_credentials_status() -> dict:
+    providers = {
+        "openai": _valid_secret(OPENAI_API_KEY),
+        "gemini": _valid_secret(GEMINI_API_KEY),
+        "anthropic": _valid_secret(ANTHROPIC_API_KEY),
+    }
+    return {
+        "enabled": any(providers.values()),
+        "providers": providers,
+        "provider_count": sum(1 for enabled in providers.values() if enabled),
+    }
+
+
 class ConfigManager:
-    PROFILE_VERSION = 2026042303
+    PROFILE_VERSION = 2026042304
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -160,6 +176,7 @@ class ConfigManager:
         "SCALP_TP2_TIMEOUT_MINUTES": 120,
         "SCALP_STRUCTURE_TRAIL_BARS": 14,
         "SCALP_TP3_AGGRESSIVE_RUNNER": True,
+        "SCALP_SKIP_TP1_IN_STRONG_TREND": False,
         "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
         "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
         "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
@@ -194,6 +211,8 @@ class ConfigManager:
         "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
         "SCALP_YAOBI_DIRECTION_GUARD": False,
         "SCALP_YAOBI_FUNDING_OI_GUARD": True,
+        "SCALP_OPPORTUNITY_GUARD_ENABLED": True,
+        "SCALP_REQUIRE_OPPORTUNITY_QUEUE": False,
         "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
         "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
         "YAOBI_SURF_NEWS_ENABLED": False,
@@ -205,6 +224,22 @@ class ConfigManager:
         "YAOBI_OKX_HEAVY_TOP_N": 40,
         "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
         "YAOBI_FUTURES_TOP_N": 120,
+        "YAOBI_BINANCE_SHORT_INTEL_ENABLED": True,
+        "YAOBI_BINANCE_LIQUIDATION_WS_ENABLED": True,
+        "YAOBI_OPPORTUNITY_TOP_N": 6,
+        "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
+        "YAOBI_AI_ENABLED": False,
+        "YAOBI_AI_PROVIDER_PRIORITY": "openai,gemini,anthropic",
+        "YAOBI_AI_MODEL_OPENAI": "gpt-4o-mini",
+        "YAOBI_AI_MODEL_GEMINI": "gemini-1.5-flash",
+        "YAOBI_AI_MODEL_ANTHROPIC": "claude-3-5-haiku-latest",
+        "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 12,
+        "YAOBI_AI_TOP_OUTPUT": 6,
+        "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
+        "YAOBI_AI_CACHE_TTL_MINUTES": 30,
+        "YAOBI_AI_DAILY_USD_CAP": 3.0,
+        "YAOBI_AI_MAX_INPUT_TOKENS": 8000,
+        "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
         "OKX_MIN_REQUEST_INTERVAL": 0.20,
         "SURF_MIN_REQUEST_INTERVAL": 0.20,
     }
@@ -268,6 +303,15 @@ class ConfigManager:
         "YAOBI_OKX_HEAVY_TOP_N":       (1,      120),
         "YAOBI_OKX_PRICE_BATCH_SIZE":  (1,      100),
         "YAOBI_FUTURES_TOP_N":         (20,     300),
+        "YAOBI_OPPORTUNITY_TOP_N":      (1,      30),
+        "YAOBI_OPPORTUNITY_MIN_SCORE":  (0,      100),
+        "YAOBI_AI_MAX_SYMBOLS_PER_RUN": (1,      30),
+        "YAOBI_AI_TOP_OUTPUT":          (1,      20),
+        "YAOBI_AI_MIN_INTERVAL_MINUTES": (1,     1440),
+        "YAOBI_AI_CACHE_TTL_MINUTES":   (1,      1440),
+        "YAOBI_AI_DAILY_USD_CAP":       (0.0,    100.0),
+        "YAOBI_AI_MAX_INPUT_TOKENS":    (1000,   50000),
+        "YAOBI_AI_MAX_OUTPUT_TOKENS":   (200,    8000),
         "OKX_MIN_REQUEST_INTERVAL":    (0.02,   5.0),
         "SURF_MIN_REQUEST_INTERVAL":   (0.02,   5.0),
     }
@@ -302,6 +346,7 @@ class ConfigManager:
             "SCALP_TP2_TIMEOUT_MINUTES": 120,
             "SCALP_STRUCTURE_TRAIL_BARS": 14,
             "SCALP_TP3_AGGRESSIVE_RUNNER": True,
+            "SCALP_SKIP_TP1_IN_STRONG_TREND": False,
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
             "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
             "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
@@ -339,6 +384,8 @@ class ConfigManager:
             "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
             "SCALP_YAOBI_DIRECTION_GUARD": False,
             "SCALP_YAOBI_FUNDING_OI_GUARD": True,
+            "SCALP_OPPORTUNITY_GUARD_ENABLED": True,
+            "SCALP_REQUIRE_OPPORTUNITY_QUEUE": False,
             "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
             "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
             # ── 妖币扫描器 ────────────────────────────────────────────────────
@@ -363,6 +410,22 @@ class ConfigManager:
             "YAOBI_OKX_HEAVY_TOP_N":     40,
             "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
             "YAOBI_FUTURES_TOP_N":       120,
+            "YAOBI_BINANCE_SHORT_INTEL_ENABLED": True,
+            "YAOBI_BINANCE_LIQUIDATION_WS_ENABLED": True,
+            "YAOBI_OPPORTUNITY_TOP_N":    6,
+            "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
+            "YAOBI_AI_ENABLED":           False,
+            "YAOBI_AI_PROVIDER_PRIORITY": "openai,gemini,anthropic",
+            "YAOBI_AI_MODEL_OPENAI":      "gpt-4o-mini",
+            "YAOBI_AI_MODEL_GEMINI":      "gemini-1.5-flash",
+            "YAOBI_AI_MODEL_ANTHROPIC":   "claude-3-5-haiku-latest",
+            "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 12,
+            "YAOBI_AI_TOP_OUTPUT":        6,
+            "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
+            "YAOBI_AI_CACHE_TTL_MINUTES": 30,
+            "YAOBI_AI_DAILY_USD_CAP":     3.0,
+            "YAOBI_AI_MAX_INPUT_TOKENS":  8000,
+            "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
             "OKX_MIN_REQUEST_INTERVAL":  0.20,
             "SURF_MIN_REQUEST_INTERVAL": 0.20,
         }

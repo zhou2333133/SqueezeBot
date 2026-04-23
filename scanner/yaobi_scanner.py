@@ -18,6 +18,7 @@ import aiohttp
 from config import config_manager, surf_credentials_status
 from scanner.candidates import (
     Candidate, upsert_candidate, scan_status, candidates_map, clear_candidates,
+    set_opportunity_queue,
 )
 from scanner.scorer import score as score_candidate
 from scanner.sources.geckoterminal import fetch_trending_pools, fetch_new_pools
@@ -35,7 +36,9 @@ from scanner.sources.okx_market import (
     search_tokens,
 )
 from scanner.sources.binance_square import fetch_hot_posts, extract_ticker_mentions
-from scanner.sources.binance_futures import scan_futures_oi
+from scanner.sources.binance_futures import scan_futures_oi, scan_short_term_intel
+from scanner.sources.binance_liquidations import collect_liquidations, liquidation_stats
+from scanner.ai_gateway import analyze_opportunities, provider_status as ai_provider_status
 from scanner.sources.surf_api import (
     chat_completion as surf_chat_completion,
     fetch_news_feed as surf_fetch_news_feed,
@@ -72,9 +75,14 @@ class YaobiScanner:
         self._futures_symbols: set[str] = set()
         self._futures_cached_at: Optional[datetime] = None
         self._last_obsidian_date: Optional[date] = None
+        self._liquidation_task: asyncio.Task | None = None
 
     async def run(self) -> None:
         self.running = True
+        if config_manager.settings.get("YAOBI_BINANCE_LIQUIDATION_WS_ENABLED", True):
+            self._liquidation_task = asyncio.create_task(
+                collect_liquidations(lambda: self.running and bool(config_manager.settings.get("YAOBI_BINANCE_LIQUIDATION_WS_ENABLED", True)))
+            )
         try:
             init_rulebook()
         except Exception as e:
@@ -97,6 +105,13 @@ class YaobiScanner:
             except asyncio.CancelledError:
                 break
         self.running = False
+        if self._liquidation_task and not self._liquidation_task.done():
+            self._liquidation_task.cancel()
+            try:
+                await self._liquidation_task
+            except asyncio.CancelledError:
+                pass
+        self._liquidation_task = None
         logger.info("🔍 妖币扫描器已停止")
 
     async def run_once(self) -> None:
@@ -357,6 +372,27 @@ class YaobiScanner:
             except Exception as e:
                 logger.warning("合约OI扫描失败: %s", e)
 
+            # ── 11b. Binance 原生短线情报：5m/15m OI、Taker、多空比、强平 ──
+            if config_manager.settings.get("YAOBI_BINANCE_SHORT_INTEL_ENABLED", True):
+                try:
+                    top_n = int(config_manager.settings.get("YAOBI_FUTURES_TOP_N", 120))
+                    short_items = await scan_short_term_intel(session, top_n=top_n)
+                    short_new, short_enrich = self._apply_short_term_intel(candidates, short_items)
+                    self._apply_liquidation_stats(candidates)
+                    scan_status["sources"]["binance_short_intel"] = {
+                        "count": len(short_items), "last_run": start.strftime("%H:%M"),
+                    }
+                    logger.info(
+                        "🔍 Binance短线情报: %d 个合约 (新增%d 补充%d)",
+                        len(short_items), short_new, short_enrich,
+                    )
+                except Exception as e:
+                    logger.warning("Binance短线情报失败: %s", e)
+            else:
+                scan_status["sources"]["binance_short_intel"] = {
+                    "count": 0, "last_run": start.strftime("%H:%M"), "disabled": True,
+                }
+
             # ── 12. OKX 多链验证 + 大单/风险分析 (限额内挑高价值合约品种) ─────
             okx_top_n = int(config_manager.settings.get("YAOBI_OKX_HEAVY_TOP_N", 40))
             futures_candidates = sorted(
@@ -408,6 +444,7 @@ class YaobiScanner:
         # ── 15. 异常币/情绪雷达 (OKX market-filter/sentiment-tracker 风格) ───
         self._apply_anomaly_radar(all_candidates)
         self._apply_decision_cards(all_candidates)
+        await self._apply_opportunity_queue(all_candidates)
         min_anomaly = int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35))
         anomaly_count = sum(1 for c in all_candidates if c.anomaly_score >= min_anomaly)
         scored = [
@@ -450,6 +487,252 @@ class YaobiScanner:
                 logger.info("📝 Obsidian 日报写入完成")
             except Exception as e:
                 logger.error("Obsidian 写入失败: %s", e)
+
+    # ── Binance 短线情报 + 机会队列 ───────────────────────────────────────────
+
+    @staticmethod
+    def _find_candidate_by_symbol(candidates: dict[str, Candidate], symbol: str) -> Candidate | None:
+        base = str(symbol or "").upper().replace("USDT", "")
+        if not base:
+            return None
+        if base in candidates:
+            return candidates[base]
+        for c in candidates.values():
+            if c.symbol.upper().replace("USDT", "") == base:
+                return c
+        return None
+
+    def _apply_short_term_intel(
+        self,
+        candidates: dict[str, Candidate],
+        items: list[dict],
+    ) -> tuple[int, int]:
+        new_count = 0
+        enrich_count = 0
+        for item in items:
+            sym = str(item.get("symbol", "")).upper().replace("USDT", "")
+            if not sym:
+                continue
+            c = self._find_candidate_by_symbol(candidates, sym)
+            if c is None:
+                c = Candidate(
+                    symbol=sym,
+                    name=sym,
+                    has_futures=True,
+                    sources=["binance_short_intel"],
+                    price_usd=item.get("price_usd", 0.0),
+                    price_change_24h=item.get("price_change_24h", 0.0),
+                    volume_24h=item.get("volume_24h", 0.0),
+                )
+                candidates[sym] = c
+                new_count += 1
+            else:
+                enrich_count += 1
+                if "binance_short_intel" not in c.sources:
+                    c.sources.append("binance_short_intel")
+
+            c.has_futures = True
+            for key in (
+                "price_usd", "price_change_24h", "volume_24h", "futures_oi",
+                "oi_change_5m_pct", "oi_change_15m_pct", "volume_5m_ratio",
+                "taker_buy_ratio_5m", "taker_sell_ratio_5m", "funding_rate_pct",
+                "retail_short_pct", "long_account_pct", "top_trader_long_pct",
+                "oi_volume_ratio", "contract_activity_score",
+            ):
+                if key in item:
+                    setattr(c, key, item[key])
+        return new_count, enrich_count
+
+    def _apply_liquidation_stats(self, candidates: dict[str, Candidate]) -> None:
+        symbols = {
+            f"{c.symbol.upper().replace('USDT', '')}USDT"
+            for c in candidates.values()
+            if c.has_futures
+        }
+        if not symbols:
+            return
+        stats = liquidation_stats(symbols)
+        for c in candidates.values():
+            full = f"{c.symbol.upper().replace('USDT', '')}USDT"
+            row = stats.get(full)
+            if not row:
+                continue
+            c.liquidation_5m_usd = row.get("liquidation_5m_usd", 0.0)
+            c.liquidation_15m_usd = row.get("liquidation_15m_usd", 0.0)
+
+    def _base_opportunity(self, c: Candidate) -> tuple[int, str, str, int, list[str], list[str], list[str]]:
+        reasons: list[str] = []
+        risks: list[str] = []
+        required = ["本地1m动能突破或轧空/轧多信号仍需触发", "入场瞬间Taker与OI方向不反转"]
+
+        score = int(round(
+            c.score * 0.24 +
+            c.anomaly_score * 0.26 +
+            c.contract_activity_score * 0.36
+        ))
+        if abs(c.oi_change_15m_pct) >= 4:
+            score += 10
+            reasons.append(f"15m OI {c.oi_change_15m_pct:+.2f}%")
+        elif abs(c.oi_change_5m_pct) >= 1:
+            score += 5
+            reasons.append(f"5m OI {c.oi_change_5m_pct:+.2f}%")
+        if c.volume_5m_ratio >= 2:
+            score += 8
+            reasons.append(f"5m放量 {c.volume_5m_ratio:.1f}x")
+        if c.liquidation_5m_usd >= 50_000:
+            score += 8
+            reasons.append(f"5m强平 {c.liquidation_5m_usd/1000:.0f}K")
+        elif c.liquidation_15m_usd >= 100_000:
+            score += 5
+            reasons.append(f"15m强平 {c.liquidation_15m_usd/1000:.0f}K")
+        if c.okx_large_trade_pct >= 0.15:
+            score += 6
+            reasons.append(f"OKX大单 {c.okx_large_trade_pct*100:.0f}%")
+
+        long_score = 0
+        short_score = 0
+        taker = float(c.taker_buy_ratio_5m or 0.5)
+        if taker >= 0.58:
+            long_score += 22
+            reasons.append(f"Taker买 {taker:.0%}")
+        elif taker <= 0.42:
+            short_score += 22
+            reasons.append(f"Taker卖 {1-taker:.0%}")
+
+        if c.oi_change_15m_pct > 1 and c.price_change_24h > 0:
+            long_score += 8
+        if c.oi_change_15m_pct > 1 and c.price_change_24h < 0:
+            short_score += 8
+        if c.funding_rate_pct <= -0.05 and c.retail_short_pct >= 60:
+            long_score += 16
+            reasons.append("负FR+空头拥挤")
+        if c.funding_rate_pct >= 0.05 and c.long_account_pct >= 60:
+            short_score += 12
+            risks.append("正FR+多头拥挤")
+        if c.okx_buy_ratio >= 0.62:
+            long_score += 8
+        elif 0 < c.okx_buy_ratio <= 0.38:
+            short_score += 8
+        if c.sentiment_label == "bullish":
+            long_score += 5
+        elif c.sentiment_label == "bearish":
+            short_score += 5
+
+        hard_block = (
+            c.surf_news_sentiment == "negative"
+            or c.surf_ai_risk_level == "HIGH"
+            or c.okx_risk_level >= 4
+        )
+        min_score = int(config_manager.settings.get("YAOBI_OPPORTUNITY_MIN_SCORE", 45))
+        if hard_block:
+            action = "BLOCK"
+            permission = "BLOCK"
+            risks.append(c.surf_ai_reason or c.decision_note or "硬风险信号")
+        elif score < min_score:
+            action = "OBSERVE"
+            permission = "OBSERVE"
+            risks.append(f"机会分{score}低于阈值{min_score}")
+        elif long_score >= short_score + 8 and long_score >= 20:
+            action = "WATCH_LONG"
+            permission = "ALLOW_IF_1M_SIGNAL"
+            required.append("只接受多头1m确认，禁止反向追空")
+        elif short_score >= long_score + 8 and short_score >= 20:
+            action = "WATCH_SHORT"
+            permission = "ALLOW_IF_1M_SIGNAL"
+            required.append("只接受空头1m确认，禁止反向追多")
+        else:
+            action = "OBSERVE"
+            permission = "OBSERVE"
+            required.append("方向分歧，等待Taker/OI重新同向")
+
+        confidence = max(0, min(100, score + abs(long_score - short_score) - len(risks) * 6))
+        return max(0, min(100, score)), action, permission, confidence, reasons[:6], risks[:6], required[:6]
+
+    async def _apply_opportunity_queue(self, candidates: list[Candidate]) -> None:
+        futures = [c for c in candidates if c.has_futures]
+        if not futures:
+            set_opportunity_queue([])
+            scan_status["ai_status"] = ai_provider_status()
+            return
+
+        queue_candidates: list[Candidate] = []
+        for c in futures:
+            (
+                op_score, action, permission, confidence, reasons, risks, required,
+            ) = self._base_opportunity(c)
+            c.opportunity_score = op_score
+            c.opportunity_action = action
+            c.opportunity_permission = permission
+            c.opportunity_confidence = confidence
+            c.opportunity_reasons = reasons
+            c.opportunity_risks = risks
+            c.opportunity_required_confirmation = required
+            c.intelligence_summary = "；".join((reasons or risks or [c.market_filter_note or c.decision_note])[:2])
+            if c.opportunity_score >= int(config_manager.settings.get("YAOBI_OPPORTUNITY_MIN_SCORE", 45)) or action != "OBSERVE":
+                queue_candidates.append(c)
+
+        queue_candidates.sort(
+            key=lambda c: (
+                c.opportunity_permission == "ALLOW_IF_1M_SIGNAL",
+                c.opportunity_score,
+                c.anomaly_score,
+                c.contract_activity_score,
+            ),
+            reverse=True,
+        )
+
+        ai_status = ai_provider_status()
+        if config_manager.settings.get("YAOBI_AI_ENABLED", False) and queue_candidates:
+            ai_top = int(config_manager.settings.get("YAOBI_AI_MAX_SYMBOLS_PER_RUN", 12) or 12)
+            async with aiohttp.ClientSession(trust_env=True) as session:
+                ai_result = await analyze_opportunities(session, queue_candidates[:ai_top])
+            ai_status = ai_result.get("status", ai_status)
+            ai_by_symbol = {
+                str(item.get("symbol", "")).upper().replace("USDT", ""): item
+                for item in ai_result.get("items", [])
+                if item.get("symbol")
+            }
+            for c in queue_candidates:
+                ai = ai_by_symbol.get(c.symbol.upper().replace("USDT", ""))
+                if not ai:
+                    continue
+                c.ai_provider = ai.get("provider", "")
+                c.ai_cached = bool(ai.get("cached"))
+                c.ai_updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                c.intelligence_summary = ai.get("summary") or c.intelligence_summary
+                if ai.get("reasons"):
+                    c.opportunity_reasons = (ai.get("reasons") or [])[:5]
+                if ai.get("risks"):
+                    c.opportunity_risks = (ai.get("risks") or [])[:5]
+                if ai.get("required_confirmation"):
+                    c.opportunity_required_confirmation = (ai.get("required_confirmation") or [])[:5]
+                c.opportunity_confidence = max(c.opportunity_confidence, int(ai.get("confidence", 0) or 0))
+                ai_action = ai.get("action")
+                ai_permission = ai.get("permission")
+                if ai_action == "BLOCK" or ai_permission == "BLOCK":
+                    c.opportunity_action = "BLOCK"
+                    c.opportunity_permission = "BLOCK"
+                elif ai_action in {"WATCH_LONG", "WATCH_SHORT"}:
+                    c.opportunity_action = ai_action
+                    c.opportunity_permission = "ALLOW_IF_1M_SIGNAL" if ai_permission == "ALLOW_IF_1M_SIGNAL" else c.opportunity_permission
+                c.opportunity_score = max(c.opportunity_score, min(100, c.opportunity_confidence))
+
+        queue_candidates.sort(
+            key=lambda c: (
+                c.opportunity_permission == "ALLOW_IF_1M_SIGNAL",
+                c.opportunity_score,
+                c.anomaly_score,
+                c.contract_activity_score,
+            ),
+            reverse=True,
+        )
+        top_n = int(config_manager.settings.get("YAOBI_OPPORTUNITY_TOP_N", 6) or 6)
+        for idx, c in enumerate(queue_candidates[:top_n], 1):
+            c.opportunity_rank = idx
+        for c in queue_candidates[top_n:]:
+            c.opportunity_rank = 0
+        set_opportunity_queue([c.to_dict() for c in queue_candidates[:max(top_n, 1)]])
+        scan_status["ai_status"] = ai_status
 
     # ── Surf 新闻预过滤 ────────────────────────────────────────────────────────
 

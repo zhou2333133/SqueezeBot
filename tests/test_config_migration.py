@@ -30,6 +30,8 @@ class TestConfigMigration(unittest.TestCase):
                         "YAOBI_SURF_NEWS_ENABLED": True,
                         "YAOBI_SURF_AI_ENABLED": True,
                         "YAOBI_SURF_TOP_N": 5,
+                        "YAOBI_AI_ENABLED": True,
+                        "YAOBI_OPPORTUNITY_TOP_N": 20,
                     }, f)
 
                 manager = config.ConfigManager()
@@ -41,6 +43,7 @@ class TestConfigMigration(unittest.TestCase):
                 self.assertEqual(manager.settings["SCALP_TP3_TRAIL_PCT"], 8.0)
                 self.assertEqual(manager.settings["SCALP_STRUCTURE_TRAIL_BARS"], 14)
                 self.assertTrue(manager.settings["SCALP_TP3_AGGRESSIVE_RUNNER"])
+                self.assertFalse(manager.settings["SCALP_SKIP_TP1_IN_STRONG_TREND"])
                 self.assertEqual(manager.settings["SCALP_NET_BREAKEVEN_LOCK_PCT"], 0.15)
                 self.assertEqual(manager.settings["SCALP_TP1_SOFT_BREAKEVEN_PCT"], 0.30)
                 self.assertEqual(manager.settings["SCALP_REVERSAL_STOP_SL_FRACTION"], 0.40)
@@ -54,6 +57,8 @@ class TestConfigMigration(unittest.TestCase):
                 self.assertEqual(manager.settings["BREAKOUT_MAX_PREMOVE_30M_PCT"], 3.0)
                 self.assertTrue(manager.settings["SCALP_YAOBI_BLOCK_WAIT_CONFIRM"])
                 self.assertTrue(manager.settings["SCALP_YAOBI_FUNDING_OI_GUARD"])
+                self.assertTrue(manager.settings["SCALP_OPPORTUNITY_GUARD_ENABLED"])
+                self.assertFalse(manager.settings["SCALP_REQUIRE_OPPORTUNITY_QUEUE"])
                 self.assertEqual(manager.settings["SCALP_YAOBI_FUNDING_EXTREME_PCT"], 0.05)
                 self.assertEqual(manager.settings["SCALP_YAOBI_OI_GUARD_MIN_24H_PCT"], 50.0)
                 self.assertFalse(manager.settings["SCALP_SURF_NEWS_ENABLED"])
@@ -61,6 +66,10 @@ class TestConfigMigration(unittest.TestCase):
                 self.assertFalse(manager.settings["YAOBI_SURF_NEWS_ENABLED"])
                 self.assertFalse(manager.settings["YAOBI_SURF_AI_ENABLED"])
                 self.assertEqual(manager.settings["YAOBI_SURF_TOP_N"], 1)
+                self.assertTrue(manager.settings["YAOBI_BINANCE_SHORT_INTEL_ENABLED"])
+                self.assertTrue(manager.settings["YAOBI_BINANCE_LIQUIDATION_WS_ENABLED"])
+                self.assertEqual(manager.settings["YAOBI_OPPORTUNITY_TOP_N"], 6)
+                self.assertFalse(manager.settings["YAOBI_AI_ENABLED"])
                 self.assertEqual(manager.settings["SCALP_POSITION_USDT"], 10.0)
                 self.assertTrue(manager.settings["SCALP_AUTO_TRADE"])
 

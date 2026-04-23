@@ -29,8 +29,10 @@ from signals import (
 )
 from scanner.candidates import (
     candidates_queue, get_sorted_candidates, get_anomaly_candidates,
-    clear_candidates, scan_status,
+    clear_candidates, scan_status, get_opportunity_queue, opportunity_update_queue,
 )
+from scanner.ai_gateway import provider_status as ai_provider_status
+from scanner.knowledge_base import knowledge_status
 from scanner.provider_metrics import provider_metrics_snapshot
 from trader import BinanceTrader
 from watchlist import (
@@ -212,7 +214,7 @@ async def manual_trade(request: Request):
     if not config_manager.settings.get("MANUAL_REAL_TRADE_ENABLED", False):
         return JSONResponse({
             "status": "error",
-            "message": "❌ 手动实盘下单默认禁用：该入口不会自动挂止损，实盘请使用超短线策略自动开仓。",
+            "message": "❌ 手动实盘下单默认禁用：实盘请优先使用超短线策略自动开仓。",
         }, status_code=403)
 
     try:
@@ -220,6 +222,7 @@ async def manual_trade(request: Request):
         symbol   = str(form.get("symbol", "")).strip().upper()
         side     = str(form.get("side",   "")).strip().upper()
         quantity = float(form.get("quantity", 0))
+        stop_price = float(form.get("stop_price", 0))
     except Exception:
         return JSONResponse({"status": "error", "message": "❌ 参数解析失败"}, status_code=400)
 
@@ -227,6 +230,8 @@ async def manual_trade(request: Request):
         return JSONResponse({"status": "error", "message": "❌ side 只能是 BUY 或 SELL"}, status_code=400)
     if quantity <= 0:
         return JSONResponse({"status": "error", "message": "❌ 数量必须大于 0"}, status_code=400)
+    if stop_price <= 0:
+        return JSONResponse({"status": "error", "message": "❌ 手动实盘下单必须提供 stop_price，禁止无保护单裸仓"}, status_code=400)
 
     try:
         async with aiohttp.ClientSession(trust_env=True) as session:
@@ -234,12 +239,29 @@ async def manual_trade(request: Request):
             leverage = config_manager.settings.get("SCALP_LEVERAGE", 10)
             await trader.set_leverage(symbol, leverage)
             res = await trader.place_market_order(symbol, side, quantity)
+            if not res:
+                return JSONResponse({"status": "error", "message": "❌ 下单失败，请检查 API Key 权限和余额"}, status_code=400)
+            filled_qty = float(res.get("executedQty", 0) or 0)
+            if filled_qty <= 0:
+                filled_qty = quantity
+            exit_side = "SELL" if side == "BUY" else "BUY"
+            sl_resp = await trader.place_stop_loss_order(symbol, exit_side, stop_price)
+            if not (sl_resp and sl_resp.get("orderId")):
+                emergency = await trader.place_reduce_only_market_order(symbol, exit_side, filled_qty)
+                if emergency:
+                    return JSONResponse({
+                        "status": "error",
+                        "message": "❌ 手动单止损挂单失败，已 reduceOnly 市价撤出，未保留裸仓。",
+                    }, status_code=500)
+                return JSONResponse({
+                    "status": "error",
+                    "message": "❌ 手动单止损挂单失败且紧急撤出失败，请立即人工检查交易所持仓。",
+                }, status_code=500)
         if res:
             return JSONResponse({
                 "status":  "success",
-                "message": f"✅ {side} {symbol} ×{quantity} 成功 (OrderID: {res.get('orderId', 'N/A')})",
+                "message": f"✅ {side} {symbol} ×{filled_qty} 成功，止损已挂 @ {stop_price} (OrderID: {res.get('orderId', 'N/A')})",
             })
-        return JSONResponse({"status": "error", "message": "❌ 下单失败，请检查 API Key 权限和余额"}, status_code=400)
     except Exception as e:
         logger.error("手动下单异常: %s", e, exc_info=True)
         return JSONResponse({"status": "error", "message": f"❌ 下单异常: {e}"}, status_code=500)
@@ -292,11 +314,15 @@ async def scalp_status():
     sym_count  = 0
     if bot_state.scalp_bot and bot_state.scalp_bot.monitored_symbols:
         sym_count = len(bot_state.scalp_bot.monitored_symbols)
+    live_suspended = bool(getattr(bot_state.scalp_bot, "_live_trading_suspended", False))
+    live_suspended_reason = getattr(bot_state.scalp_bot, "_live_trading_suspended_reason", "")
     return JSONResponse({
         "running":         is_running,
         "positions_count": len(scalp_positions),
         "signals_count":   len(scalp_signals_history),
         "symbols_count":   sym_count,
+        "live_trading_suspended": live_suspended,
+        "live_trading_suspended_reason": live_suspended_reason,
     })
 
 
@@ -887,6 +913,8 @@ async def _build_scalp_analysis_pack() -> dict:
     provider_diag = {
         "provider_metrics": provider_metrics_snapshot(),
         "scan_sources": scan_status.get("sources", {}),
+        "ai_status": scan_status.get("ai_status") or ai_provider_status(),
+        "knowledge": knowledge_status(),
     }
     try:
         from config import surf_credentials_status, okx_credentials_status
@@ -928,6 +956,7 @@ async def _build_scalp_analysis_pack() -> dict:
         "关注池": list_watch_items(candidate_snapshot),
         "妖币扫描": {
             "status": dict(scan_status),
+            "opportunity_queue": get_opportunity_queue(limit=30),
             "top_candidates": candidate_snapshot,
             "anomaly_candidates": get_anomaly_candidates(
                 min_anomaly=int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35)),
@@ -962,6 +991,7 @@ async def _build_scalp_analysis_pack() -> dict:
             "scalp_candidate_*": "从进入超短线候选池开始到开仓/当前的短线最大上/下波动，用于判断扫描器是否选到可交易波动。",
             "关注池": "人工关注/禁入/等待确认列表；用于复盘选币，不会自动生成新策略。",
             "decision_cards": "妖币扫描生成的人工决策解释卡：允许/等待/禁止/观察，只作筛选参考。",
+            "opportunity_queue": "妖币扫描把OKX/链上/情绪/Binance 5m/15m OI、Taker、多空比、强平数据聚合后的Top机会队列；只给超短线提供方向偏置和风险拦截，开仓仍由1m策略触发。",
         },
     }
     return pack
@@ -1065,11 +1095,12 @@ async def ws_scalp_signals(websocket: WebSocket):
 @app.get("/api/yaobi/status")
 async def yaobi_status():
     try:
-        from config import surf_credentials_status, okx_credentials_status
+        from config import surf_credentials_status, okx_credentials_status, ai_credentials_status
         from scanner.sources import binance_square
         credentials = {
             "surf": surf_credentials_status(),
             "okx": okx_credentials_status(),
+            "ai": ai_credentials_status(),
             "binance_square": binance_square.auth_status(),
         }
     except Exception:
@@ -1085,6 +1116,8 @@ async def yaobi_status():
         "min_anomaly":   scan_status.get("min_anomaly", config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35)),
         "sources":       scan_status.get("sources", {}),
         "provider_metrics": provider_metrics_snapshot(),
+        "ai_status":     scan_status.get("ai_status") or ai_provider_status(),
+        "opportunity_count": scan_status.get("opportunity_count", 0),
         "credentials":   credentials,
         "errors":        scan_status.get("errors", [])[-3:],
     })
@@ -1104,6 +1137,8 @@ async def yaobi_diagnostics():
             "okx": okx_diag,
             "surf": surf_credentials_status(),
             "binance_square": square_diag,
+            "ai": ai_provider_status(),
+            "knowledge": knowledge_status(),
             "provider_metrics": provider_metrics_snapshot(),
         })
     except Exception as e:
@@ -1159,6 +1194,17 @@ async def yaobi_candidates(
     return JSONResponse({"candidates": items[:limit], "total": len(items)})
 
 
+@app.get("/api/yaobi/opportunities")
+async def yaobi_opportunities(limit: int = 20):
+    items = get_opportunity_queue(limit=limit)
+    return JSONResponse({
+        "opportunities": items,
+        "total": len(items),
+        "ai_status": scan_status.get("ai_status") or ai_provider_status(),
+        "knowledge": knowledge_status(),
+    })
+
+
 @app.get("/api/yaobi/anomalies")
 async def yaobi_anomalies(
     min_anomaly: int = 1,
@@ -1195,3 +1241,8 @@ async def yaobi_obsidian_status():
 @app.websocket("/ws/yaobi/candidates")
 async def ws_yaobi_candidates(websocket: WebSocket):
     await _ws_pump(websocket, candidates_queue, sleep=0.5)
+
+
+@app.websocket("/ws/yaobi/opportunities")
+async def ws_yaobi_opportunities(websocket: WebSocket):
+    await _ws_pump(websocket, opportunity_update_queue, sleep=0.5)
