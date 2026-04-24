@@ -77,6 +77,8 @@ class Candidate:
     surf_news_sentiment: str  = ""    # positive / negative / neutral
     surf_news_titles:    list = field(default_factory=list)
     surf_ai_risk_level:  str  = ""    # HIGH / MEDIUM / LOW
+    surf_ai_bias:        str  = ""    # LONG / SHORT / NEUTRAL
+    surf_ai_confidence:  int  = 0     # 0-100
     surf_ai_reason:      str  = ""
     surf_ai_score:       int  = 0     # 0-100
 
@@ -206,6 +208,8 @@ class Candidate:
             "surf_news_sentiment": self.surf_news_sentiment,
             "surf_news_titles":   self.surf_news_titles[:3],
             "surf_ai_risk_level": self.surf_ai_risk_level,
+            "surf_ai_bias":       self.surf_ai_bias,
+            "surf_ai_confidence": self.surf_ai_confidence,
             "surf_ai_reason":     self.surf_ai_reason,
             "surf_ai_score":      self.surf_ai_score,
             "okx_chain_count":    self.okx_chain_count,

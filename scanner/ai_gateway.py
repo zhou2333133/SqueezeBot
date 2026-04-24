@@ -22,7 +22,7 @@ from config import (
     ai_credentials_status,
     config_manager,
 )
-from scanner.knowledge_base import relevant_lessons
+from scanner.knowledge_base import relevant_lessons, relevant_lesson_stats
 from scanner.provider_metrics import record_provider_call, record_provider_skip
 
 _ROOT = os.path.join(DATA_DIR, "ai_knowledge")
@@ -92,6 +92,11 @@ def provider_status() -> dict:
         "enabled": bool(cfg.get("YAOBI_AI_ENABLED", False)),
         "credentials": ai_credentials_status(),
         "provider_priority": cfg.get("YAOBI_AI_PROVIDER_PRIORITY", ""),
+        "models": {
+            "openai": cfg.get("YAOBI_AI_MODEL_OPENAI", "gpt-4o-mini"),
+            "gemini": cfg.get("YAOBI_AI_MODEL_GEMINI", "gemini-2.5-flash"),
+            "anthropic": cfg.get("YAOBI_AI_MODEL_ANTHROPIC", "claude-3-5-haiku-latest"),
+        },
         "cache_ttl_min": cfg.get("YAOBI_AI_CACHE_TTL_MINUTES", 30),
         "min_interval_min": cfg.get("YAOBI_AI_MIN_INTERVAL_MINUTES", 15),
         "daily_cap_usd": cap,
@@ -102,11 +107,22 @@ def provider_status() -> dict:
 
 def _compact_candidate(c: Any) -> dict:
     symbol = getattr(c, "symbol", "") or ""
+    rule_action = str(getattr(c, "opportunity_action", "") or "")
+    rule_bias = "NEUTRAL"
+    if rule_action == "WATCH_LONG":
+        rule_bias = "LONG"
+    elif rule_action == "WATCH_SHORT":
+        rule_bias = "SHORT"
     return {
         "symbol": symbol,
         "score": getattr(c, "score", 0),
         "anomaly": getattr(c, "anomaly_score", 0),
         "decision": getattr(c, "decision_action", ""),
+        "rule_action": rule_action or "OBSERVE",
+        "rule_bias": rule_bias,
+        "rule_score": getattr(c, "opportunity_score", 0),
+        "price_1h": round(float(getattr(c, "price_change_1h", 0) or 0), 3),
+        "price_4h": round(float(getattr(c, "price_change_4h", 0) or 0), 3),
         "price_24h": round(float(getattr(c, "price_change_24h", 0) or 0), 3),
         "oi_5m": round(float(getattr(c, "oi_change_5m_pct", 0) or 0), 3),
         "oi_15m": round(float(getattr(c, "oi_change_15m_pct", 0) or 0), 3),
@@ -115,6 +131,7 @@ def _compact_candidate(c: Any) -> dict:
         "volume_ratio": round(float(getattr(c, "volume_ratio", 0) or 0), 3),
         "taker_buy_5m": round(float(getattr(c, "taker_buy_ratio_5m", 0.5) or 0.5), 3),
         "funding_pct": round(float(getattr(c, "funding_rate_pct", 0) or 0), 5),
+        "long_account_pct": round(float(getattr(c, "long_account_pct", 0) or 0), 2),
         "retail_short_pct": round(float(getattr(c, "retail_short_pct", 0) or 0), 2),
         "top_trader_long_pct": round(float(getattr(c, "top_trader_long_pct", 0) or 0), 2),
         "liq_5m_usd": round(float(getattr(c, "liquidation_5m_usd", 0) or 0), 2),
@@ -124,8 +141,11 @@ def _compact_candidate(c: Any) -> dict:
         "okx_large_trade_pct": round(float(getattr(c, "okx_large_trade_pct", 0) or 0), 3),
         "okx_risk_level": getattr(c, "okx_risk_level", 0),
         "sentiment": getattr(c, "sentiment_label", ""),
+        "surf_news_sentiment": getattr(c, "surf_news_sentiment", ""),
+        "surf_news_titles": list(getattr(c, "surf_news_titles", []) or [])[:2],
         "tags": list(getattr(c, "anomaly_tags", []) or [])[:6],
         "signals": list(getattr(c, "signals", []) or [])[:8],
+        "lesson_stats": relevant_lesson_stats(symbol, limit=24),
         "lessons": relevant_lessons(symbol, limit=3),
     }
 
@@ -340,7 +360,7 @@ async def _call_openai(session: aiohttp.ClientSession, system_prompt: str, paylo
 
 def _gemini_model_candidates() -> list[str]:
     primary = str(config_manager.settings.get("YAOBI_AI_MODEL_GEMINI", "gemini-2.5-flash") or "").strip()
-    fallbacks = [primary, "gemini-2.5-flash", "gemini-2.0-flash"]
+    fallbacks = [primary, "gemini-2.5-flash", "gemini-3-flash-preview", "gemini-2.0-flash"]
     result: list[str] = []
     seen: set[str] = set()
     for model in fallbacks:

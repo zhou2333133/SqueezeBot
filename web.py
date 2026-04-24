@@ -991,7 +991,7 @@ async def _build_scalp_analysis_pack() -> dict:
             "scalp_candidate_*": "从进入超短线候选池开始到开仓/当前的短线最大上/下波动，用于判断扫描器是否选到可交易波动。",
             "关注池": "人工关注/禁入/等待确认列表；用于复盘选币，不会自动生成新策略。",
             "decision_cards": "妖币扫描生成的人工决策解释卡：允许/等待/禁止/观察，只作筛选参考。",
-            "opportunity_queue": "妖币扫描把OKX/链上/情绪/Binance 5m/15m OI、Taker、多空比、强平数据聚合后的Top机会队列；只给超短线提供方向偏置和风险拦截，开仓仍由1m策略触发。",
+            "opportunity_queue": "妖币扫描先做15分钟级选币，再由 Gemini/Surf 对 Top 候选做方向与风险终审；只有双AI放行的币，才交给1m策略等待开仓点。",
         },
     }
     return pack

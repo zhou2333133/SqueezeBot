@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from config import next_surf_api_key
+from config import config_manager, next_surf_api_key
 from scanner.provider_metrics import record_provider_call, record_provider_skip
 
 SURF_BASE_URL = os.getenv("SURF_API_BASE_URL", "https://api.asksurf.ai/gateway").rstrip("/")
@@ -59,6 +59,14 @@ def _headers(api_key: str) -> dict[str, str]:
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+
+def current_chat_model(model: str | None = None) -> str:
+    explicit = (model or "").strip()
+    if explicit:
+        return explicit
+    cfg_model = str(config_manager.settings.get("YAOBI_SURF_AI_MODEL", "") or "").strip()
+    return cfg_model or SURF_CHAT_MODEL
 
 
 def _items(data: Any) -> list[dict]:
@@ -199,7 +207,7 @@ async def chat_completion(
         return False, "", "chat_backoff"
 
     payload = {
-        "model": model or SURF_CHAT_MODEL,
+        "model": current_chat_model(model),
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "reasoning_effort": reasoning_effort,

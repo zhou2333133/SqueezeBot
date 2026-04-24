@@ -95,6 +95,69 @@ def relevant_lessons(symbol: str, limit: int = 5) -> list[dict]:
     return rows[-limit:]
 
 
+def _tag_rate(rows: list[dict], tag: str) -> float:
+    if not rows:
+        return 0.0
+    matched = 0
+    for row in rows:
+        diag = str(row.get("diagnosis", "") or "")
+        tags = {str(t) for t in (row.get("tags") or [])}
+        if diag == tag or tag in tags:
+            matched += 1
+    return round(matched / len(rows), 4)
+
+
+def _rows_snapshot(rows: list[dict]) -> dict:
+    if not rows:
+        return {
+            "count": 0,
+            "win_rate": 0.0,
+            "avg_net_r": 0.0,
+            "entry_bad_rate": 0.0,
+            "direction_wrong_rate": 0.0,
+            "runner_missed_rate": 0.0,
+            "stop_too_tight_rate": 0.0,
+        }
+
+    wins = sum(1 for row in rows if _as_float(row.get("net_r")) > 0)
+    avg_net_r = sum(_as_float(row.get("net_r")) for row in rows) / len(rows)
+    return {
+        "count": len(rows),
+        "win_rate": round(wins / len(rows), 4),
+        "avg_net_r": round(avg_net_r, 4),
+        "entry_bad_rate": _tag_rate(rows, "entry_bad"),
+        "direction_wrong_rate": _tag_rate(rows, "direction_wrong"),
+        "runner_missed_rate": max(
+            _tag_rate(rows, "valid_runner_missed"),
+            _tag_rate(rows, "exit_too_early"),
+        ),
+        "stop_too_tight_rate": _tag_rate(rows, "stop_too_tight"),
+    }
+
+
+def relevant_lesson_stats(symbol: str, limit: int = 24) -> dict:
+    sym = str(symbol or "").upper().replace("USDT", "")
+    if not sym:
+        return {
+            "overall": _rows_snapshot([]),
+            "by_direction": {},
+        }
+
+    rows = [
+        row for row in _read_rows()
+        if str(row.get("symbol", "")).upper().replace("USDT", "") == sym
+    ][-max(1, int(limit)):]
+    by_direction: dict[str, dict] = {}
+    for direction in ("LONG", "SHORT"):
+        filtered = [row for row in rows if str(row.get("direction", "")).upper() == direction]
+        if filtered:
+            by_direction[direction] = _rows_snapshot(filtered)
+    return {
+        "overall": _rows_snapshot(rows),
+        "by_direction": by_direction,
+    }
+
+
 def knowledge_status() -> dict:
     rows = _read_rows()
     symbols = {str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")}

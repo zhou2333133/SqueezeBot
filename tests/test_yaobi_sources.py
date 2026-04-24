@@ -1,7 +1,9 @@
+import json
 import asyncio
 import unittest
 from unittest.mock import patch
 
+from scanner import ai_gateway
 from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, get_opportunity_queue, upsert_candidate
 from scanner.sources import binance_futures, binance_square, okx_market, surf_api
 from scanner.sources.binance_liquidations import liquidation_stats, record_liquidation_event
@@ -212,6 +214,7 @@ class TestYaobiSources(unittest.TestCase):
         try:
             config_manager.settings["YAOBI_AI_ENABLED"] = True
             config_manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"] = True
+            config_manager.settings["YAOBI_DUAL_AI_CONSENSUS_REQUIRED"] = False
             config_manager.settings["YAOBI_AI_MAX_SYMBOLS_PER_RUN"] = 1
             c = Candidate(
                 symbol="BAS",
@@ -255,6 +258,121 @@ class TestYaobiSources(unittest.TestCase):
             config_manager.settings.clear()
             config_manager.settings.update(orig)
             clear_candidates()
+
+    def test_dual_ai_consensus_blocks_when_surf_direction_disagrees(self) -> None:
+        clear_candidates()
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_ENABLED"] = True
+            config_manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"] = True
+            config_manager.settings["YAOBI_DUAL_AI_CONSENSUS_REQUIRED"] = True
+            config_manager.settings["YAOBI_SURF_AI_ENABLED"] = True
+            config_manager.settings["YAOBI_SURF_DIRECTION_MIN_CONFIDENCE"] = 55
+            c = Candidate(
+                symbol="BAS",
+                has_futures=True,
+                score=62,
+                anomaly_score=55,
+                contract_activity_score=70,
+                oi_change_15m_pct=5.2,
+                oi_change_5m_pct=1.4,
+                volume_5m_ratio=2.8,
+                taker_buy_ratio_5m=0.64,
+                funding_rate_pct=-0.07,
+                retail_short_pct=68,
+                surf_ai_bias="SHORT",
+                surf_ai_confidence=80,
+                surf_ai_risk_level="LOW",
+                surf_ai_reason="Flow fades after spike",
+            )
+            scanner = YaobiScanner()
+            scanner._apply_anomaly_radar([c])
+            scanner._apply_decision_cards([c])
+
+            async def fake_ai(_session, _cands):
+                return {
+                    "items": [{
+                        "symbol": "BAS",
+                        "action": "WATCH_LONG",
+                        "permission": "ALLOW_IF_1M_SIGNAL",
+                        "confidence": 81,
+                        "summary": "Gemini confirms long bias",
+                        "reasons": ["OI/taker aligned"],
+                        "risks": [],
+                        "required_confirmation": ["wait for local 1m breakout"],
+                    }],
+                    "status": {"last_reason": "ok", "last_provider": "gemini"},
+                }
+
+            with patch("scanner.yaobi_scanner._surf_enabled", return_value=True):
+                with patch("scanner.yaobi_scanner.analyze_opportunities", fake_ai):
+                    asyncio.run(scanner._apply_opportunity_queue([c]))
+
+            rows = get_opportunity_queue()
+            self.assertEqual(rows[0]["opportunity_action"], "OBSERVE")
+            self.assertEqual(rows[0]["opportunity_permission"], "OBSERVE")
+            self.assertIn("Surf偏SHORT与Gemini偏LONG不一致", rows[0]["opportunity_risks"][0])
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+            clear_candidates()
+
+    def test_surf_ai_batch_review_updates_direction_fields(self) -> None:
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_SURF_AI_MODEL"] = "surf-ask"
+            scanner = YaobiScanner()
+            candidates = [
+                Candidate(symbol="AAA", score=70, surf_news_titles=["AAA breakout"], price_change_24h=12.0),
+                Candidate(symbol="BBB", score=68, surf_news_titles=["BBB funding squeeze"], price_change_24h=-6.0),
+            ]
+
+            async def fake_chat(_session, _prompt, model=None, timeout_sec=18.0, reasoning_effort="low"):
+                self.assertEqual(model, "surf-ask")
+                return True, json.dumps({
+                    "items": [
+                        {"symbol": "AAA", "bias": "LONG", "risk": "LOW", "confidence": 77, "reason": "buyers keep control"},
+                        {"symbol": "BBB", "bias": "SHORT", "risk": "MEDIUM", "confidence": 66, "reason": "flow weakens"},
+                    ]
+                }), 200
+
+            with patch("scanner.yaobi_scanner._surf_enabled", return_value=True):
+                with patch("scanner.yaobi_scanner.surf_chat_completion", fake_chat):
+                    asyncio.run(scanner._surf_ai_review(None, candidates))
+
+            self.assertEqual(candidates[0].surf_ai_bias, "LONG")
+            self.assertEqual(candidates[0].surf_ai_risk_level, "LOW")
+            self.assertEqual(candidates[0].surf_ai_confidence, 77)
+            self.assertEqual(candidates[1].surf_ai_bias, "SHORT")
+            self.assertEqual(candidates[1].surf_ai_risk_level, "MEDIUM")
+            self.assertEqual(candidates[1].surf_ai_confidence, 66)
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+
+    def test_ai_gateway_compact_candidate_includes_directional_samples(self) -> None:
+        c = Candidate(
+            symbol="BAS",
+            price_change_1h=3.2,
+            price_change_4h=7.5,
+            price_change_24h=18.0,
+            long_account_pct=61.0,
+            surf_news_sentiment="positive",
+            surf_news_titles=["Protocol upgrade scheduled"],
+            opportunity_action="WATCH_LONG",
+            opportunity_score=74,
+        )
+
+        payload = ai_gateway._compact_candidate(c)
+
+        self.assertEqual(payload["price_1h"], 3.2)
+        self.assertEqual(payload["price_4h"], 7.5)
+        self.assertEqual(payload["long_account_pct"], 61.0)
+        self.assertEqual(payload["surf_news_sentiment"], "positive")
+        self.assertEqual(payload["rule_bias"], "LONG")
+        self.assertIn("lesson_stats", payload)
 
     def test_anomaly_candidates_sorted_by_anomaly_score(self) -> None:
         clear_candidates()

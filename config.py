@@ -159,7 +159,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042402
+    PROFILE_VERSION = 2026042403
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -225,7 +225,8 @@ class ConfigManager:
         "YAOBI_SURF_NEWS_TOP_N": 20,
         "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
         "YAOBI_SURF_AI_ENABLED": True,
-        "YAOBI_SURF_TOP_N": 3,
+        "YAOBI_SURF_TOP_N": 6,
+        "YAOBI_SURF_AI_MODEL": "surf-ask",
         "YAOBI_OKX_HOT_LIMIT": 50,
         "YAOBI_OKX_HEAVY_TOP_N": 40,
         "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
@@ -236,6 +237,8 @@ class ConfigManager:
         "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
         "YAOBI_AI_ENABLED": True,
         "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
+        "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": True,
+        "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": 55,
         "YAOBI_AI_PROVIDER_PRIORITY": "gemini,openai,anthropic",
         "YAOBI_AI_MODEL_OPENAI": "gpt-4o-mini",
         "YAOBI_AI_MODEL_GEMINI": "gemini-2.5-flash",
@@ -308,6 +311,7 @@ class ConfigManager:
         "YAOBI_SURF_TOP_N":            (1,      20),
         "YAOBI_SURF_NEWS_TOP_N":       (1,      100),
         "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": (0, 20),
+        "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": (0, 100),
         "YAOBI_SQUARE_ROWS":           (1,      200),
         "YAOBI_OKX_HOT_LIMIT":         (1,      100),
         "YAOBI_OKX_HEAVY_TOP_N":       (1,      120),
@@ -417,7 +421,8 @@ class ConfigManager:
             "YAOBI_SURF_NEWS_TOP_N":     20,
             "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
             "YAOBI_SURF_AI_ENABLED":     True,
-            "YAOBI_SURF_TOP_N":          3,
+            "YAOBI_SURF_TOP_N":          6,
+            "YAOBI_SURF_AI_MODEL":       "surf-ask",
             "YAOBI_SQUARE_ENABLED":      True,
             "YAOBI_SQUARE_ROWS":         50,
             "YAOBI_OKX_ENABLED":         True,
@@ -432,6 +437,8 @@ class ConfigManager:
             "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
             "YAOBI_AI_ENABLED":           True,
             "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
+            "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": True,
+            "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": 55,
             "YAOBI_AI_PROVIDER_PRIORITY": "gemini,openai,anthropic",
             "YAOBI_AI_MODEL_OPENAI":      "gpt-4o-mini",
             "YAOBI_AI_MODEL_GEMINI":      "gemini-2.5-flash",

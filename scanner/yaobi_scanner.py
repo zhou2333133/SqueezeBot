@@ -427,6 +427,12 @@ class YaobiScanner:
 
         # ── 14. Surf AI 终审 (Top-N) ─────────────────────────────────────────
         surf_top_n = int(config_manager.settings.get("YAOBI_SURF_TOP_N", 1))
+        if (config_manager.settings.get("YAOBI_AI_ENABLED", False)
+                and config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", True)):
+            surf_top_n = max(
+                surf_top_n,
+                int(config_manager.settings.get("YAOBI_AI_MAX_SYMBOLS_PER_RUN", 6) or 6),
+            )
         if (_surf_enabled()
                 and config_manager.settings.get("YAOBI_SURF_ENABLED", True)
                 and config_manager.settings.get("YAOBI_SURF_AI_ENABLED", False)
@@ -648,6 +654,59 @@ class YaobiScanner:
         confidence = max(0, min(100, score + abs(long_score - short_score) - len(risks) * 6))
         return max(0, min(100, score)), action, permission, confidence, reasons[:6], risks[:6], required[:6]
 
+    def _apply_dual_ai_consensus(self, candidates: list[Candidate]) -> None:
+        if not bool(config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", True)):
+            return
+        if not bool(config_manager.settings.get("YAOBI_AI_ENABLED", False)):
+            return
+
+        min_conf = int(config_manager.settings.get("YAOBI_SURF_DIRECTION_MIN_CONFIDENCE", 55) or 55)
+        surf_enabled = (
+            _surf_enabled()
+            and config_manager.settings.get("YAOBI_SURF_ENABLED", True)
+            and config_manager.settings.get("YAOBI_SURF_AI_ENABLED", False)
+        )
+        for c in candidates:
+            if c.opportunity_permission == "BLOCK":
+                continue
+            if c.opportunity_action not in {"WATCH_LONG", "WATCH_SHORT"}:
+                continue
+            if c.surf_ai_risk_level == "HIGH":
+                c.opportunity_action = "BLOCK"
+                c.opportunity_permission = "BLOCK"
+                risks = list(c.opportunity_risks or [])
+                risks.insert(0, f"Surf高风险: {c.surf_ai_reason or 'risk_high'}")
+                c.opportunity_risks = risks[:5]
+                continue
+
+            expected = "LONG" if c.opportunity_action == "WATCH_LONG" else "SHORT"
+            if not surf_enabled:
+                c.opportunity_action = "OBSERVE"
+                c.opportunity_permission = "OBSERVE"
+                risks = list(c.opportunity_risks or [])
+                risks.insert(0, "双AI共识开启，但Surf方向终审未启用")
+                c.opportunity_risks = risks[:5]
+                continue
+
+            bias = str(c.surf_ai_bias or "").upper()
+            confidence = int(c.surf_ai_confidence or 0)
+            if bias != expected or confidence < min_conf:
+                c.opportunity_action = "OBSERVE"
+                c.opportunity_permission = "OBSERVE"
+                risks = list(c.opportunity_risks or [])
+                if not bias or bias == "NEUTRAL":
+                    risks.insert(0, f"Surf方向未达成共识(置信度{confidence})")
+                else:
+                    risks.insert(0, f"Surf偏{bias}与Gemini偏{expected}不一致")
+                c.opportunity_risks = risks[:5]
+                continue
+
+            reasons = list(c.opportunity_reasons or [])
+            surf_reason = c.surf_ai_reason or f"Surf同向{expected}"
+            if surf_reason and surf_reason not in reasons:
+                reasons.insert(0, f"Surf同向: {surf_reason}")
+            c.opportunity_reasons = reasons[:5]
+
     async def _apply_opportunity_queue(self, candidates: list[Candidate]) -> None:
         futures = [c for c in candidates if c.has_futures]
         if not futures:
@@ -743,6 +802,8 @@ class YaobiScanner:
                     summary = c.intelligence_summary or ""
                     if "Gemini终审" not in summary:
                         c.intelligence_summary = ("未进入Gemini终审TopN；" + summary).strip("；")
+
+        self._apply_dual_ai_consensus(queue_candidates)
 
         queue_candidates.sort(
             key=lambda c: (
@@ -876,51 +937,101 @@ class YaobiScanner:
         session: aiohttp.ClientSession,
         candidates: list[Candidate],
     ) -> None:
-        """对高分候选进行 Surf AI 风险审查，设置 surf_ai_risk_level。"""
-        async def _review(c: Candidate) -> None:
-            if not _surf_enabled():
-                record_provider_skip("surf", "chat/completions", "missing_surf_api_key")
-                return
-            prompt = (
-                f"You are a crypto token risk analyst. Evaluate {c.symbol} as a speculative trade candidate.\n"
-                f"Data: price_change_24h={c.price_change_24h:+.1f}%, "
-                f"oi_change_24h={c.oi_change_24h_pct:+.1f}%, "
-                f"volume_ratio={c.volume_ratio:.1f}x, "
-                f"funding_rate={c.funding_rate_pct:.4f}%, "
-                f"retail_short={c.retail_short_pct:.0f}%, "
-                f"score={c.score}\n"
-                f"Recent news: {'; '.join(c.surf_news_titles[:2]) or 'none'}\n"
-                f"Answer ONLY with JSON: "
-                f'{{\"score\":0-100,\"risk\":\"LOW|MEDIUM|HIGH\",\"reason\":\"max 12 words\"}}'
+        """对高分候选进行 Surf AI 方向+风险终审，单次批量调用降低 credits 消耗。"""
+        if not _surf_enabled():
+            record_provider_skip("surf", "chat/completions", "missing_surf_api_key", items=len(candidates))
+            return
+        if not candidates:
+            return
+
+        compact_rows = []
+        for c in candidates:
+            compact_rows.append({
+                "symbol": c.symbol,
+                "score": c.score,
+                "price_1h": round(float(c.price_change_1h or 0), 2),
+                "price_4h": round(float(c.price_change_4h or 0), 2),
+                "price_24h": round(float(c.price_change_24h or 0), 2),
+                "oi_5m": round(float(c.oi_change_5m_pct or 0), 3),
+                "oi_15m": round(float(c.oi_change_15m_pct or 0), 3),
+                "oi_24h": round(float(c.oi_change_24h_pct or 0), 2),
+                "volume_5m_ratio": round(float(c.volume_5m_ratio or 0), 2),
+                "volume_ratio": round(float(c.volume_ratio or 0), 2),
+                "taker_buy_5m": round(float(c.taker_buy_ratio_5m or 0.5), 3),
+                "funding_pct": round(float(c.funding_rate_pct or 0), 5),
+                "retail_short_pct": round(float(c.retail_short_pct or 0), 2),
+                "long_account_pct": round(float(c.long_account_pct or 0), 2),
+                "top_trader_long_pct": round(float(c.top_trader_long_pct or 0), 2),
+                "liq_5m_usd": round(float(c.liquidation_5m_usd or 0), 2),
+                "liq_15m_usd": round(float(c.liquidation_15m_usd or 0), 2),
+                "okx_buy_ratio": round(float(c.okx_buy_ratio or 0), 3),
+                "contract_activity": int(c.contract_activity_score or 0),
+                "rule_action": c.opportunity_action or "OBSERVE",
+                "news_sentiment": c.surf_news_sentiment or "neutral",
+                "news_titles": c.surf_news_titles[:2],
+            })
+
+        payload = json.dumps({"candidates": compact_rows}, ensure_ascii=False, separators=(",", ":"))
+        prompt = (
+            "You are a crypto short-term market analyst. Review the provided candidates for the next 15-60 minutes only. "
+            "Use only the supplied compact data and recent news titles. "
+            "Return strict JSON only in this schema: "
+            "{\"items\":[{\"symbol\":\"BASE\",\"bias\":\"LONG|SHORT|NEUTRAL\",\"risk\":\"LOW|MEDIUM|HIGH\","
+            "\"confidence\":0,\"reason\":\"max 18 words\"}]}. "
+            "Do not include markdown.\n"
+            f"{payload}"
+        )
+        try:
+            ok_resp, text, status = await surf_chat_completion(
+                session,
+                prompt,
+                model=str(config_manager.settings.get("YAOBI_SURF_AI_MODEL", "surf-ask") or "surf-ask"),
+                timeout_sec=22,
+                reasoning_effort="low",
             )
+            if not ok_resp:
+                logger.debug("Surf AI 批量终审失败: %s", status)
+                return
+            raw = str(text or "").strip()
+            if "```" in raw:
+                parts = raw.split("```")
+                for part in parts:
+                    candidate = part.strip()
+                    if candidate.lower().startswith("json"):
+                        candidate = candidate[4:].strip()
+                    if candidate.startswith("{") or candidate.startswith("["):
+                        raw = candidate
+                        break
             try:
-                ok_resp, text, status = await surf_chat_completion(
-                    session,
-                    prompt,
-                    timeout_sec=18,
-                    reasoning_effort="low",
-                )
-                if not ok_resp:
-                    logger.debug("Surf AI 审查失败 [%s]: HTTP %s", c.symbol, status)
-                    return
-                if "```" in text:
-                    text = text.split("```")[1].lstrip("json").strip()
-                result = json.loads(text)
-                c.surf_ai_score      = max(0, min(100, int(result.get("score", 50))))
-                c.surf_ai_risk_level = result.get("risk", "")
-                c.surf_ai_reason     = result.get("reason", "")
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                start = raw.find("{")
+                end = raw.rfind("}")
+                if start < 0 or end <= start:
+                    raise
+                result = json.loads(raw[start:end + 1])
+            items = result.get("items", []) if isinstance(result, dict) else result
+            if not isinstance(items, list):
+                items = []
+            items_by_symbol = {
+                str(item.get("symbol", "")).upper().replace("USDT", ""): item
+                for item in items
+                if isinstance(item, dict) and item.get("symbol")
+            }
+            for c in candidates:
+                item = items_by_symbol.get(c.symbol.upper().replace("USDT", ""))
+                if not item:
+                    continue
+                c.surf_ai_bias = str(item.get("bias", "") or "").upper()
+                c.surf_ai_confidence = max(0, min(100, int(item.get("confidence", 0) or 0)))
+                c.surf_ai_score = c.surf_ai_confidence
+                c.surf_ai_risk_level = str(item.get("risk", "") or "").upper()
+                c.surf_ai_reason = str(item.get("reason", "") or "")[:120]
                 if c.surf_ai_risk_level == "HIGH":
                     logger.info("🔍 [%s] Surf AI 高风险: %s", c.symbol, c.surf_ai_reason)
-            except Exception as e:
-                record_provider_call("surf", "chat/completions", False, status="exception", error=f"{type(e).__name__}: {e}")
-                logger.debug("Surf AI 审查异常 [%s]: %s", c.symbol, e)
-
-        sem = asyncio.Semaphore(3)
-        async def bounded(c: Candidate) -> None:
-            async with sem:
-                await _review(c)
-
-        await asyncio.gather(*[bounded(c) for c in candidates], return_exceptions=True)
+        except Exception as e:
+            record_provider_call("surf", "chat/completions", False, status="exception", error=f"{type(e).__name__}: {e}")
+            logger.debug("Surf AI 批量终审异常: %s", e)
 
     # ── 异常币/情绪雷达 ───────────────────────────────────────────────────────
 
