@@ -160,6 +160,7 @@ class BinanceScalpBot:
         self._last_surf_news_scan_at: float                = 0.0
         # OI暖机截止时间（首轮OI就绪后静默60秒，防信号井喷）
         self._oi_warmup_until:  float                    = 0.0
+        self._last_oi_poll_symbols: set[str]              = set()
         # 过滤统计（每5分钟输出）
         self._fstat:            dict[str, int]           = {
             "checked": 0, "no_candidate": 0, "oi_miss": 0,
@@ -954,6 +955,20 @@ class BinanceScalpBot:
 
     # ─── OI 轮询（每10秒，维护3分钟缓存）────────────────────────────────────
 
+    def _oi_poll_symbols(self) -> list[str]:
+        symbols = set(self.open_positions.keys())
+        require_permission = bool(self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_PERMISSION", True))
+        for sym in self.candidate_symbols:
+            meta = self.candidate_meta.get(sym, {})
+            if not require_permission:
+                symbols.add(sym)
+                continue
+            op_permission = str(meta.get("yaobi_opportunity_permission") or "")
+            setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
+            if op_permission == "ALLOW_IF_1M_SIGNAL" and setup in {"ARMED", "HOT"}:
+                symbols.add(sym)
+        return sorted(symbols)
+
     async def _poll_oi_loop(self) -> None:
         await asyncio.sleep(15)  # 等WS连接稳定后再开始
         sem = asyncio.Semaphore(20)
@@ -980,15 +995,20 @@ class BinanceScalpBot:
         while self.running:
             interval = self.cfg.get("OI_POLL_INTERVAL", 10)
             await asyncio.sleep(interval)
-            if self.candidate_symbols:
-                await asyncio.gather(*[_poll_one(s) for s in self.candidate_symbols])
+            poll_symbols = self._oi_poll_symbols()
+            poll_set = set(poll_symbols)
+            if poll_set != self._last_oi_poll_symbols:
+                self._last_oi_poll_symbols = poll_set
+                self._oi_warmup_until = 0.0
+            if poll_symbols:
+                await asyncio.gather(*[_poll_one(s) for s in poll_symbols])
                 # 首轮OI就绪后启动60秒暖机静默，防止OI缓存从空→满时信号井喷
                 if self._oi_warmup_until == 0.0:
-                    ready = sum(1 for s in self.candidate_symbols if self._oi_cache.get(s))
-                    if ready >= len(self.candidate_symbols) * 0.8:
+                    ready = sum(1 for s in poll_symbols if self._oi_cache.get(s))
+                    if ready >= len(poll_symbols) * 0.8:
                         self._oi_warmup_until = time.monotonic() + 60
                         logger.info("⚡ OI暖机完成(%d/%d), 静默60秒防信号井喷",
-                                    ready, len(self.candidate_symbols))
+                                    ready, len(poll_symbols))
 
     # ─── Surf 新闻扫描 + 急救平仓 ─────────────────────────────────────────────
 
@@ -2582,7 +2602,8 @@ class BinanceScalpBot:
             positions  = len(self.open_positions)
             paper_cnt  = sum(1 for p in self.open_positions.values() if p.paper)
             real_cnt   = positions - paper_cnt
-            oi_covered = sum(1 for s in self.candidate_symbols
+            oi_targets = self._oi_poll_symbols()
+            oi_covered = sum(1 for s in oi_targets
                              if len(self._oi_cache.get(s, [])) >= 2)
             enabled    = cfg.get("SCALP_ENABLED", False)
             auto       = cfg.get("SCALP_AUTO_TRADE", False)
@@ -2591,10 +2612,10 @@ class BinanceScalpBot:
             if self._live_trading_suspended:
                 mode_str += f"/暂停:{self._live_trading_suspended_reason}"
             logger.info(
-                "⚡ V3心跳 | 策略%s | 候选%d个 | OI覆盖%d个 | 已就绪%d个 | "
+                "⚡ V3心跳 | 策略%s | 候选%d个 | OI覆盖%d/%d个 | 已就绪%d个 | "
                 "仓位%d个(真实%d/模拟%d) | 观察中%d个 | 模式:%s",
                 "开启" if enabled else "关闭",
-                len(self.candidate_symbols), oi_covered, buffered,
+                len(self.candidate_symbols), oi_covered, len(oi_targets), buffered,
                 positions, real_cnt, paper_cnt,
                 len(self.observe_symbols), mode_str,
             )

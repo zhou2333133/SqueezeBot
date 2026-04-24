@@ -259,6 +259,36 @@ class TestScalpEngine(unittest.TestCase):
 
         self.assertTrue(ok, reason)
 
+    def test_oi_poll_symbols_only_tracks_actionable_candidates_and_positions(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_symbols = ["BASUSDT", "OBSUSDT", "HOTUSDT"]
+        bot.candidate_meta = {
+            "BASUSDT": {
+                "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+                "yaobi_opportunity_setup_state": "ARMED",
+            },
+            "OBSUSDT": {
+                "yaobi_opportunity_permission": "OBSERVE",
+                "yaobi_opportunity_setup_state": "WAIT",
+            },
+            "HOTUSDT": {
+                "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+                "yaobi_opportunity_setup_state": "HOT",
+            },
+        }
+        bot.open_positions["POSUSDT"] = ScalpPosition(
+            symbol="POSUSDT",
+            direction="LONG",
+            entry_price=1.0,
+            quantity=1.0,
+            quantity_remaining=1.0,
+            sl_price=0.9,
+            tp1_price=1.1,
+            tp2_price=1.2,
+        )
+
+        self.assertEqual(bot._oi_poll_symbols(), ["BASUSDT", "HOTUSDT", "POSUSDT"])
+
     def test_fade_permission_blocks_breakout_chase(self) -> None:
         bot = BinanceScalpBot()
         bot.candidate_meta["SKRUSDT"] = {
