@@ -7,6 +7,7 @@ Official docs:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import Any
@@ -21,6 +22,8 @@ SURF_BASE_URL = os.getenv("SURF_API_BASE_URL", "https://api.asksurf.ai/gateway")
 SURF_CHAT_MODEL = os.getenv("SURF_CHAT_MODEL", "surf-ask").strip() or "surf-ask"
 SURF_CHAT_BACKOFF_SECONDS = int(os.getenv("SURF_CHAT_BACKOFF_SECONDS", "600"))
 _chat_disabled_until = 0.0
+_request_lock = asyncio.Lock()
+_last_request_at: dict[str, float] = {}
 PROJECT_ALIASES = {
     "BTC": "bitcoin",
     "ETH": "ethereum",
@@ -59,6 +62,17 @@ def _headers(api_key: str) -> dict[str, str]:
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+
+async def _throttle(api_key: str) -> None:
+    min_interval = float(config_manager.settings.get("SURF_MIN_REQUEST_INTERVAL", 0.20) or 0.20)
+    async with _request_lock:
+        now = time.monotonic()
+        last = _last_request_at.get(api_key, 0.0)
+        wait = min_interval - (now - last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_request_at[api_key] = time.monotonic()
 
 
 def current_chat_model(model: str | None = None) -> str:
@@ -139,6 +153,7 @@ async def fetch_news_feed(
 
     url = f"{SURF_BASE_URL}/v1/news/feed?{urlencode(params)}"
     try:
+        await _throttle(api_key)
         async with session.get(
             url,
             headers=_headers(api_key),
@@ -172,6 +187,7 @@ async def search_news(
 
     url = f"{SURF_BASE_URL}/v1/search/news?{urlencode({'q': query})}"
     try:
+        await _throttle(api_key)
         async with session.get(
             url,
             headers=_headers(api_key),
@@ -214,6 +230,7 @@ async def chat_completion(
         "ability": ["search", "market_analysis"],
     }
     try:
+        await _throttle(api_key)
         async with session.post(
             f"{SURF_BASE_URL}/v1/chat/completions",
             json=payload,

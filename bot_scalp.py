@@ -504,9 +504,15 @@ class BinanceScalpBot:
             return True, ""
 
         action = str(meta.get("yaobi_decision_action") or "")
+        op_permission = str(meta.get("yaobi_opportunity_permission") or "")
+        op_setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
         if self.cfg.get("SCALP_YAOBI_BLOCK_DECISION_BAN", True) and action == "禁止交易":
             return False, f"妖币扫描决策=禁止交易: {meta.get('yaobi_decision_note') or meta.get('yaobi_decision_risks')}"
-        if self.cfg.get("SCALP_YAOBI_BLOCK_WAIT_CONFIRM", True) and action == "等待确认":
+        if (
+            self.cfg.get("SCALP_YAOBI_BLOCK_WAIT_CONFIRM", True)
+            and action == "等待确认"
+            and not (op_permission == "ALLOW_IF_1M_SIGNAL" and op_setup in {"ARMED", "HOT"})
+        ):
             return False, f"妖币扫描决策=等待确认，仅观察不自动交易: {meta.get('yaobi_decision_note') or ''}"
 
         if self.cfg.get("SCALP_YAOBI_BLOCK_HIGH_RISK", True):
@@ -517,12 +523,10 @@ class BinanceScalpBot:
 
         if self.cfg.get("SCALP_OPPORTUNITY_GUARD_ENABLED", True):
             op_action = str(meta.get("yaobi_opportunity_action") or "")
-            op_permission = str(meta.get("yaobi_opportunity_permission") or "")
             op_rank = int(meta.get("yaobi_opportunity_rank", 0) or 0)
             op_dir = self._yaobi_action_direction(op_action)
             op_style = self._yaobi_action_style(op_action)
             op_trigger = str(meta.get("yaobi_opportunity_trigger_family") or "").upper()
-            op_setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
             op_setup_note = str(meta.get("yaobi_opportunity_setup_note") or "")
             is_breakout = "动能突破" in str(signal_label or "")
             is_squeeze = "猎杀" in str(signal_label or "")

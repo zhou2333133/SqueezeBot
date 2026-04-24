@@ -1602,10 +1602,14 @@ class YaobiScanner:
             elif c.has_futures and not c.address:
                 missing.append("链上大单未确认")
 
+            hard_risk = self._is_hard_block_candidate(c)
+
             if c.category == "风险":
                 risks.append("候选分类为风险")
-            if c.surf_ai_risk_level == "HIGH":
-                risks.append("Surf AI高风险")
+            if c.surf_ai_hard_block:
+                risks.append("Surf AI硬风险")
+            elif c.surf_ai_risk_level == "HIGH":
+                risks.append("Surf AI扩展风险")
             if c.surf_news_sentiment == "negative":
                 risks.append("Surf负面新闻")
             if c.okx_risk_level >= 4:
@@ -1617,9 +1621,7 @@ class YaobiScanner:
             if c.price_change_24h <= -30:
                 risks.append("24h大跌")
 
-            if risks and any(x in " ".join(risks) for x in ("高风险", "负面", "风险")):
-                action = "禁止交易"
-            elif c.category == "风险":
+            if hard_risk:
                 action = "禁止交易"
             elif confidence >= 55 and not risks:
                 action = "允许交易"

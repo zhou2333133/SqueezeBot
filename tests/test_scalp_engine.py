@@ -243,6 +243,22 @@ class TestScalpEngine(unittest.TestCase):
 
         self.assertTrue(ok)
 
+    def test_wait_confirm_does_not_block_armed_ai_playbook(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["BASUSDT"] = {
+            "yaobi_context": True,
+            "yaobi_decision_action": "等待确认",
+            "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
+            "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+            "yaobi_opportunity_rank": 1,
+            "yaobi_opportunity_trigger_family": "BREAKOUT",
+            "yaobi_opportunity_setup_state": "ARMED",
+        }
+
+        ok, reason = bot._yaobi_entry_guard("BASUSDT", "LONG", "动能突破多")
+
+        self.assertTrue(ok, reason)
+
     def test_fade_permission_blocks_breakout_chase(self) -> None:
         bot = BinanceScalpBot()
         bot.candidate_meta["SKRUSDT"] = {

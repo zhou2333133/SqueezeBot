@@ -410,6 +410,7 @@ class TestYaobiSources(unittest.TestCase):
 
             rows = get_opportunity_queue()
             self.assertNotEqual(rows[0]["opportunity_action"], "BLOCK")
+            self.assertNotEqual(c.decision_action, "禁止交易")
         finally:
             config_manager.settings.clear()
             config_manager.settings.update(orig)
@@ -634,6 +635,21 @@ class TestYaobiSources(unittest.TestCase):
 
         self.assertEqual(rows[0]["title"], "Ethereum upgrade ships")
         self.assertIn("Mainnet upgrade completed", rows[0]["text"])
+
+    def test_surf_throttle_tracks_last_request_per_key(self) -> None:
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["SURF_MIN_REQUEST_INTERVAL"] = 0.001
+            surf_api._last_request_at.clear()
+
+            asyncio.run(surf_api._throttle("test-key"))
+
+            self.assertIn("test-key", surf_api._last_request_at)
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+            surf_api._last_request_at.clear()
 
 
 if __name__ == "__main__":
