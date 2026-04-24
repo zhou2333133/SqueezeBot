@@ -264,6 +264,7 @@ class BinanceScalpBot:
             "yaobi_surf_ai_bias": c.get("surf_ai_bias", ""),
             "yaobi_surf_ai_confidence": int(c.get("surf_ai_confidence", 0) or 0),
             "yaobi_surf_ai_reason": c.get("surf_ai_reason", ""),
+            "yaobi_surf_ai_hard_block": bool(c.get("surf_ai_hard_block", False)),
             "yaobi_market_filter_note": c.get("market_filter_note", ""),
             "yaobi_holder_signal": c.get("holder_signal", ""),
             "yaobi_chain": c.get("chain", ""),
@@ -281,6 +282,10 @@ class BinanceScalpBot:
             "yaobi_opportunity_confidence": int(c.get("opportunity_confidence", 0) or 0),
             "yaobi_opportunity_reasons": list(c.get("opportunity_reasons", []) or [])[:5],
             "yaobi_opportunity_risks": list(c.get("opportunity_risks", []) or [])[:5],
+            "yaobi_opportunity_trigger_family": c.get("opportunity_trigger_family", ""),
+            "yaobi_opportunity_setup_state": c.get("opportunity_setup_state", ""),
+            "yaobi_opportunity_setup_note": c.get("opportunity_setup_note", ""),
+            "yaobi_opportunity_expires_at": c.get("opportunity_expires_at", ""),
             "yaobi_intelligence_summary": c.get("intelligence_summary", ""),
             "yaobi_ai_provider": c.get("ai_provider", ""),
             "yaobi_updated_at": c.get("updated_at", ""),
@@ -302,7 +307,8 @@ class BinanceScalpBot:
 
         min_score = int(self.cfg.get("SCALP_YAOBI_MIN_SCORE", 30) or 0)
         min_anomaly = int(self.cfg.get("SCALP_YAOBI_MIN_ANOMALY_SCORE", 35) or 0)
-        monitored = set(self.monitored_symbols)
+        yaobi_only = str(self.cfg.get("SCALP_CANDIDATE_SOURCE_MODE", "YAOBI_ONLY") or "").upper() == "YAOBI_ONLY"
+        monitored = set() if yaobi_only else set(self.monitored_symbols)
         selected: list[tuple[int, int, int, int, int, str, dict]] = []
 
         for c in items:
@@ -504,7 +510,7 @@ class BinanceScalpBot:
             return False, f"妖币扫描决策=等待确认，仅观察不自动交易: {meta.get('yaobi_decision_note') or ''}"
 
         if self.cfg.get("SCALP_YAOBI_BLOCK_HIGH_RISK", True):
-            if str(meta.get("yaobi_surf_ai_risk_level") or "").upper() == "HIGH":
+            if bool(meta.get("yaobi_surf_ai_hard_block")):
                 return False, f"Surf AI高风险: {meta.get('yaobi_decision_note') or ''}"
             if int(meta.get("yaobi_okx_risk_level", 0) or 0) >= 4:
                 return False, f"OKX风险等级{meta.get('yaobi_okx_risk_level')}"
@@ -515,17 +521,26 @@ class BinanceScalpBot:
             op_rank = int(meta.get("yaobi_opportunity_rank", 0) or 0)
             op_dir = self._yaobi_action_direction(op_action)
             op_style = self._yaobi_action_style(op_action)
+            op_trigger = str(meta.get("yaobi_opportunity_trigger_family") or "").upper()
+            op_setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
+            op_setup_note = str(meta.get("yaobi_opportunity_setup_note") or "")
             is_breakout = "动能突破" in str(signal_label or "")
+            is_squeeze = "猎杀" in str(signal_label or "")
             if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_QUEUE", False) and not op_rank:
                 return False, "未进入妖币机会队列Top名单"
             if op_action == "BLOCK" or op_permission == "BLOCK":
                 return False, f"机会队列BLOCK: {meta.get('yaobi_intelligence_summary') or meta.get('yaobi_opportunity_risks')}"
             if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_PERMISSION", True) and op_permission != "ALLOW_IF_1M_SIGNAL":
-                return False, f"机会队列未给自动执行许可: {op_action or 'OBSERVE'}"
+                extra = f" | {op_setup_note}" if op_setup_note else ""
+                return False, f"机会队列未给自动执行许可: {op_action or 'OBSERVE'} / {op_setup or 'WAIT'}{extra}"
             if op_dir == "LONG" and direction == "SHORT":
                 return False, "机会队列当前只允许做多模板，禁止反向追空"
             if op_dir == "SHORT" and direction == "LONG":
                 return False, "机会队列当前只允许做空模板，禁止反向追多"
+            if op_trigger == "BREAKOUT" and is_squeeze:
+                return False, "当前剧本是顺势接力，只接受1m突破/回踩，不做反打猎杀"
+            if op_trigger == "SQUEEZE" and is_breakout:
+                return False, "当前剧本是局部反打，只接受1m衰竭反打，不做突破追单"
             if op_style == "FADE" and is_breakout:
                 return False, "FADE许可只允许顶部/底部反打，不做1m突破追单"
 
@@ -2139,6 +2154,9 @@ class BinanceScalpBot:
             "yaobi_opportunity_action": meta.get("yaobi_opportunity_action", ""),
             "yaobi_opportunity_permission": meta.get("yaobi_opportunity_permission", ""),
             "yaobi_opportunity_confidence": meta.get("yaobi_opportunity_confidence", 0),
+            "yaobi_opportunity_trigger_family": meta.get("yaobi_opportunity_trigger_family", ""),
+            "yaobi_opportunity_setup_state": meta.get("yaobi_opportunity_setup_state", ""),
+            "yaobi_opportunity_setup_note": meta.get("yaobi_opportunity_setup_note", ""),
             "yaobi_opportunity_reasons": meta.get("yaobi_opportunity_reasons", []),
             "yaobi_opportunity_risks": meta.get("yaobi_opportunity_risks", []),
             "yaobi_intelligence_summary": meta.get("yaobi_intelligence_summary", ""),

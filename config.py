@@ -159,7 +159,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042404
+    PROFILE_VERSION = 2026042405
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -247,6 +247,7 @@ class ConfigManager:
         "YAOBI_AI_TOP_OUTPUT": 6,
         "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
         "YAOBI_AI_CACHE_TTL_MINUTES": 30,
+        "YAOBI_PLAYBOOK_TTL_MINUTES": 45,
         "YAOBI_AI_DAILY_USD_CAP": 1.0,
         "YAOBI_AI_MAX_INPUT_TOKENS": 8000,
         "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
@@ -323,6 +324,7 @@ class ConfigManager:
         "YAOBI_AI_TOP_OUTPUT":          (1,      20),
         "YAOBI_AI_MIN_INTERVAL_MINUTES": (1,     1440),
         "YAOBI_AI_CACHE_TTL_MINUTES":   (1,      1440),
+        "YAOBI_PLAYBOOK_TTL_MINUTES":   (5,      240),
         "YAOBI_AI_DAILY_USD_CAP":       (0.0,    100.0),
         "YAOBI_AI_MAX_INPUT_TOKENS":    (1000,   50000),
         "YAOBI_AI_MAX_OUTPUT_TOKENS":   (200,    8000),
@@ -447,6 +449,7 @@ class ConfigManager:
             "YAOBI_AI_TOP_OUTPUT":        6,
             "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
             "YAOBI_AI_CACHE_TTL_MINUTES": 30,
+            "YAOBI_PLAYBOOK_TTL_MINUTES": 45,
             "YAOBI_AI_DAILY_USD_CAP":     1.0,
             "YAOBI_AI_MAX_INPUT_TOKENS":  8000,
             "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,

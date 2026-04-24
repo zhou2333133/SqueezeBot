@@ -1401,6 +1401,11 @@
                     <div class="flex items-center gap-2 flex-wrap">
                       <button type="button" class="copy-symbol text-xl tracking-[.12em]" @click.stop="copyCandidateAddress(o)" :title="candidateAddressTitle(o)" x-text="'$'+o.symbol"></button>
                       <span class="text-[11px] px-2 py-0.5 rounded" :class="opportunityClass(o.opportunity_action)" x-text="opportunityLabel(o.opportunity_action)"></span>
+                      <span class="text-[11px] px-2 py-0.5 rounded bg-slate-700/70 text-slate-200"
+                        x-text="playbookTriggerLabel(o.opportunity_trigger_family)"></span>
+                      <span class="text-[11px] px-2 py-0.5 rounded"
+                        :class="setupStateClass(o.opportunity_setup_state)"
+                        x-text="setupStateLabel(o.opportunity_setup_state)"></span>
                       <span class="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-200"
                         x-text="o.opportunity_permission==='ALLOW_IF_1M_SIGNAL'?'等1m确认':(o.opportunity_permission||'OBSERVE')"></span>
                       <span x-show="o.ai_provider" class="text-[11px] px-2 py-0.5 rounded bg-violet-500/10 text-violet-200"
@@ -1408,6 +1413,7 @@
                     </div>
                     <button type="button" x-show="o.address" class="addr-chip mt-2" @click.stop="copyCandidateAddress(o)" x-text="candidateAddressText(o)"></button>
                     <div class="mt-2 text-sm text-gray-300" x-text="o.intelligence_summary||o.market_filter_note||o.decision_note||'等待更多确认'"></div>
+                    <div x-show="o.opportunity_setup_note" class="mt-1 text-xs text-gray-500" x-text="o.opportunity_setup_note"></div>
                     <div class="mt-3 grid grid-cols-3 sm:grid-cols-6 gap-2 text-[11px]">
                       <div class="mono-panel p-2"><div class="text-gray-600">OI 5m</div><div :class="(o.oi_change_5m_pct||0)>=0?'text-green-400':'text-red-400'" x-text="fmtPct(o.oi_change_5m_pct,2)"></div></div>
                       <div class="mono-panel p-2"><div class="text-gray-600">OI 15m</div><div :class="(o.oi_change_15m_pct||0)>=0?'text-green-400':'text-red-400'" x-text="fmtPct(o.oi_change_15m_pct,2)"></div></div>
@@ -2351,6 +2357,23 @@ function app() {
       if((action||'').startsWith('WATCH_SHORT')) return 'op-side-short'
       if(action==='BLOCK') return 'op-side-block'
       return 'op-side-observe'
+    },
+    playbookTriggerLabel(trigger) {
+      if(trigger==='BREAKOUT') return '顺势触发'
+      if(trigger==='SQUEEZE') return '反打触发'
+      return '待定'
+    },
+    setupStateLabel(state) {
+      if(state==='HOT') return 'HOT'
+      if(state==='ARMED') return 'ARMED'
+      if(state==='BLOCK') return 'BLOCK'
+      return 'WAIT'
+    },
+    setupStateClass(state) {
+      if(state==='HOT') return 'bg-orange-500/15 text-orange-200'
+      if(state==='ARMED') return 'bg-sky-500/15 text-sky-200'
+      if(state==='BLOCK') return 'bg-red-500/15 text-red-200'
+      return 'bg-slate-700/70 text-slate-300'
     },
     opportunityScoreBg(score) {
       const n=Number(score||0)

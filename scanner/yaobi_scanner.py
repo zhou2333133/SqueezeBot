@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 
 import aiohttp
@@ -457,6 +457,16 @@ class YaobiScanner:
             c for c in all_candidates
             if c.score >= min_score or c.anomaly_score >= min_anomaly
         ]
+        sticky = [
+            c for c in all_candidates
+            if self._is_watch_action(c.opportunity_action)
+            or c.opportunity_permission in {"ALLOW_IF_1M_SIGNAL", "BLOCK"}
+            or c.opportunity_setup_state in {"ARMED", "HOT", "BLOCK"}
+        ]
+        merged_scored = {c.key(): c for c in scored}
+        for c in sticky:
+            merged_scored[c.key()] = c
+        scored = list(merged_scored.values())
         scored.sort(key=lambda x: (x.score, x.anomaly_score), reverse=True)
 
         # ── 16. 写入候选库 ───────────────────────────────────────────────────
@@ -624,11 +634,7 @@ class YaobiScanner:
         elif c.sentiment_label == "bearish":
             short_score += 5
 
-        hard_block = (
-            c.surf_news_sentiment == "negative"
-            or c.surf_ai_risk_level == "HIGH"
-            or c.okx_risk_level >= 4
-        )
+        hard_block = self._is_hard_block_candidate(c)
         min_score = int(config_manager.settings.get("YAOBI_OPPORTUNITY_MIN_SCORE", 45))
         if hard_block:
             action = "BLOCK"
@@ -671,6 +677,251 @@ class YaobiScanner:
     def _is_fade_action(action: str) -> bool:
         return str(action or "").upper().endswith("_FADE")
 
+    @staticmethod
+    def _parse_dt(text: str) -> Optional[datetime]:
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _setup_rank(state: str) -> int:
+        mapping = {"WAIT": 0, "ARMED": 1, "HOT": 2, "BLOCK": -1}
+        return mapping.get(str(state or "").upper(), 0)
+
+    @staticmethod
+    def _surf_hard_block_reason(reason: str) -> bool:
+        lower = str(reason or "").lower()
+        if not lower:
+            return False
+        hard_terms = (
+            "hack", "exploit", "rug", "scam", "fraud", "breach", "stolen",
+            "vulnerability", "delist", "suspend", "lawsuit", "no data",
+            "no activity", "unclear direction", "unclear market", "illiquid",
+            "liquidity too low", "liquidity risk",
+        )
+        return any(term in lower for term in hard_terms)
+
+    def _is_hard_block_candidate(self, c: Candidate) -> bool:
+        return (
+            c.surf_news_sentiment == "negative"
+            or c.okx_risk_level >= 4
+            or bool(c.surf_ai_hard_block)
+        )
+
+    def _prev_candidate_state(self, c: Candidate) -> dict:
+        row = candidates_map.get(c.key())
+        return row if isinstance(row, dict) else {}
+
+    def _prev_playbook_active(self, prev: dict) -> bool:
+        if not prev:
+            return False
+        action = str(prev.get("opportunity_action", "") or "")
+        perm = str(prev.get("opportunity_permission", "") or "")
+        expires = self._parse_dt(prev.get("opportunity_expires_at", ""))
+        if not self._is_watch_action(action):
+            return False
+        if perm != "ALLOW_IF_1M_SIGNAL":
+            return False
+        return bool(expires and expires > datetime.now())
+
+    def _carry_forward_playbook(self, c: Candidate) -> bool:
+        prev = self._prev_candidate_state(c)
+        if not self._prev_playbook_active(prev):
+            return False
+        if self._is_hard_block_candidate(c):
+            return False
+        if self._is_watch_action(c.opportunity_action):
+            return False
+        prev_action = str(prev.get("opportunity_action", "") or "")
+        if not self._is_watch_action(prev_action):
+            return False
+        c.opportunity_action = prev_action
+        c.opportunity_confidence = max(c.opportunity_confidence, int(prev.get("opportunity_confidence", 0) or 0))
+        c.ai_provider = c.ai_provider or str(prev.get("ai_provider", "") or "")
+        c.ai_cached = True
+        c.ai_updated_at = c.ai_updated_at or str(prev.get("ai_updated_at", "") or "")
+        c.intelligence_summary = c.intelligence_summary or str(prev.get("intelligence_summary", "") or "")
+        reasons = list(c.opportunity_reasons or [])
+        reasons.insert(0, "沿用上一轮AI剧本窗口")
+        c.opportunity_reasons = reasons[:5]
+        return True
+
+    def _evaluate_playbook_setup(self, c: Candidate) -> tuple[str, str, str]:
+        action = str(c.opportunity_action or "").upper()
+        if action == "BLOCK" or self._is_hard_block_candidate(c):
+            note = c.surf_ai_reason or c.decision_note or "硬风险拦截"
+            return "BLOCK", "", note
+        if not self._is_watch_action(action):
+            return "WAIT", "", "等待AI/规则生成明确剧本"
+
+        direction = self._action_direction(action)
+        is_fade = self._is_fade_action(action)
+        taker = float(c.taker_buy_ratio_5m or 0.5)
+        vol5 = float(c.volume_5m_ratio or 0.0)
+        oi5 = float(c.oi_change_5m_pct or 0.0)
+        oi15 = float(c.oi_change_15m_pct or 0.0)
+        oi24 = float(c.oi_change_24h_pct or 0.0)
+        price1h = float(c.price_change_1h or 0.0)
+        price24h = float(c.price_change_24h or 0.0)
+        funding = float(c.funding_rate_pct or 0.0)
+        long_pct = float(c.long_account_pct or 0.0)
+        retail_short = float(c.retail_short_pct or 0.0)
+        activity = int(c.contract_activity_score or 0)
+
+        if not is_fade:
+            trigger = "BREAKOUT"
+            trend_score = 0
+            local_score = 0
+            if direction == "LONG":
+                if price24h >= 5:
+                    trend_score += 2
+                if price1h >= 0:
+                    trend_score += 1
+                if oi15 >= 1.0:
+                    trend_score += 2
+                if oi24 >= 15:
+                    trend_score += 1
+                if activity >= 40:
+                    trend_score += 1
+                if vol5 >= 0.7:
+                    local_score += 1
+                if taker >= 0.48:
+                    local_score += 1
+                if oi5 >= -0.2:
+                    local_score += 1
+                hot = trend_score >= 4 and local_score >= 3 and taker >= 0.54 and vol5 >= 0.9
+                armed = trend_score >= 4
+                note = (
+                    "15m趋势仍强，等待1m回踩后再突破"
+                    if armed and not hot
+                    else "5m/15m共振，允许1m顺势接力"
+                )
+            else:
+                if price24h <= -5:
+                    trend_score += 2
+                if price1h <= 0:
+                    trend_score += 1
+                if oi15 >= 1.0:
+                    trend_score += 2
+                if oi24 >= 15:
+                    trend_score += 1
+                if activity >= 40:
+                    trend_score += 1
+                if vol5 >= 0.7:
+                    local_score += 1
+                if taker <= 0.52:
+                    local_score += 1
+                if oi5 >= -0.2:
+                    local_score += 1
+                hot = trend_score >= 4 and local_score >= 3 and taker <= 0.46 and vol5 >= 0.9
+                armed = trend_score >= 4
+                note = (
+                    "15m空头趋势仍强，等待1m反抽后再破位"
+                    if armed and not hot
+                    else "5m/15m共振，允许1m顺势接力"
+                )
+            if hot:
+                return "HOT", trigger, note
+            if armed:
+                return "ARMED", trigger, note
+            return "WAIT", trigger, "趋势尚未形成稳定延续，先观察"
+
+        trigger = "SQUEEZE"
+        if direction == "SHORT":
+            extension = 0
+            if price24h >= 12:
+                extension += 2
+            if price1h >= 1.5:
+                extension += 1
+            if oi15 >= 1.0:
+                extension += 1
+            if funding >= 0.02:
+                extension += 1
+            if long_pct >= 55:
+                extension += 1
+            if activity >= 35:
+                extension += 1
+            armed = extension >= 3
+            hot = armed and (taker <= 0.46 or vol5 <= 1.0 or oi5 <= 0.2)
+            note = (
+                "趋势已拉伸，等待1m顶部衰竭后短空"
+                if armed and not hot
+                else "5m已有衰竭迹象，只做1m反打空"
+            )
+        else:
+            extension = 0
+            if price24h <= -12:
+                extension += 2
+            if price1h <= -1.5:
+                extension += 1
+            if abs(oi15) >= 1.0:
+                extension += 1
+            if funding <= -0.02:
+                extension += 1
+            if retail_short >= 58:
+                extension += 1
+            if activity >= 35:
+                extension += 1
+            armed = extension >= 3
+            hot = armed and (taker >= 0.54 or vol5 <= 1.0 or oi5 <= 0.2)
+            note = (
+                "跌势已拉伸，等待1m底部衰竭后抢反弹"
+                if armed and not hot
+                else "5m已有衰竭迹象，只做1m反打多"
+            )
+        if hot:
+            return "HOT", trigger, note
+        if armed:
+            return "ARMED", trigger, note
+        return "WAIT", trigger, "局部衰竭条件不足，先观察"
+
+    def _apply_playbook_state(self, candidates: list[Candidate]) -> None:
+        ttl_min = int(config_manager.settings.get("YAOBI_PLAYBOOK_TTL_MINUTES", 45) or 45)
+        now = datetime.now()
+        for c in candidates:
+            self._carry_forward_playbook(c)
+            prev = self._prev_candidate_state(c)
+            prev_active = self._prev_playbook_active(prev)
+            prev_action = str(prev.get("opportunity_action", "") or "")
+            state, family, note = self._evaluate_playbook_setup(c)
+            if (
+                state == "WAIT"
+                and prev_active
+                and prev_action == c.opportunity_action
+                and not self._is_hard_block_candidate(c)
+            ):
+                state = "ARMED"
+                note = (note + "；沿用上一轮剧本窗口").strip("；")
+            c.opportunity_trigger_family = family
+            c.opportunity_setup_state = state
+            c.opportunity_setup_note = note[:160]
+            if state == "BLOCK":
+                c.opportunity_action = "BLOCK"
+                c.opportunity_permission = "BLOCK"
+                c.opportunity_expires_at = ""
+                continue
+            if not self._is_watch_action(c.opportunity_action):
+                c.opportunity_permission = "OBSERVE"
+                c.opportunity_expires_at = ""
+                continue
+            c.opportunity_permission = "ALLOW_IF_1M_SIGNAL" if state in {"ARMED", "HOT"} else "OBSERVE"
+            if c.opportunity_permission == "ALLOW_IF_1M_SIGNAL":
+                c.opportunity_expires_at = (now + timedelta(minutes=ttl_min)).strftime("%Y-%m-%d %H:%M:%S")
+            elif prev_active and prev_action == c.opportunity_action:
+                c.opportunity_expires_at = str(prev.get("opportunity_expires_at", "") or "")
+            else:
+                c.opportunity_expires_at = ""
+            required = list(c.opportunity_required_confirmation or [])
+            if family == "BREAKOUT":
+                required.insert(0, "5m/15m剧本已就绪，仅等待1m回踩/破位触发")
+            elif family == "SQUEEZE":
+                required.insert(0, "5m/15m剧本已就绪，仅等待1m顶部/底部衰竭反打")
+            c.opportunity_required_confirmation = list(dict.fromkeys(required))[:5]
+
     def _apply_dual_ai_consensus(self, candidates: list[Candidate]) -> None:
         if not bool(config_manager.settings.get("YAOBI_AI_ENABLED", False)):
             return
@@ -687,11 +938,11 @@ class YaobiScanner:
                 continue
             if not self._is_watch_action(c.opportunity_action):
                 continue
-            if c.surf_ai_risk_level == "HIGH":
+            if self._is_hard_block_candidate(c):
                 c.opportunity_action = "BLOCK"
                 c.opportunity_permission = "BLOCK"
                 risks = list(c.opportunity_risks or [])
-                risks.insert(0, f"Surf高风险: {c.surf_ai_reason or 'risk_high'}")
+                risks.insert(0, f"Surf硬风险: {c.surf_ai_reason or 'risk_high'}")
                 c.opportunity_risks = risks[:5]
                 continue
 
@@ -753,7 +1004,11 @@ class YaobiScanner:
             c.opportunity_risks = risks
             c.opportunity_required_confirmation = required
             c.intelligence_summary = "；".join((reasons or risks or [c.market_filter_note or c.decision_note])[:2])
-            if c.opportunity_score >= int(config_manager.settings.get("YAOBI_OPPORTUNITY_MIN_SCORE", 45)) or action != "OBSERVE":
+            if (
+                c.opportunity_score >= int(config_manager.settings.get("YAOBI_OPPORTUNITY_MIN_SCORE", 45))
+                or action != "OBSERVE"
+                or self._prev_playbook_active(self._prev_candidate_state(c))
+            ):
                 queue_candidates.append(c)
 
         queue_candidates.sort(
@@ -818,7 +1073,7 @@ class YaobiScanner:
                     c.opportunity_permission = "BLOCK"
                 elif self._is_watch_action(ai_action):
                     c.opportunity_action = ai_action
-                    c.opportunity_permission = "ALLOW_IF_1M_SIGNAL" if ai_permission == "ALLOW_IF_1M_SIGNAL" else c.opportunity_permission
+                    c.opportunity_permission = "OBSERVE"
                 elif ai_required:
                     c.opportunity_action = "OBSERVE"
                     c.opportunity_permission = "OBSERVE"
@@ -840,22 +1095,26 @@ class YaobiScanner:
                         c.intelligence_summary = ("未进入Gemini终审TopN；" + summary).strip("；")
 
         self._apply_dual_ai_consensus(queue_candidates)
+        self._apply_playbook_state(queue_candidates)
 
         allow_cnt = sum(1 for c in queue_candidates if c.opportunity_permission == "ALLOW_IF_1M_SIGNAL")
         block_cnt = sum(1 for c in queue_candidates if c.opportunity_permission == "BLOCK")
         observe_cnt = max(0, len(queue_candidates) - allow_cnt - block_cnt)
+        hot_cnt = sum(1 for c in queue_candidates if c.opportunity_setup_state == "HOT")
         logger.info(
-            "🔍 机会队列结果: 候选%d | AI许可%d | 观察%d | Block%d | 双AI=%s",
+            "🔍 机会队列结果: 候选%d | AI许可%d | 观察%d | Block%d | HOT%d | 双AI=%s",
             len(queue_candidates),
             allow_cnt,
             observe_cnt,
             block_cnt,
+            hot_cnt,
             "ON" if config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", False) else "OFF",
         )
 
         queue_candidates.sort(
             key=lambda c: (
                 c.opportunity_permission == "ALLOW_IF_1M_SIGNAL",
+                self._setup_rank(c.opportunity_setup_state),
                 c.opportunity_score,
                 c.anomaly_score,
                 c.contract_activity_score,
@@ -1075,8 +1334,12 @@ class YaobiScanner:
                 c.surf_ai_score = c.surf_ai_confidence
                 c.surf_ai_risk_level = str(item.get("risk", "") or "").upper()
                 c.surf_ai_reason = str(item.get("reason", "") or "")[:120]
+                c.surf_ai_hard_block = self._surf_hard_block_reason(c.surf_ai_reason)
                 if c.surf_ai_risk_level == "HIGH":
-                    logger.info("🔍 [%s] Surf AI 高风险: %s", c.symbol, c.surf_ai_reason)
+                    if c.surf_ai_hard_block:
+                        logger.info("🔍 [%s] Surf AI 硬风险: %s", c.symbol, c.surf_ai_reason)
+                    else:
+                        logger.info("🔍 [%s] Surf AI 扩展风险: %s", c.symbol, c.surf_ai_reason)
         except Exception as e:
             record_provider_call("surf", "chat/completions", False, status="exception", error=f"{type(e).__name__}: {e}")
             logger.debug("Surf AI 批量终审异常: %s", e)

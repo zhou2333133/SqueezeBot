@@ -204,6 +204,8 @@ class TestYaobiSources(unittest.TestCase):
             self.assertEqual(rows[0]["symbol"], "BAS")
             self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG_CONTINUATION")
             self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
+            self.assertEqual(rows[0]["opportunity_trigger_family"], "BREAKOUT")
+            self.assertIn(rows[0]["opportunity_setup_state"], {"ARMED", "HOT"})
         finally:
             config_manager.settings.clear()
             config_manager.settings.update(orig)
@@ -371,6 +373,88 @@ class TestYaobiSources(unittest.TestCase):
             rows = get_opportunity_queue()
             self.assertEqual(rows[0]["opportunity_action"], "WATCH_SHORT_FADE")
             self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
+            self.assertEqual(rows[0]["opportunity_trigger_family"], "SQUEEZE")
+            self.assertIn(rows[0]["opportunity_setup_state"], {"ARMED", "HOT"})
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+            clear_candidates()
+
+    def test_soft_surf_high_risk_does_not_force_block(self) -> None:
+        clear_candidates()
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_ENABLED"] = False
+            config_manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"] = False
+            c = Candidate(
+                symbol="SKR",
+                has_futures=True,
+                score=68,
+                anomaly_score=60,
+                contract_activity_score=72,
+                price_change_24h=28.0,
+                price_change_1h=3.0,
+                oi_change_15m_pct=8.5,
+                oi_change_24h_pct=70.0,
+                oi_change_5m_pct=0.6,
+                volume_5m_ratio=0.8,
+                taker_buy_ratio_5m=0.46,
+                surf_ai_risk_level="HIGH",
+                surf_ai_reason="Mixed signals, neutral funding, balanced long/short positions",
+            )
+            scanner = YaobiScanner()
+            scanner._apply_anomaly_radar([c])
+            scanner._apply_decision_cards([c])
+            asyncio.run(scanner._apply_opportunity_queue([c]))
+
+            rows = get_opportunity_queue()
+            self.assertNotEqual(rows[0]["opportunity_action"], "BLOCK")
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+            clear_candidates()
+
+    def test_active_playbook_is_carried_forward_within_ttl(self) -> None:
+        clear_candidates()
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_ENABLED"] = False
+            config_manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"] = False
+            old = Candidate(
+                symbol="MOVR",
+                has_futures=True,
+                score=12,
+                anomaly_score=12,
+                opportunity_action="WATCH_SHORT_FADE",
+                opportunity_permission="ALLOW_IF_1M_SIGNAL",
+                opportunity_trigger_family="SQUEEZE",
+                opportunity_setup_state="HOT",
+                opportunity_expires_at="2099-01-01 00:00:00",
+            )
+            upsert_candidate(old)
+            c = Candidate(
+                symbol="MOVR",
+                has_futures=True,
+                score=18,
+                anomaly_score=14,
+                contract_activity_score=25,
+                price_change_24h=18.0,
+                price_change_1h=0.2,
+                oi_change_15m_pct=0.3,
+                taker_buy_ratio_5m=0.49,
+                volume_5m_ratio=0.6,
+            )
+            scanner = YaobiScanner()
+            scanner._apply_anomaly_radar([c])
+            scanner._apply_decision_cards([c])
+            asyncio.run(scanner._apply_opportunity_queue([c]))
+
+            rows = get_opportunity_queue()
+            self.assertEqual(rows[0]["opportunity_action"], "WATCH_SHORT_FADE")
+            self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
+            self.assertIn("沿用上一轮AI剧本窗口", " ".join(rows[0]["opportunity_reasons"]))
         finally:
             config_manager.settings.clear()
             config_manager.settings.update(orig)

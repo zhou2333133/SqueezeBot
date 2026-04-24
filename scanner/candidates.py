@@ -81,6 +81,7 @@ class Candidate:
     surf_ai_confidence:  int  = 0     # 0-100
     surf_ai_reason:      str  = ""
     surf_ai_score:       int  = 0     # 0-100
+    surf_ai_hard_block:  bool = False
 
     # ── OKX 增强 ──────────────────────────────────────────────────────────────
     okx_chain_count:     int   = 0
@@ -141,6 +142,10 @@ class Candidate:
     opportunity_reasons:    list = field(default_factory=list)
     opportunity_risks:      list = field(default_factory=list)
     opportunity_required_confirmation: list = field(default_factory=list)
+    opportunity_trigger_family: str = ""   # BREAKOUT / SQUEEZE
+    opportunity_setup_state: str = "WAIT"  # WAIT / ARMED / HOT / BLOCK
+    opportunity_setup_note: str = ""
+    opportunity_expires_at: str = ""
     ai_provider:            str  = ""
     ai_cached:              bool = False
     ai_updated_at:          str  = ""
@@ -212,6 +217,7 @@ class Candidate:
             "surf_ai_confidence": self.surf_ai_confidence,
             "surf_ai_reason":     self.surf_ai_reason,
             "surf_ai_score":      self.surf_ai_score,
+            "surf_ai_hard_block": self.surf_ai_hard_block,
             "okx_chain_count":    self.okx_chain_count,
             "okx_chains_found":   self.okx_chains_found,
             "okx_large_trade_pct": round(self.okx_large_trade_pct, 3),
@@ -260,6 +266,10 @@ class Candidate:
             "opportunity_reasons":    self.opportunity_reasons[:6],
             "opportunity_risks":      self.opportunity_risks[:6],
             "opportunity_required_confirmation": self.opportunity_required_confirmation[:6],
+            "opportunity_trigger_family": self.opportunity_trigger_family,
+            "opportunity_setup_state": self.opportunity_setup_state,
+            "opportunity_setup_note": self.opportunity_setup_note,
+            "opportunity_expires_at": self.opportunity_expires_at,
             "ai_provider":            self.ai_provider,
             "ai_cached":              self.ai_cached,
             "ai_updated_at":          self.ai_updated_at,

@@ -230,6 +230,8 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
             "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
             "yaobi_opportunity_rank": 1,
+            "yaobi_opportunity_trigger_family": "BREAKOUT",
+            "yaobi_opportunity_setup_state": "ARMED",
         }
 
         ok, reason = bot._yaobi_entry_guard("BASUSDT", "SHORT")
@@ -249,16 +251,35 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_opportunity_action": "WATCH_SHORT_FADE",
             "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
             "yaobi_opportunity_rank": 1,
+            "yaobi_opportunity_trigger_family": "SQUEEZE",
+            "yaobi_opportunity_setup_state": "HOT",
         }
 
         ok, reason = bot._yaobi_entry_guard("SKRUSDT", "SHORT", "动能突破空")
 
         self.assertFalse(ok)
-        self.assertIn("FADE许可", reason)
+        self.assertIn("局部反打", reason)
 
         ok, _ = bot._yaobi_entry_guard("SKRUSDT", "SHORT", "轧多猎杀空")
 
         self.assertTrue(ok)
+
+    def test_continuation_permission_blocks_squeeze_reversal_entry(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["KATUSDT"] = {
+            "yaobi_context": True,
+            "yaobi_decision_action": "观察",
+            "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
+            "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+            "yaobi_opportunity_rank": 1,
+            "yaobi_opportunity_trigger_family": "BREAKOUT",
+            "yaobi_opportunity_setup_state": "ARMED",
+        }
+
+        ok, reason = bot._yaobi_entry_guard("KATUSDT", "LONG", "轧空猎杀多")
+
+        self.assertFalse(ok)
+        self.assertIn("顺势接力", reason)
 
     def test_opportunity_guard_blocks_observe_only_entries_when_permission_required(self) -> None:
         bot = BinanceScalpBot()
@@ -349,7 +370,7 @@ class TestScalpEngine(unittest.TestCase):
             price_change_24h=18.4,
         ))
         bot = BinanceScalpBot()
-        bot.monitored_symbols = ["BASUSDT", "ETHUSDT"]
+        bot.monitored_symbols = ["ETHUSDT"]
 
         asyncio.run(bot._do_refresh_candidates())
 
@@ -372,6 +393,9 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_oi_trend_grade": "A",
             "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
             "yaobi_opportunity_score": 81,
+            "yaobi_opportunity_trigger_family": "BREAKOUT",
+            "yaobi_opportunity_setup_state": "ARMED",
+            "yaobi_opportunity_setup_note": "15m趋势仍强，等待1m回踩后再突破",
             "scalp_candidate_seen_price": 1.0,
             "scalp_candidate_seen_ts": 1.0,
             "scalp_candidate_seen_time": "2026-04-22 10:00:00",
@@ -398,6 +422,8 @@ class TestScalpEngine(unittest.TestCase):
         self.assertEqual(ctx["yaobi_score"], 75)
         self.assertEqual(ctx["yaobi_opportunity_action"], "WATCH_LONG_CONTINUATION")
         self.assertEqual(ctx["yaobi_opportunity_score"], 81)
+        self.assertEqual(ctx["yaobi_opportunity_trigger_family"], "BREAKOUT")
+        self.assertEqual(ctx["yaobi_opportunity_setup_state"], "ARMED")
         self.assertEqual(ctx["candidate_sources"], ["binance_24h", "yaobi_shared"])
         self.assertAlmostEqual(ctx["scalp_candidate_max_up_pct"], 12.0, places=3)
         self.assertAlmostEqual(ctx["pre_entry_favorable_from_candidate_pct"], 12.0, places=3)

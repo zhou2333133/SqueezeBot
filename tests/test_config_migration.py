@@ -83,6 +83,7 @@ class TestConfigMigration(unittest.TestCase):
                 self.assertEqual(manager.settings["YAOBI_AI_PROVIDER_PRIORITY"], "gemini,openai,anthropic")
                 self.assertEqual(manager.settings["YAOBI_AI_MODEL_GEMINI"], "gemini-2.5-flash")
                 self.assertEqual(manager.settings["YAOBI_AI_MAX_SYMBOLS_PER_RUN"], 6)
+                self.assertEqual(manager.settings["YAOBI_PLAYBOOK_TTL_MINUTES"], 45)
                 self.assertEqual(manager.settings["YAOBI_AI_DAILY_USD_CAP"], 1.0)
                 self.assertEqual(manager.settings["SCALP_POSITION_USDT"], 10.0)
                 self.assertTrue(manager.settings["SCALP_AUTO_TRADE"])
