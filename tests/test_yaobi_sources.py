@@ -374,6 +374,13 @@ class TestYaobiSources(unittest.TestCase):
         self.assertEqual(payload["rule_bias"], "LONG")
         self.assertIn("lesson_stats", payload)
 
+    def test_gemini_request_body_enforces_json_schema(self) -> None:
+        body = ai_gateway._gemini_request_body("sys", '{"k":1}', 512)
+        gen = body["generationConfig"]
+        self.assertEqual(gen["responseMimeType"], "application/json")
+        self.assertIn("responseJsonSchema", gen)
+        self.assertEqual(gen["maxOutputTokens"], 512)
+
     def test_anomaly_candidates_sorted_by_anomaly_score(self) -> None:
         clear_candidates()
         try:

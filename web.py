@@ -52,6 +52,33 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 PANEL_TOKEN_HEADER = "X-SqueezeBot-Token"
 _AUTH_PUBLIC_PATHS = {"/api/auth/status", "/api/auth/check"}
+_MODEL_OPTIONS = {
+    "openai": [
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-4o",
+        "gpt-4o-mini",
+    ],
+    "gemini": [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
+        "gemini-2.0-flash",
+    ],
+    "anthropic": [
+        "claude-opus-4-7",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-3-5-haiku-latest",
+    ],
+    "surf": [
+        "surf-ask",
+        "surf-research",
+    ],
+}
 
 
 def _redact_config(settings: dict) -> dict:
@@ -111,7 +138,11 @@ async def dashboard(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"config": _redact_config(config_manager.settings), "auth": _auth_meta()},
+        context={
+            "config": _redact_config(config_manager.settings),
+            "auth": _auth_meta(),
+            "model_options": _MODEL_OPTIONS,
+        },
     )
 
 

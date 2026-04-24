@@ -29,6 +29,29 @@ _ROOT = os.path.join(DATA_DIR, "ai_knowledge")
 _CACHE_FILE = os.path.join(_ROOT, "ai_cache.json")
 _USAGE_FILE = os.path.join(_ROOT, "ai_usage.json")
 _ENDPOINT = "opportunity_review"
+_GEMINI_OPPORTUNITY_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "opportunities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "action": {"type": "string"},
+                    "permission": {"type": "string"},
+                    "confidence": {"type": "integer"},
+                    "summary": {"type": "string"},
+                    "reasons": {"type": "array", "items": {"type": "string"}},
+                    "risks": {"type": "array", "items": {"type": "string"}},
+                    "required_confirmation": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["symbol", "action", "permission", "confidence"],
+            },
+        }
+    },
+    "required": ["opportunities"],
+}
 
 
 def _ensure_root() -> None:
@@ -370,16 +393,25 @@ def _gemini_model_candidates() -> list[str]:
     return result
 
 
+def _gemini_request_body(system_prompt: str, payload: str, max_output: int) -> dict:
+    return {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"role": "user", "parts": [{"text": payload}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": max_output,
+            "responseMimeType": "application/json",
+            "responseJsonSchema": _GEMINI_OPPORTUNITY_JSON_SCHEMA,
+        },
+    }
+
+
 async def _call_gemini(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:
     api_key = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
     last_error = ""
     for model in _gemini_model_candidates():
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        body = {
-            "system_instruction": {"parts": [{"text": system_prompt}]},
-            "contents": [{"role": "user", "parts": [{"text": payload}]}],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": max_output},
-        }
+        body = _gemini_request_body(system_prompt, payload, max_output)
         async with session.post(
             url,
             headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
