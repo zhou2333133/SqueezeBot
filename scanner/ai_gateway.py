@@ -273,7 +273,7 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
 
     providers = [
         p.strip().lower()
-        for p in str(cfg.get("YAOBI_AI_PROVIDER_PRIORITY", "openai,gemini,anthropic")).split(",")
+        for p in str(cfg.get("YAOBI_AI_PROVIDER_PRIORITY", "gemini,openai,anthropic")).split(",")
         if p.strip()
     ]
     system_prompt = (
@@ -338,26 +338,46 @@ async def _call_openai(session: aiohttp.ClientSession, system_prompt: str, paylo
         return text, tokens
 
 
+def _gemini_model_candidates() -> list[str]:
+    primary = str(config_manager.settings.get("YAOBI_AI_MODEL_GEMINI", "gemini-2.5-flash") or "").strip()
+    fallbacks = [primary, "gemini-2.5-flash", "gemini-2.0-flash"]
+    result: list[str] = []
+    seen: set[str] = set()
+    for model in fallbacks:
+        if model and model not in seen:
+            result.append(model)
+            seen.add(model)
+    return result
+
+
 async def _call_gemini(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:
-    model = config_manager.settings.get("YAOBI_AI_MODEL_GEMINI", "gemini-1.5-flash")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    body = {
-        "contents": [{"role": "user", "parts": [{"text": system_prompt + "\n\n" + payload}]}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": max_output},
-    }
-    async with session.post(
-        url,
-        params={"key": GEMINI_API_KEY},
-        json=body,
-        timeout=aiohttp.ClientTimeout(total=30),
-    ) as resp:
-        data = await resp.json(content_type=None)
-        if resp.status >= 300:
-            raise RuntimeError(f"gemini_http_{resp.status}: {str(data)[:160]}")
-        parts = data["candidates"][0]["content"]["parts"]
-        text = "".join(p.get("text", "") for p in parts)
-        tokens = _estimate_tokens(payload) + _estimate_tokens(text)
-        return text, tokens
+    api_key = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
+    last_error = ""
+    for model in _gemini_model_candidates():
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        body = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"role": "user", "parts": [{"text": payload}]}],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": max_output},
+        }
+        async with session.post(
+            url,
+            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+            json=body,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            data = await resp.json(content_type=None)
+            if resp.status == 404:
+                last_error = f"gemini_http_404[{model}]: {str(data)[:160]}"
+                continue
+            if resp.status >= 300:
+                raise RuntimeError(f"gemini_http_{resp.status}[{model}]: {str(data)[:160]}")
+            parts = data["candidates"][0]["content"]["parts"]
+            text = "".join(p.get("text", "") for p in parts)
+            usage = data.get("usageMetadata") or {}
+            tokens = int(usage.get("totalTokenCount") or (_estimate_tokens(payload) + _estimate_tokens(text)))
+            return text, tokens
+    raise RuntimeError(last_error or "gemini_model_unavailable")
 
 
 async def _call_anthropic(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:

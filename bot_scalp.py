@@ -452,6 +452,8 @@ class BinanceScalpBot:
                 return False, "未进入妖币机会队列Top名单"
             if op_action == "BLOCK" or op_permission == "BLOCK":
                 return False, f"机会队列BLOCK: {meta.get('yaobi_intelligence_summary') or meta.get('yaobi_opportunity_risks')}"
+            if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_PERMISSION", True) and op_permission != "ALLOW_IF_1M_SIGNAL":
+                return False, f"机会队列未给自动执行许可: {op_action or 'OBSERVE'}"
             if op_action == "WATCH_LONG" and direction == "SHORT":
                 return False, "机会队列只允许等待多头1m确认，禁止反向追空"
             if op_action == "WATCH_SHORT" and direction == "LONG":
@@ -1218,13 +1220,35 @@ class BinanceScalpBot:
             return (price - base) / base * 100
         return (base - price) / base * 100
 
+    def _directional_ema20_deviation_pct(self, symbol: str, direction: str, price: float) -> float:
+        buf = self.kline_buffer.get(symbol, [])
+        closes = [self._as_float(k.get("c")) for k in buf[-20:] if self._as_float(k.get("c")) > 0]
+        if len(closes) < 20 or price <= 0:
+            return 0.0
+        ema20 = sum(closes) / len(closes)
+        if ema20 <= 0:
+            return 0.0
+        deviation = (price - ema20) / ema20 * 100
+        return deviation if direction == "LONG" else -deviation
+
     def _breakout_premove_allowed(self, symbol: str, direction: str, price: float) -> tuple[bool, str]:
-        max_pct = self.cfg.get("BREAKOUT_MAX_PREMOVE_30M_PCT", 0.0)
-        if not max_pct:
-            return True, ""
-        move30 = self._recent_directional_move_pct(symbol, direction, 30, price)
-        if move30 > max_pct:
-            return False, f"30m同向已走{move30:.2f}% > {max_pct:.2f}%，避免突破追晚"
+        move_limits = (
+            (5, self.cfg.get("BREAKOUT_MAX_PREMOVE_5M_PCT", 0.0)),
+            (15, self.cfg.get("BREAKOUT_MAX_PREMOVE_15M_PCT", 0.0)),
+            (30, self.cfg.get("BREAKOUT_MAX_PREMOVE_30M_PCT", 0.0)),
+        )
+        for lookback, limit in move_limits:
+            if not limit:
+                continue
+            move = self._recent_directional_move_pct(symbol, direction, lookback, price)
+            if move > limit:
+                return False, f"{lookback}m同向已走{move:.2f}% > {limit:.2f}%，避免突破追晚"
+
+        ema_limit = self.cfg.get("BREAKOUT_MAX_EMA20_DEVIATION_PCT", 0.0)
+        if ema_limit:
+            ema_dev = self._directional_ema20_deviation_pct(symbol, direction, price)
+            if ema_dev > ema_limit:
+                return False, f"EMA20同向偏离{ema_dev:.2f}% > {ema_limit:.2f}%，等待回踩后再突破"
         return True, ""
 
     def _check_market_state(self, symbol: str, direction: str) -> str:

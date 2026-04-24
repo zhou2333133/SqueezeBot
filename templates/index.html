@@ -359,6 +359,13 @@
                 </label>
                 <span class="text-sm text-gray-400">必须进入机会队列</span>
               </label>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <label class="toggle to-toggle">
+                  <input type="checkbox" name="SCALP_REQUIRE_OPPORTUNITY_PERMISSION" :checked="cfg.SCALP_REQUIRE_OPPORTUNITY_PERMISSION!==false" @change="cfg.SCALP_REQUIRE_OPPORTUNITY_PERMISSION=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-emerald-300">只做WATCH信号</span>
+              </label>
             </div>
             <div class="grid grid-cols-4 gap-3 mt-3">
               <div>
@@ -479,8 +486,25 @@
                 <input class="inp inp-o" type="number" step="0.01" name="BREAKOUT_ATR_MAX_PCT" :value="cfg.BREAKOUT_ATR_MAX_PCT??1.20"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">30m追涨过滤%</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">突破前30分钟同向已走超过该值时跳过，默认3%。0为关闭。</div>
-                <input class="inp inp-o" type="number" step="0.1" name="BREAKOUT_MAX_PREMOVE_30M_PCT" :value="cfg.BREAKOUT_MAX_PREMOVE_30M_PCT??3"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">突破前30分钟同向已走超过该值时跳过，默认2.5%。0为关闭。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="BREAKOUT_MAX_PREMOVE_30M_PCT" :value="cfg.BREAKOUT_MAX_PREMOVE_30M_PCT??2.5"></div>
+            </div>
+            <div class="grid grid-cols-4 gap-3 mt-3">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">5m追涨过滤%</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">近5分钟同向已拉开时不追。默认1.2%。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="BREAKOUT_MAX_PREMOVE_5M_PCT" :value="cfg.BREAKOUT_MAX_PREMOVE_5M_PCT??1.2"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">15m追涨过滤%</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">近15分钟同向预涨/预跌过大则等待回踩。默认2.5%。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="BREAKOUT_MAX_PREMOVE_15M_PCT" :value="cfg.BREAKOUT_MAX_PREMOVE_15M_PCT??2.5"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">EMA20偏离上限%</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">价格同向偏离EMA20过大时不追。默认2.0%。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="BREAKOUT_MAX_EMA20_DEVIATION_PCT" :value="cfg.BREAKOUT_MAX_EMA20_DEVIATION_PCT??2.0"></div>
+              <div class="text-xs text-gray-600 leading-relaxed pt-6">
+                这三项只过滤动能突破，不影响轧空/轧多猎杀。
+              </div>
             </div>
 
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">止盈设置 (三档分批平仓)</p>
@@ -1086,15 +1110,15 @@
                 <span class="text-sm text-gray-400">启用 AI 队列审查</span>
               </label>
               <div><label class="text-xs text-gray-500">AI Top N</label>
-                <input class="inp mt-1" type="number" name="YAOBI_AI_MAX_SYMBOLS_PER_RUN" :value="cfg.YAOBI_AI_MAX_SYMBOLS_PER_RUN??12" style="border-color:#1a3a2a"></div>
+                <input class="inp mt-1" type="number" name="YAOBI_AI_MAX_SYMBOLS_PER_RUN" :value="cfg.YAOBI_AI_MAX_SYMBOLS_PER_RUN??8" style="border-color:#1a3a2a"></div>
               <div class="col-span-2"><label class="text-xs text-gray-500">Provider 优先级</label>
-                <input class="inp mt-1" type="text" name="YAOBI_AI_PROVIDER_PRIORITY" :value="cfg.YAOBI_AI_PROVIDER_PRIORITY||'openai,gemini,anthropic'" style="border-color:#1a3a2a"></div>
+                <input class="inp mt-1" type="text" name="YAOBI_AI_PROVIDER_PRIORITY" :value="cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini,openai,anthropic'" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">调用间隔 min</label>
                 <input class="inp mt-1" type="number" name="YAOBI_AI_MIN_INTERVAL_MINUTES" :value="cfg.YAOBI_AI_MIN_INTERVAL_MINUTES??15" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">缓存 TTL min</label>
                 <input class="inp mt-1" type="number" name="YAOBI_AI_CACHE_TTL_MINUTES" :value="cfg.YAOBI_AI_CACHE_TTL_MINUTES??30" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">每日预算 USD</label>
-                <input class="inp mt-1" type="number" step="0.1" name="YAOBI_AI_DAILY_USD_CAP" :value="cfg.YAOBI_AI_DAILY_USD_CAP??3" style="border-color:#1a3a2a"></div>
+                <input class="inp mt-1" type="number" step="0.1" name="YAOBI_AI_DAILY_USD_CAP" :value="cfg.YAOBI_AI_DAILY_USD_CAP??1" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">输出 tokens</label>
                 <input class="inp mt-1" type="number" name="YAOBI_AI_MAX_OUTPUT_TOKENS" :value="cfg.YAOBI_AI_MAX_OUTPUT_TOKENS??1200" style="border-color:#1a3a2a"></div>
             </div>
@@ -2044,7 +2068,7 @@ function app() {
 
     async saveScalpConfig() {
       const fd = new FormData(document.getElementById('scalpForm'))
-      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_TP3_AGGRESSIVE_RUNNER','SCALP_SKIP_TP1_IN_STRONG_TREND','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_WAIT_CONFIRM','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD','SCALP_YAOBI_FUNDING_OI_GUARD','SCALP_OPPORTUNITY_GUARD_ENABLED','SCALP_REQUIRE_OPPORTUNITY_QUEUE']
+      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_TP3_AGGRESSIVE_RUNNER','SCALP_SKIP_TP1_IN_STRONG_TREND','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_WAIT_CONFIRM','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD','SCALP_YAOBI_FUNDING_OI_GUARD','SCALP_OPPORTUNITY_GUARD_ENABLED','SCALP_REQUIRE_OPPORTUNITY_QUEUE','SCALP_REQUIRE_OPPORTUNITY_PERMISSION']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()

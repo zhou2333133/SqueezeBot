@@ -16,7 +16,10 @@ class TestScalpEngine(unittest.TestCase):
             "BREAKOUT_ATR_MULT": 0.7,
             "BREAKOUT_ATR_MIN_PCT": 0.50,
             "BREAKOUT_ATR_MAX_PCT": 1.20,
-            "BREAKOUT_MAX_PREMOVE_30M_PCT": 3.0,
+            "BREAKOUT_MAX_PREMOVE_5M_PCT": 1.2,
+            "BREAKOUT_MAX_PREMOVE_15M_PCT": 2.5,
+            "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
+            "BREAKOUT_MAX_EMA20_DEVIATION_PCT": 2.0,
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
             "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
             "SCALP_TP3_AGGRESSIVE_RUNNER": True,
@@ -30,6 +33,7 @@ class TestScalpEngine(unittest.TestCase):
             "SCALP_YAOBI_FUNDING_OI_GUARD": True,
             "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
             "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
+            "SCALP_REQUIRE_OPPORTUNITY_PERMISSION": True,
         })
 
     def tearDown(self) -> None:
@@ -161,7 +165,23 @@ class TestScalpEngine(unittest.TestCase):
         ok, reason = bot._breakout_premove_allowed("BASUSDT", "LONG", 104.0)
 
         self.assertFalse(ok)
-        self.assertIn("30m同向已走", reason)
+        self.assertIn("同向已走", reason)
+
+    def test_breakout_premove_filter_blocks_ema20_overextension(self) -> None:
+        bot = BinanceScalpBot()
+        config_manager.settings["BREAKOUT_MAX_PREMOVE_15M_PCT"] = 0.0
+        bot.kline_buffer["MOVEUSDT"] = [
+            {"o": 98.5, "h": 98.8, "l": 98.2, "c": 98.5, "q": 1000.0, "Q": 600.0}
+            for _ in range(15)
+        ] + [
+            {"o": 101.2, "h": 101.4, "l": 100.9, "c": 101.2, "q": 1000.0, "Q": 600.0}
+            for _ in range(5)
+        ]
+
+        ok, reason = bot._breakout_premove_allowed("MOVEUSDT", "LONG", 102.4)
+
+        self.assertFalse(ok)
+        self.assertIn("EMA20同向偏离", reason)
 
     def test_yaobi_wait_confirm_and_crowded_funding_block_entries(self) -> None:
         bot = BinanceScalpBot()
@@ -178,6 +198,9 @@ class TestScalpEngine(unittest.TestCase):
 
         bot.candidate_meta["METUSDT"].update({
             "yaobi_decision_action": "观察",
+            "yaobi_opportunity_action": "WATCH_SHORT",
+            "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+            "yaobi_opportunity_rank": 1,
             "yaobi_oi_trend_grade": "A",
             "yaobi_oi_change_24h_pct": 82.9,
             "yaobi_funding_rate_pct": -0.1851,
@@ -206,6 +229,21 @@ class TestScalpEngine(unittest.TestCase):
         ok, _ = bot._yaobi_entry_guard("BASUSDT", "LONG")
 
         self.assertTrue(ok)
+
+    def test_opportunity_guard_blocks_observe_only_entries_when_permission_required(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["OBSUSDT"] = {
+            "yaobi_context": True,
+            "yaobi_decision_action": "观察",
+            "yaobi_opportunity_action": "OBSERVE",
+            "yaobi_opportunity_permission": "OBSERVE",
+            "yaobi_opportunity_rank": 2,
+        }
+
+        ok, reason = bot._yaobi_entry_guard("OBSUSDT", "LONG")
+
+        self.assertFalse(ok)
+        self.assertIn("未给自动执行许可", reason)
 
     def test_tp3_aggressive_runner_uses_looser_trailing_candidate(self) -> None:
         bot = BinanceScalpBot()
