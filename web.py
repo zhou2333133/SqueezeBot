@@ -57,6 +57,7 @@ _MODEL_OPTIONS = {
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.4-nano",
+        "o4-mini",
         "gpt-4o",
         "gpt-4o-mini",
     ],

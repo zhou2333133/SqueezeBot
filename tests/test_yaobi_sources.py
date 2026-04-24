@@ -381,6 +381,38 @@ class TestYaobiSources(unittest.TestCase):
         self.assertIn("responseJsonSchema", gen)
         self.assertEqual(gen["maxOutputTokens"], 512)
 
+    def test_gemini_non_json_response_is_retried_with_fallback_model(self) -> None:
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_MODEL_GEMINI"] = "gemini-2.5-flash"
+            seen = []
+
+            class DummyResp:
+                def __init__(self, status, data):
+                    self.status = status
+                    self._data = data
+                async def json(self, content_type=None):
+                    return self._data
+                async def __aenter__(self):
+                    return self
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
+            class DummySession:
+                def post(self, url, headers=None, json=None, timeout=None):
+                    seen.append(url)
+                    if "gemini-2.5-flash" in url:
+                        return DummyResp(200, {"candidates": [{"content": {"parts": [{"text": "not-json"}]}}]})
+                    return DummyResp(200, {"candidates": [{"content": {"parts": [{"text": "{\"opportunities\":[]}"}]}}]})
+
+            text, _tokens = asyncio.run(ai_gateway._call_gemini(DummySession(), "sys", '{"k":1}', 256))
+            self.assertEqual(text, "{\"opportunities\":[]}")
+            self.assertTrue(any("gemini-3-flash-preview" in url for url in seen))
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+
     def test_anomaly_candidates_sorted_by_anomaly_score(self) -> None:
         clear_candidates()
         try:

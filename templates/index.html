@@ -1129,20 +1129,17 @@
               <div><label class="text-xs text-gray-500">输出 tokens</label>
                 <input class="inp mt-1" type="number" name="YAOBI_AI_MAX_OUTPUT_TOKENS" :value="cfg.YAOBI_AI_MAX_OUTPUT_TOKENS??1200" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">Gemini 模型</label>
-                <input class="inp mt-1" list="gemini-models" name="YAOBI_AI_MODEL_GEMINI" x-model="cfg.YAOBI_AI_MODEL_GEMINI" placeholder="gemini-2.5-flash" style="border-color:#1a3a2a">
-                <datalist id="gemini-models">
-                  <template x-for="m in modelOptions.gemini" :key="'gm-'+m"><option :value="m"></option></template>
-                </datalist></div>
+                <select class="inp mt-1" name="YAOBI_AI_MODEL_GEMINI" x-model="cfg.YAOBI_AI_MODEL_GEMINI" style="border-color:#1a3a2a">
+                  <template x-for="m in modelOptions.gemini" :key="'gm-'+m"><option :value="m" x-text="m"></option></template>
+                </select></div>
               <div><label class="text-xs text-gray-500">OpenAI 模型</label>
-                <input class="inp mt-1" list="openai-models" name="YAOBI_AI_MODEL_OPENAI" x-model="cfg.YAOBI_AI_MODEL_OPENAI" placeholder="gpt-5.4-mini" style="border-color:#1a3a2a">
-                <datalist id="openai-models">
-                  <template x-for="m in modelOptions.openai" :key="'om-'+m"><option :value="m"></option></template>
-                </datalist></div>
+                <select class="inp mt-1" name="YAOBI_AI_MODEL_OPENAI" x-model="cfg.YAOBI_AI_MODEL_OPENAI" style="border-color:#1a3a2a">
+                  <template x-for="m in modelOptions.openai" :key="'om-'+m"><option :value="m" x-text="m"></option></template>
+                </select></div>
               <div><label class="text-xs text-gray-500">Anthropic 模型</label>
-                <input class="inp mt-1" list="anthropic-models" name="YAOBI_AI_MODEL_ANTHROPIC" x-model="cfg.YAOBI_AI_MODEL_ANTHROPIC" placeholder="claude-haiku-4-5" style="border-color:#1a3a2a">
-                <datalist id="anthropic-models">
-                  <template x-for="m in modelOptions.anthropic" :key="'am-'+m"><option :value="m"></option></template>
-                </datalist></div>
+                <select class="inp mt-1" name="YAOBI_AI_MODEL_ANTHROPIC" x-model="cfg.YAOBI_AI_MODEL_ANTHROPIC" style="border-color:#1a3a2a">
+                  <template x-for="m in modelOptions.anthropic" :key="'am-'+m"><option :value="m" x-text="m"></option></template>
+                </select></div>
             </div>
             <div class="mt-2 text-[11px] text-gray-600 leading-relaxed">
               AI 只审查15分钟选出来的机会队列 Top N，不带历史聊天上下文；知识库会附带最近样本和同方向统计摘要。
@@ -1172,10 +1169,9 @@
               <div><label class="text-xs text-gray-500">Surf 请求间隔秒</label>
                 <input class="inp mt-1" type="number" step="0.05" name="SURF_MIN_REQUEST_INTERVAL" :value="cfg.SURF_MIN_REQUEST_INTERVAL??0.2" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">Surf 模型</label>
-                <input class="inp mt-1" list="surf-models" name="YAOBI_SURF_AI_MODEL" x-model="cfg.YAOBI_SURF_AI_MODEL" placeholder="surf-ask" style="border-color:#1a3a2a">
-                <datalist id="surf-models">
-                  <template x-for="m in modelOptions.surf" :key="'sm-'+m"><option :value="m"></option></template>
-                </datalist></div>
+                <select class="inp mt-1" name="YAOBI_SURF_AI_MODEL" x-model="cfg.YAOBI_SURF_AI_MODEL" style="border-color:#1a3a2a">
+                  <template x-for="m in modelOptions.surf" :key="'sm-'+m"><option :value="m" x-text="m"></option></template>
+                </select></div>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#ec4899">
                   <input type="checkbox" name="YAOBI_DUAL_AI_CONSENSUS_REQUIRED" :checked="cfg.YAOBI_DUAL_AI_CONSENSUS_REQUIRED!==false" @change="cfg.YAOBI_DUAL_AI_CONSENSUS_REQUIRED=$event.target.checked">

@@ -200,6 +200,14 @@ def _extract_json_payload(text: str):
     return json.loads(raw[start:end + 1])
 
 
+def _is_valid_json_text(text: str) -> bool:
+    try:
+        _extract_json_payload(text)
+        return True
+    except Exception:
+        return False
+
+
 def _normalize_ai_items(payload) -> list[dict]:
     if isinstance(payload, dict):
         rows = payload.get("opportunities") or payload.get("items") or payload.get("data") or []
@@ -426,6 +434,10 @@ async def _call_gemini(session: aiohttp.ClientSession, system_prompt: str, paylo
                 raise RuntimeError(f"gemini_http_{resp.status}[{model}]: {str(data)[:160]}")
             parts = data["candidates"][0]["content"]["parts"]
             text = "".join(p.get("text", "") for p in parts)
+            if not _is_valid_json_text(text):
+                excerpt = str(text or "").replace("\n", " ")[:180]
+                last_error = f"gemini_non_json[{model}]: {excerpt or 'empty_response'}"
+                continue
             usage = data.get("usageMetadata") or {}
             tokens = int(usage.get("totalTokenCount") or (_estimate_tokens(payload) + _estimate_tokens(text)))
             return text, tokens
