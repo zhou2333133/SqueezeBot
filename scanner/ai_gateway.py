@@ -391,7 +391,14 @@ async def _call_openai(session: aiohttp.ClientSession, system_prompt: str, paylo
 
 def _gemini_model_candidates() -> list[str]:
     primary = str(config_manager.settings.get("YAOBI_AI_MODEL_GEMINI", "gemini-2.5-flash") or "").strip()
-    fallbacks = [primary, "gemini-2.5-flash", "gemini-3-flash-preview", "gemini-2.0-flash"]
+    fallbacks = [
+        primary,
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-3-flash-preview",
+        "gemini-3.1-pro-preview",
+    ]
     result: list[str] = []
     seen: set[str] = set()
     for model in fallbacks:
