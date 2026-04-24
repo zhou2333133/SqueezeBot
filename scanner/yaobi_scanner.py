@@ -611,14 +611,38 @@ class YaobiScanner:
         if taker >= 0.58:
             long_score += 22
             reasons.append(f"Taker买 {taker:.0%}")
+        elif taker >= 0.52 and c.price_change_24h > 5:
+            long_score += 10
+            reasons.append(f"Taker买盘不弱 {taker:.0%}")
         elif taker <= 0.42:
             short_score += 22
             reasons.append(f"Taker卖 {1-taker:.0%}")
+        elif taker <= 0.48 and c.price_change_24h < -5:
+            short_score += 10
+            reasons.append(f"Taker卖盘不弱 {1-taker:.0%}")
 
         if c.oi_change_15m_pct > 1 and c.price_change_24h > 0:
             long_score += 8
         if c.oi_change_15m_pct > 1 and c.price_change_24h < 0:
             short_score += 8
+        if c.price_change_24h >= 12 and (
+            c.oi_change_15m_pct >= 0.5 or
+            c.oi_change_24h_pct >= 20 or
+            c.contract_activity_score >= 45
+        ):
+            long_score += 18
+            reasons.append("24h强趋势，按顺势接力候选")
+        if c.price_change_24h <= -12 and (
+            c.oi_change_15m_pct >= 0.5 or
+            c.oi_change_24h_pct >= 20 or
+            c.contract_activity_score >= 45
+        ):
+            short_score += 18
+            reasons.append("24h弱趋势，按顺势接力候选")
+        if c.price_change_1h >= -0.8 and c.price_change_24h >= 8:
+            long_score += 5
+        if c.price_change_1h <= 0.8 and c.price_change_24h <= -8:
+            short_score += 5
         if c.funding_rate_pct <= -0.05 and c.retail_short_pct >= 60:
             long_score += 16
             reasons.append("负FR+空头拥挤")
@@ -779,22 +803,22 @@ class YaobiScanner:
             if direction == "LONG":
                 if price24h >= 5:
                     trend_score += 2
-                if price1h >= 0:
+                if price1h >= -0.8:
                     trend_score += 1
-                if oi15 >= 1.0:
+                if oi15 >= 0.5:
                     trend_score += 2
-                if oi24 >= 15:
+                if oi24 >= 10:
                     trend_score += 1
-                if activity >= 40:
+                if activity >= 30:
                     trend_score += 1
-                if vol5 >= 0.7:
+                if vol5 >= 0.5:
                     local_score += 1
-                if taker >= 0.48:
+                if taker >= 0.46:
                     local_score += 1
-                if oi5 >= -0.2:
+                if oi5 >= -0.5:
                     local_score += 1
-                hot = trend_score >= 4 and local_score >= 3 and taker >= 0.54 and vol5 >= 0.9
-                armed = trend_score >= 4
+                hot = trend_score >= 4 and local_score >= 2 and taker >= 0.50 and vol5 >= 0.6
+                armed = trend_score >= 3
                 note = (
                     "15m趋势仍强，等待1m回踩后再突破"
                     if armed and not hot
@@ -803,22 +827,22 @@ class YaobiScanner:
             else:
                 if price24h <= -5:
                     trend_score += 2
-                if price1h <= 0:
+                if price1h <= 0.8:
                     trend_score += 1
-                if oi15 >= 1.0:
+                if oi15 >= 0.5:
                     trend_score += 2
-                if oi24 >= 15:
+                if oi24 >= 10:
                     trend_score += 1
-                if activity >= 40:
+                if activity >= 30:
                     trend_score += 1
-                if vol5 >= 0.7:
+                if vol5 >= 0.5:
                     local_score += 1
-                if taker <= 0.52:
+                if taker <= 0.54:
                     local_score += 1
-                if oi5 >= -0.2:
+                if oi5 >= -0.5:
                     local_score += 1
-                hot = trend_score >= 4 and local_score >= 3 and taker <= 0.46 and vol5 >= 0.9
-                armed = trend_score >= 4
+                hot = trend_score >= 4 and local_score >= 2 and taker <= 0.50 and vol5 >= 0.6
+                armed = trend_score >= 3
                 note = (
                     "15m空头趋势仍强，等待1m反抽后再破位"
                     if armed and not hot
@@ -1046,6 +1070,12 @@ class YaobiScanner:
             )
             if ai_status.get("last_error"):
                 logger.warning("🔍 Gemini终审失败细节: %s", ai_status.get("last_error"))
+            ai_failed = ai_status.get("last_reason") == "all_failed"
+            failure_fallback = (
+                ai_failed
+                and bool(config_manager.settings.get("YAOBI_AI_FAILURE_FALLBACK_ENABLED", True))
+            )
+            fallback_min_score = int(config_manager.settings.get("YAOBI_AI_FAILURE_FALLBACK_MIN_SCORE", 45) or 45)
             ai_by_symbol = {
                 str(item.get("symbol", "")).upper().replace("USDT", ""): item
                 for item in ai_result.get("items", [])
@@ -1084,6 +1114,16 @@ class YaobiScanner:
                 for c in queue_candidates:
                     key = c.symbol.upper().replace("USDT", "")
                     if key in reviewed or c.opportunity_permission == "BLOCK":
+                        continue
+                    if failure_fallback and self._is_watch_action(c.opportunity_action) and c.opportunity_score >= fallback_min_score:
+                        c.ai_provider = c.ai_provider or "rule_fallback"
+                        c.ai_updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        reasons = list(c.opportunity_reasons or [])
+                        reasons.insert(0, "AI终审连接失败，使用规则+Surf风险兜底")
+                        c.opportunity_reasons = reasons[:5]
+                        required = list(c.opportunity_required_confirmation or [])
+                        required.insert(0, "AI恢复前只允许高分剧本进入1m执行层")
+                        c.opportunity_required_confirmation = required[:5]
                         continue
                     c.opportunity_action = "OBSERVE"
                     c.opportunity_permission = "OBSERVE"

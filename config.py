@@ -159,7 +159,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042406
+    PROFILE_VERSION = 2026042407
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -207,6 +207,7 @@ class ConfigManager:
         "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 4.50,
         "SIGNAL_COOLDOWN_SECONDS": 30,
         "OI_POLL_INTERVAL": 10,
+        "SCALP_OI_PREFETCH_TOP_N": 30,
         "BTC_GUARD_PCT": 2.0,
         "SCALP_SURF_NEWS_ENABLED": False,
         "SCALP_SURF_NEWS_INTERVAL_MINUTES": 60,
@@ -252,6 +253,8 @@ class ConfigManager:
         "YAOBI_AI_MODEL_ANTHROPIC": "claude-3-5-haiku-latest",
         "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
         "YAOBI_AI_TOP_OUTPUT": 6,
+        "YAOBI_AI_FAILURE_FALLBACK_ENABLED": True,
+        "YAOBI_AI_FAILURE_FALLBACK_MIN_SCORE": 45,
         "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
         "YAOBI_AI_CACHE_TTL_MINUTES": 30,
         "YAOBI_PLAYBOOK_TTL_MINUTES": 45,
@@ -309,6 +312,7 @@ class ConfigManager:
         "CONTINUATION_MAX_EMA20_DEVIATION_PCT": (0.0, 15.0),
         "SIGNAL_COOLDOWN_SECONDS":     (1,      60),
         "OI_POLL_INTERVAL":            (5,      60),
+        "SCALP_OI_PREFETCH_TOP_N":     (0,      120),
         "BTC_GUARD_PCT":               (0.1,    10.0),
         "SCALP_SURF_NEWS_INTERVAL_MINUTES": (5, 1440),
         "SCALP_SURF_NEWS_TOP_N":       (1,      50),
@@ -335,6 +339,7 @@ class ConfigManager:
         "YAOBI_OPPORTUNITY_MIN_SCORE":  (0,      100),
         "YAOBI_AI_MAX_SYMBOLS_PER_RUN": (1,      30),
         "YAOBI_AI_TOP_OUTPUT":          (1,      20),
+        "YAOBI_AI_FAILURE_FALLBACK_MIN_SCORE": (0, 100),
         "YAOBI_AI_MIN_INTERVAL_MINUTES": (1,     1440),
         "YAOBI_AI_CACHE_TTL_MINUTES":   (1,      1440),
         "YAOBI_PLAYBOOK_TTL_MINUTES":   (5,      240),
@@ -408,6 +413,7 @@ class ConfigManager:
             "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 4.50,
             "SIGNAL_COOLDOWN_SECONDS":   30,
             "OI_POLL_INTERVAL":          10,
+            "SCALP_OI_PREFETCH_TOP_N":   30,
             "BTC_GUARD_PCT":             2.0,
             # Surf 成本控制：默认关闭后台/AI 调用，需要时在 UI 手动开启。
             "SCALP_SURF_NEWS_ENABLED":    False,
@@ -467,6 +473,8 @@ class ConfigManager:
             "YAOBI_AI_MODEL_ANTHROPIC":   "claude-3-5-haiku-latest",
             "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
             "YAOBI_AI_TOP_OUTPUT":        6,
+            "YAOBI_AI_FAILURE_FALLBACK_ENABLED": True,
+            "YAOBI_AI_FAILURE_FALLBACK_MIN_SCORE": 45,
             "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
             "YAOBI_AI_CACHE_TTL_MINUTES": 30,
             "YAOBI_PLAYBOOK_TTL_MINUTES": 45,

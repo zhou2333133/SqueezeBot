@@ -44,6 +44,7 @@ class TestScalpEngine(unittest.TestCase):
             "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
             "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
             "SCALP_REQUIRE_OPPORTUNITY_PERMISSION": True,
+            "SCALP_OI_PREFETCH_TOP_N": 30,
         })
 
     def tearDown(self) -> None:
@@ -83,6 +84,21 @@ class TestScalpEngine(unittest.TestCase):
         ]
 
         self.assertEqual(bot._check_market_state("BTCUSDT", "LONG"), "RANGE_CHOP")
+
+    def test_oi_poll_prefetches_candidates_before_ai_permission(self) -> None:
+        bot = BinanceScalpBot()
+        config_manager.settings["SCALP_OI_PREFETCH_TOP_N"] = 2
+        config_manager.settings["SCALP_REQUIRE_OPPORTUNITY_PERMISSION"] = True
+        bot.candidate_symbols = ["AAAUSDT", "BBBUSDT", "CCCUSDT"]
+        bot.candidate_meta = {
+            "AAAUSDT": {"yaobi_opportunity_permission": "OBSERVE"},
+            "BBBUSDT": {"yaobi_opportunity_permission": "OBSERVE"},
+            "CCCUSDT": {"yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL", "yaobi_opportunity_setup_state": "ARMED"},
+        }
+
+        symbols = bot._oi_poll_symbols()
+
+        self.assertEqual(symbols, ["AAAUSDT", "BBBUSDT", "CCCUSDT"])
 
     def test_entry_context_snapshot_uses_existing_taker_helper(self) -> None:
         bot = BinanceScalpBot()
@@ -323,6 +339,7 @@ class TestScalpEngine(unittest.TestCase):
 
     def test_oi_poll_symbols_only_tracks_actionable_candidates_and_positions(self) -> None:
         bot = BinanceScalpBot()
+        config_manager.settings["SCALP_OI_PREFETCH_TOP_N"] = 0
         bot.candidate_symbols = ["BASUSDT", "OBSUSDT", "HOTUSDT"]
         bot.candidate_meta = {
             "BASUSDT": {

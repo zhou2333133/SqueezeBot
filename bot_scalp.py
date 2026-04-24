@@ -1048,6 +1048,9 @@ class BinanceScalpBot:
 
     def _oi_poll_symbols(self) -> list[str]:
         symbols = set(self.open_positions.keys())
+        prefetch_n = int(self.cfg.get("SCALP_OI_PREFETCH_TOP_N", 30) or 0)
+        if prefetch_n > 0:
+            symbols.update(self.candidate_symbols[:prefetch_n])
         require_permission = bool(self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_PERMISSION", True))
         for sym in self.candidate_symbols:
             meta = self.candidate_meta.get(sym, {})

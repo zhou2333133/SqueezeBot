@@ -263,6 +263,57 @@ class TestYaobiSources(unittest.TestCase):
             config_manager.settings.update(orig)
             clear_candidates()
 
+    def test_ai_transport_failure_falls_back_to_high_score_rule_playbook(self) -> None:
+        clear_candidates()
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_ENABLED"] = True
+            config_manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"] = True
+            config_manager.settings["YAOBI_AI_FAILURE_FALLBACK_ENABLED"] = True
+            config_manager.settings["YAOBI_AI_FAILURE_FALLBACK_MIN_SCORE"] = 45
+            config_manager.settings["YAOBI_DUAL_AI_CONSENSUS_REQUIRED"] = False
+            c = Candidate(
+                symbol="SKR",
+                has_futures=True,
+                score=70,
+                anomaly_score=60,
+                contract_activity_score=72,
+                price_change_24h=38.0,
+                price_change_1h=0.4,
+                oi_change_24h_pct=74.0,
+                oi_change_15m_pct=1.2,
+                oi_change_5m_pct=0.1,
+                volume_5m_ratio=0.7,
+                taker_buy_ratio_5m=0.46,
+                surf_ai_risk_level="LOW",
+            )
+            scanner = YaobiScanner()
+            scanner._apply_anomaly_radar([c])
+            scanner._apply_decision_cards([c])
+
+            async def fake_ai_failure(_session, _cands):
+                return {
+                    "items": [],
+                    "status": {
+                        "last_reason": "all_failed",
+                        "last_error": "ClientConnectorSSLError: ssl handshake failure",
+                    },
+                }
+
+            with patch("scanner.yaobi_scanner.analyze_opportunities", fake_ai_failure):
+                asyncio.run(scanner._apply_opportunity_queue([c]))
+
+            rows = get_opportunity_queue()
+            self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG_CONTINUATION")
+            self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
+            self.assertIn(rows[0]["opportunity_setup_state"], {"ARMED", "HOT"})
+            self.assertIn("AI终审连接失败", " ".join(rows[0]["opportunity_reasons"]))
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+            clear_candidates()
+
     def test_dual_ai_consensus_blocks_when_surf_direction_disagrees(self) -> None:
         clear_candidates()
         from config import config_manager
