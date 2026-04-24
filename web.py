@@ -464,6 +464,7 @@ def _empty_scalp_filter_stats() -> dict:
         "atr_block": 0,
         "squeeze": 0,
         "breakout": 0,
+        "continuation": 0,
         "passed": 0,
         "cfg_sq_oi_major": cfg.get("SQUEEZE_OI_DROP_MAJOR", 0.5),
         "cfg_sq_oi_mid": cfg.get("SQUEEZE_OI_DROP_MID", 1.0),
@@ -980,6 +981,10 @@ async def _build_scalp_analysis_pack() -> dict:
         "信号样本": scalp_signals_history[-120:],
         "当前持仓": dict(scalp_positions),
         "过滤统计快照": _signals_mod.scalp_filter_stats,
+        "未开仓诊断": {
+            "最近拦截时间线": bot.entry_block_log_snapshot(limit=120) if bot else [],
+            "候选等待原因": bot.candidate_wait_diagnostics(limit=80) if bot else [],
+        },
         "候选池快照": {
             "symbols": list(getattr(bot, "candidate_symbols", []) or []),
             "meta": dict(getattr(bot, "candidate_meta", {}) or {}),
@@ -1020,9 +1025,10 @@ async def _build_scalp_analysis_pack() -> dict:
             "entry_context": "开仓瞬间的候选池、妖币共享上下文、候选入池后路径、OI、taker、ATR、短期涨跌快照。",
             "entry_1m_profile": "开仓时的1分钟画像：pre 3m/5m/15m、EMA20偏离、ATR、回踩突破、Taker趋势和当前K量比。",
             "scalp_candidate_*": "从进入超短线候选池开始到开仓/当前的短线最大上/下波动，用于判断扫描器是否选到可交易波动。",
+            "未开仓诊断": "记录AI通过后卡在执行层的原因，包括机会队列、1m暖机、Taker、ATR、追涨过滤、状态机等。",
             "关注池": "人工关注/禁入/等待确认列表；用于复盘选币，不会自动生成新策略。",
             "decision_cards": "妖币扫描生成的人工决策解释卡：允许/等待/禁止/观察，只作筛选参考。",
-            "opportunity_queue": "妖币扫描先做15分钟级选币，再由 Gemini/Surf 对 Top 候选做方向与风险终审；只有双AI放行的币，才交给1m策略等待开仓点。",
+            "opportunity_queue": "妖币扫描先做15分钟级选币，再由 Gemini/Surf 对 Top 候选做方向与风险终审；获得机会许可的币，才交给1m策略等待开仓点。",
         },
     }
     return pack

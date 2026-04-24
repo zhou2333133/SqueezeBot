@@ -340,7 +340,10 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
 
     payload = {
         "task": "short_term_crypto_opportunity_review",
-        "rule": "Do not place orders. Rank candidates for a 1m scalp bot. Execution still requires local 1m signal.",
+        "rule": (
+            "Do not place orders. Decide the 15-60 minute playbook only. "
+            "Do not wait for or ask for 1m candles; the local bot handles exact 1m entry timing."
+        ),
         "output_schema": {
             "opportunities": [{
                 "symbol": "BASE",
@@ -396,9 +399,12 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
     ]
     system_prompt = (
         "You are a crypto market analyst for a short-term 1-minute scalp bot. "
-        "Use only the provided compact data. Return strict JSON only. "
-        "Never recommend immediate execution; use ALLOW_IF_1M_SIGNAL at most. "
-        "WATCH_LONG_CONTINUATION and WATCH_SHORT_CONTINUATION mean regime-aligned entries that still wait for local 1m continuation or pullback confirmation. "
+        "Use only the provided compact 5m/15m/24h flow, OI, funding, liquidation, sentiment, OKX and lesson data. "
+        "Return strict JSON only. "
+        "Your job is to choose the playbook for the next 15-60 minutes, not the exact entry tick. "
+        "Do not downgrade a candidate to OBSERVE just because no 1m signal is supplied; 1m execution is handled locally after your permission. "
+        "Use ALLOW_IF_1M_SIGNAL when the higher-timeframe playbook is tradable but still needs local 1m confirmation. "
+        "WATCH_LONG_CONTINUATION and WATCH_SHORT_CONTINUATION mean trend-following continuation or pullback-entry playbooks. "
         "WATCH_LONG_FADE and WATCH_SHORT_FADE mean short holding-period counter-regime reversal scalps, only when the move looks stretched and local flow is fading; these should not be breakout-chasing permissions."
     )
     max_output = int(cfg.get("YAOBI_AI_MAX_OUTPUT_TOKENS", 1200) or 1200)

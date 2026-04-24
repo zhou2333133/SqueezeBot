@@ -22,6 +22,13 @@ class TestScalpEngine(unittest.TestCase):
             "BREAKOUT_MAX_PREMOVE_15M_PCT": 2.5,
             "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
             "BREAKOUT_MAX_EMA20_DEVIATION_PCT": 2.0,
+            "CONTINUATION_PULLBACK_ENABLED": True,
+            "CONTINUATION_TAKER_MIN": 0.55,
+            "CONTINUATION_HOT_TAKER_MIN": 0.52,
+            "CONTINUATION_MIN_PULLBACK_PCT": 0.12,
+            "CONTINUATION_RECLAIM_LOOKBACK": 3,
+            "CONTINUATION_ATR_MAX_PCT": 2.50,
+            "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 4.50,
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
             "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
             "SCALP_TP3_AGGRESSIVE_RUNNER": True,
@@ -185,6 +192,61 @@ class TestScalpEngine(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIn("EMA20同向偏离", reason)
+
+    def test_playbook_continuation_pullback_ready_allows_reclaim_entry(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["SKRUSDT"] = {
+            "yaobi_context": True,
+            "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
+            "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+            "yaobi_opportunity_rank": 1,
+            "yaobi_opportunity_trigger_family": "BREAKOUT",
+            "yaobi_opportunity_setup_state": "HOT",
+        }
+        bot.kline_buffer["SKRUSDT"] = [
+            {"o": 100 + i * 0.15, "h": 100.3 + i * 0.15, "l": 99.8 + i * 0.15, "c": 100 + i * 0.15, "q": 1000.0, "Q": 580.0}
+            for i in range(14)
+        ] + [
+            {"o": 102.2, "h": 102.6, "l": 102.0, "c": 102.4, "q": 1000.0, "Q": 580.0},
+            {"o": 102.4, "h": 103.2, "l": 102.2, "c": 103.0, "q": 1000.0, "Q": 610.0},
+            {"o": 103.0, "h": 103.6, "l": 102.9, "c": 103.4, "q": 1000.0, "Q": 620.0},
+            {"o": 103.4, "h": 103.5, "l": 102.1, "c": 102.6, "q": 1000.0, "Q": 430.0},
+            {"o": 102.6, "h": 103.0, "l": 102.4, "c": 102.9, "q": 1000.0, "Q": 510.0},
+            {"o": 102.9, "h": 103.2, "l": 102.7, "c": 103.1, "q": 1000.0, "Q": 560.0},
+            {"o": 103.1, "h": 103.4, "l": 102.9, "c": 103.3, "q": 1000.0, "Q": 580.0},
+            {"o": 103.3, "h": 103.55, "l": 103.1, "c": 103.45, "q": 1000.0, "Q": 590.0},
+        ]
+        bot._live_candle["SKRUSDT"] = {
+            "h": 103.9,
+            "l": 103.2,
+            "open": 103.45,
+            "close": 103.8,
+            "taker_buy": 620.0,
+            "total_vol": 1000.0,
+        }
+
+        ok, reason, trigger_pct = bot._continuation_pullback_ready("SKRUSDT", "LONG", 103.8, 0.62, 0.75)
+
+        self.assertTrue(ok, reason)
+        self.assertGreater(trigger_pct, 0)
+        self.assertIn("回踩", reason)
+
+    def test_breakout_premove_allows_ai_pullback_continuation(self) -> None:
+        bot = BinanceScalpBot()
+        bot.kline_buffer["SKRUSDT"] = [
+            {"o": 100 + i * 0.2, "h": 100.4 + i * 0.2, "l": 99.8 + i * 0.2, "c": 100 + i * 0.2, "q": 1000.0, "Q": 600.0}
+            for i in range(22)
+        ] + [
+            {"o": 105.0, "h": 106.0, "l": 104.8, "c": 105.7, "q": 1000.0, "Q": 600.0},
+            {"o": 105.7, "h": 105.9, "l": 104.2, "c": 104.6, "q": 1000.0, "Q": 460.0},
+            {"o": 104.6, "h": 105.4, "l": 104.4, "c": 105.2, "q": 1000.0, "Q": 560.0},
+        ]
+
+        blocked, _ = bot._breakout_premove_allowed("SKRUSDT", "LONG", 105.8)
+        allowed, reason = bot._breakout_premove_allowed("SKRUSDT", "LONG", 105.8, allow_after_pullback=True)
+
+        self.assertFalse(blocked)
+        self.assertTrue(allowed, reason)
 
     def test_yaobi_wait_confirm_and_crowded_funding_block_entries(self) -> None:
         bot = BinanceScalpBot()

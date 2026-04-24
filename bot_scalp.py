@@ -154,6 +154,8 @@ class BinanceScalpBot:
         self._avg_vol:          dict[str, float]         = {}
         # 平仓后继续观察，用于判断卖飞/方向是否选对（不额外 REST 调用）
         self._post_exit_watch:   dict[str, list]          = {}
+        # 最近未开仓/被拦截原因，写入分析包用于复盘 AI 剧本是否卡在执行层。
+        self._entry_block_log:    list[dict]               = []
         self._live_trading_suspended: bool                = False
         self._live_trading_suspended_reason: str          = ""
         # Surf 成本控制：后台新闻扫描按配置限频，默认关闭。
@@ -168,7 +170,7 @@ class BinanceScalpBot:
             "symbol_banned": 0, "vol_miss": 0,
             "state_block": 0, "atr_block": 0, "manual_block": 0,
             "yaobi_block": 0, "premove_block": 0,
-            "squeeze": 0, "breakout": 0, "passed": 0,
+            "squeeze": 0, "breakout": 0, "continuation": 0, "passed": 0,
         }
         self._fstat_ts:         float                    = 0.0
 
@@ -211,6 +213,95 @@ class BinanceScalpBot:
             if price > 0:
                 return price
         return pos.entry_price
+
+    def _record_entry_block(
+        self,
+        symbol: str,
+        stage: str,
+        reason: str,
+        *,
+        direction: str = "",
+        signal_label: str = "",
+    ) -> None:
+        meta = self.candidate_meta.get(symbol, {})
+        row = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "symbol": symbol,
+            "direction": direction,
+            "signal_label": signal_label,
+            "stage": stage,
+            "reason": reason,
+            "opportunity_action": meta.get("yaobi_opportunity_action", ""),
+            "opportunity_permission": meta.get("yaobi_opportunity_permission", ""),
+            "opportunity_setup_state": meta.get("yaobi_opportunity_setup_state", ""),
+            "opportunity_trigger_family": meta.get("yaobi_opportunity_trigger_family", ""),
+            "opportunity_score": meta.get("yaobi_opportunity_score", 0),
+            "ai_provider": meta.get("yaobi_ai_provider", ""),
+        }
+        self._entry_block_log.append(row)
+        if len(self._entry_block_log) > 240:
+            self._entry_block_log = self._entry_block_log[-180:]
+
+    def entry_block_log_snapshot(self, limit: int = 120) -> list[dict]:
+        return list(self._entry_block_log[-max(1, int(limit)):])
+
+    def candidate_wait_diagnostics(self, limit: int = 50) -> list[dict]:
+        rows: list[dict] = []
+        for symbol in self.candidate_symbols[:max(1, int(limit))]:
+            meta = self.candidate_meta.get(symbol, {})
+            op_action = str(meta.get("yaobi_opportunity_action") or "")
+            op_permission = str(meta.get("yaobi_opportunity_permission") or "")
+            op_setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
+            op_trigger = str(meta.get("yaobi_opportunity_trigger_family") or "").upper()
+            op_style = self._yaobi_action_style(op_action)
+            direction = self._yaobi_action_direction(meta.get("yaobi_opportunity_action", ""))
+            price = self._as_float(
+                self._live_candle.get(symbol, {}).get("close"),
+                self._as_float(meta.get("scalp_candidate_last_price"), self._as_float(meta.get("last_price"))),
+            )
+            taker = self._get_taker_ratio(symbol, min_vol_ratio=0.0)
+            atr_pct = self._calc_atr_pct(self.kline_buffer.get(symbol, [])) if self.kline_buffer.get(symbol) else 0.0
+            cont_ok = False
+            cont_reason = ""
+            if op_style == "CONTINUATION" and op_trigger == "BREAKOUT" and direction and price > 0 and taker is not None:
+                cont_ok, cont_reason, _ = self._continuation_pullback_ready(symbol, direction, price, taker, atr_pct)
+
+            reason = "等待1m信号"
+            if not meta.get("yaobi_context"):
+                reason = "缺少妖币扫描上下文"
+            elif op_permission != "ALLOW_IF_1M_SIGNAL":
+                reason = f"机会队列未许可: {op_action or 'OBSERVE'}"
+            elif op_setup not in {"ARMED", "HOT"}:
+                reason = f"5m/15m剧本未就绪: {op_setup or 'WAIT'}"
+            elif len(self.kline_buffer.get(symbol, [])) < 20:
+                reason = "1m K线暖机不足"
+            elif taker is None:
+                reason = "当前K成交量/Taker未达入场计算门槛"
+            elif direction and op_trigger == "SQUEEZE":
+                reason = "等待1m衰竭反打/轧空轧多信号"
+            elif direction and op_style == "FADE":
+                reason = "等待1m顶部/底部反打信号"
+            elif direction and op_style == "CONTINUATION" and not cont_ok:
+                reason = cont_reason or "等待回踩接力或突破确认"
+            elif direction and op_style == "CONTINUATION" and cont_ok:
+                reason = "回踩接力已接近可触发，等待tick确认"
+            elif direction:
+                reason = "等待1m方向确认"
+
+            rows.append({
+                "symbol": symbol,
+                "direction": direction,
+                "reason": reason,
+                "price": round(price, 8) if price else 0.0,
+                "taker": round(taker, 4) if taker is not None else None,
+                "atr_pct": round(atr_pct, 4),
+                "opportunity_action": meta.get("yaobi_opportunity_action", ""),
+                "opportunity_permission": meta.get("yaobi_opportunity_permission", ""),
+                "opportunity_setup_state": meta.get("yaobi_opportunity_setup_state", ""),
+                "opportunity_setup_note": meta.get("yaobi_opportunity_setup_note", ""),
+                "opportunity_score": meta.get("yaobi_opportunity_score", 0),
+            })
+        return rows
 
     @staticmethod
     def _to_binance_perp_symbol(symbol: str) -> str:
@@ -529,7 +620,7 @@ class BinanceScalpBot:
             op_style = self._yaobi_action_style(op_action)
             op_trigger = str(meta.get("yaobi_opportunity_trigger_family") or "").upper()
             op_setup_note = str(meta.get("yaobi_opportunity_setup_note") or "")
-            is_breakout = "动能突破" in str(signal_label or "")
+            is_breakout = "动能突破" in str(signal_label or "") or "顺势回踩" in str(signal_label or "")
             is_squeeze = "猎杀" in str(signal_label or "")
             if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_QUEUE", False) and not op_rank:
                 return False, "未进入妖币机会队列Top名单"
@@ -1373,7 +1464,123 @@ class BinanceScalpBot:
         deviation = (price - ema20) / ema20 * 100
         return deviation if direction == "LONG" else -deviation
 
-    def _breakout_premove_allowed(self, symbol: str, direction: str, price: float) -> tuple[bool, str]:
+    def _playbook_allows_continuation(self, symbol: str, direction: str) -> bool:
+        meta = self.candidate_meta.get(symbol, {})
+        if not meta:
+            return False
+        if str(meta.get("yaobi_opportunity_permission") or "") != "ALLOW_IF_1M_SIGNAL":
+            return False
+        if str(meta.get("yaobi_opportunity_setup_state") or "").upper() not in {"ARMED", "HOT"}:
+            return False
+        if str(meta.get("yaobi_opportunity_trigger_family") or "").upper() != "BREAKOUT":
+            return False
+        if self._yaobi_action_direction(meta.get("yaobi_opportunity_action", "")) != direction:
+            return False
+        return self._yaobi_action_style(meta.get("yaobi_opportunity_action", "")) == "CONTINUATION"
+
+    def _continuation_pullback_ready(
+        self,
+        symbol: str,
+        direction: str,
+        price: float,
+        taker_ratio: float,
+        atr_pct: float,
+    ) -> tuple[bool, str, float]:
+        if not self.cfg.get("CONTINUATION_PULLBACK_ENABLED", True):
+            return False, "顺势回踩接力未启用", 0.0
+        if not self._playbook_allows_continuation(symbol, direction):
+            return False, "当前AI剧本不是顺势接力", 0.0
+
+        buf = self.kline_buffer.get(symbol, [])
+        if len(buf) < 20:
+            return False, "1m K线不足20根", 0.0
+        atr_min = self.cfg.get("BREAKOUT_ATR_MIN_PCT", 0.0)
+        atr_max = self.cfg.get("CONTINUATION_ATR_MAX_PCT", 2.5)
+        if atr_min and atr_pct < atr_min:
+            return False, f"ATR {atr_pct:.2f}%低于顺势接力下限{atr_min:.2f}%", 0.0
+        if atr_max and atr_pct > atr_max:
+            return False, f"ATR {atr_pct:.2f}%高于顺势接力上限{atr_max:.2f}%", 0.0
+
+        profile = build_entry_1m_profile(
+            buf=buf,
+            live=self._live_candle.get(symbol, {}),
+            direction=direction,
+            current_price=price,
+            atr_pct=atr_pct,
+        )
+        min_pullback = max(
+            self.cfg.get("CONTINUATION_MIN_PULLBACK_PCT", 0.12),
+            min(0.8, atr_pct * 0.25 if atr_pct else 0.12),
+        )
+        pullback = self._as_float(profile.get("recent_pullback_pct"))
+        if pullback < min_pullback:
+            return False, f"等待1m回踩，当前回踩{pullback:.2f}% < {min_pullback:.2f}%", 0.0
+
+        ema_dev = self._as_float(profile.get("directional_ema20_deviation_pct"))
+        ema_limit = self.cfg.get("CONTINUATION_MAX_EMA20_DEVIATION_PCT", 4.5)
+        if ema_limit and ema_dev > ema_limit:
+            return False, f"回踩后仍偏离EMA20 {ema_dev:.2f}% > {ema_limit:.2f}%", 0.0
+
+        closes = [k["c"] for k in buf]
+        ma5 = sum(closes[-5:]) / 5
+        ma10 = sum(closes[-10:]) / 10
+        ma20 = sum(closes[-20:]) / 20
+        setup = str(self.candidate_meta.get(symbol, {}).get("yaobi_opportunity_setup_state") or "").upper()
+        taker_min = self.cfg.get(
+            "CONTINUATION_HOT_TAKER_MIN" if setup == "HOT" else "CONTINUATION_TAKER_MIN",
+            0.52 if setup == "HOT" else 0.55,
+        )
+        lookback = int(self.cfg.get("CONTINUATION_RECLAIM_LOOKBACK", 3) or 3)
+        recent = buf[-max(1, lookback):]
+
+        if direction == "LONG":
+            directional_taker = taker_ratio
+            if not (ma5 >= ma10 >= ma20 or (ma5 >= ma20 and price >= ma5)):
+                return False, "1m均线尚未恢复多头接力", 0.0
+            reclaim = max(k.get("h", k.get("c", price)) for k in recent)
+            if price <= reclaim:
+                return False, f"等待重新站上近{lookback}根高点", 0.0
+            if directional_taker < taker_min:
+                return False, f"Taker买{directional_taker:.0%}低于接力阈值{taker_min:.0%}", 0.0
+            trigger_pct = (price - reclaim) / reclaim * 100 if reclaim > 0 else 0.0
+        else:
+            directional_taker = 1 - taker_ratio
+            if not (ma5 <= ma10 <= ma20 or (ma5 <= ma20 and price <= ma5)):
+                return False, "1m均线尚未恢复空头接力", 0.0
+            reclaim = min(k.get("l", k.get("c", price)) for k in recent)
+            if price >= reclaim:
+                return False, f"等待重新跌破近{lookback}根低点", 0.0
+            if directional_taker < taker_min:
+                return False, f"Taker卖{directional_taker:.0%}低于接力阈值{taker_min:.0%}", 0.0
+            trigger_pct = (reclaim - price) / reclaim * 100 if reclaim > 0 else 0.0
+
+        reason = f"回踩{pullback:.2f}%后接力 | Taker={directional_taker:.0%} | EMA20偏离{ema_dev:.2f}%"
+        return True, reason, max(trigger_pct, 0.0)
+
+    def _breakout_premove_allowed(
+        self,
+        symbol: str,
+        direction: str,
+        price: float,
+        *,
+        allow_after_pullback: bool = False,
+    ) -> tuple[bool, str]:
+        pullback_profile = None
+        if allow_after_pullback:
+            atr_pct = self._calc_atr_pct(self.kline_buffer.get(symbol, []))
+            pullback_profile = build_entry_1m_profile(
+                buf=self.kline_buffer.get(symbol, []),
+                live=self._live_candle.get(symbol, {}),
+                direction=direction,
+                current_price=price,
+                atr_pct=atr_pct,
+            )
+            min_pullback = max(
+                self.cfg.get("CONTINUATION_MIN_PULLBACK_PCT", 0.12),
+                min(0.8, atr_pct * 0.25 if atr_pct else 0.12),
+            )
+            allow_after_pullback = self._as_float(pullback_profile.get("recent_pullback_pct")) >= min_pullback
+
         move_limits = (
             (5, self.cfg.get("BREAKOUT_MAX_PREMOVE_5M_PCT", 0.0)),
             (15, self.cfg.get("BREAKOUT_MAX_PREMOVE_15M_PCT", 0.0)),
@@ -1384,12 +1591,18 @@ class BinanceScalpBot:
                 continue
             move = self._recent_directional_move_pct(symbol, direction, lookback, price)
             if move > limit:
+                if allow_after_pullback:
+                    continue
                 return False, f"{lookback}m同向已走{move:.2f}% > {limit:.2f}%，避免突破追晚"
 
         ema_limit = self.cfg.get("BREAKOUT_MAX_EMA20_DEVIATION_PCT", 0.0)
         if ema_limit:
             ema_dev = self._directional_ema20_deviation_pct(symbol, direction, price)
             if ema_dev > ema_limit:
+                if allow_after_pullback:
+                    continuation_ema_limit = self.cfg.get("CONTINUATION_MAX_EMA20_DEVIATION_PCT", 4.5)
+                    if ema_dev <= continuation_ema_limit:
+                        return True, "同向涨幅偏大但已有1m回踩，按顺势接力处理"
                 return False, f"EMA20同向偏离{ema_dev:.2f}% > {ema_limit:.2f}%，等待回踩后再突破"
         return True, ""
 
@@ -1681,8 +1894,47 @@ class BinanceScalpBot:
             return
 
         atr_pct = self._calc_atr_pct(buf)
+        if allow_long:
+            cont_ok, cont_reason, cont_pct = self._continuation_pullback_ready(
+                symbol, "LONG", price, taker_ratio, atr_pct,
+            )
+            if cont_ok:
+                if self._btc_guard("LONG"):
+                    state = self._check_market_state(symbol, "LONG")
+                    if state == "RANGE_CHOP":
+                        self._fstat["state_block"] += 1
+                        self._record_entry_block(symbol, "state", "RANGE_CHOP", direction="LONG", signal_label="顺势回踩多")
+                        logger.info("⚡ [%s] 🟡 顺势回踩多被状态机过滤: RANGE_CHOP", symbol)
+                        return
+                    self._fstat["continuation"] += 1
+                    self._breakout_fired[symbol] = True
+                    logger.info("⚡ [%s] 🟡 顺势回踩多: %s | 状态=%s", symbol, cont_reason, state)
+                    await self._execute_entry(symbol, "LONG", cont_pct, "顺势回踩多", state)
+                    return
+                self._fstat["btc_guard"] += 1
+
+        if allow_short:
+            cont_ok, cont_reason, cont_pct = self._continuation_pullback_ready(
+                symbol, "SHORT", price, taker_ratio, atr_pct,
+            )
+            if cont_ok:
+                if self._btc_guard("SHORT"):
+                    state = self._check_market_state(symbol, "SHORT")
+                    if state == "RANGE_CHOP":
+                        self._fstat["state_block"] += 1
+                        self._record_entry_block(symbol, "state", "RANGE_CHOP", direction="SHORT", signal_label="顺势回踩空")
+                        logger.info("⚡ [%s] 🟠 顺势回踩空被状态机过滤: RANGE_CHOP", symbol)
+                        return
+                    self._fstat["continuation"] += 1
+                    self._breakout_fired[symbol] = True
+                    logger.info("⚡ [%s] 🟠 顺势回踩空: %s | 状态=%s", symbol, cont_reason, state)
+                    await self._execute_entry(symbol, "SHORT", cont_pct, "顺势回踩空", state)
+                    return
+                self._fstat["btc_guard"] += 1
+
         if not self._breakout_atr_allowed(atr_pct):
             self._fstat["atr_block"] += 1
+            self._record_entry_block(symbol, "atr", f"ATR {atr_pct:.2f}%不在突破允许区间", signal_label="1m执行层")
             self._maybe_print_fstat()
             return
 
@@ -1699,12 +1951,19 @@ class BinanceScalpBot:
                 state = self._check_market_state(symbol, "LONG")
                 if state == "RANGE_CHOP":
                     self._fstat["state_block"] += 1
+                    self._record_entry_block(symbol, "state", "RANGE_CHOP", direction="LONG", signal_label="动能突破多")
                     logger.info("⚡ [%s] 🟡 动能突破多被状态机过滤: RANGE_CHOP", symbol)
                     return
-                premove_ok, premove_reason = self._breakout_premove_allowed(symbol, "LONG", price)
+                premove_ok, premove_reason = self._breakout_premove_allowed(
+                    symbol,
+                    "LONG",
+                    price,
+                    allow_after_pullback=self._playbook_allows_continuation(symbol, "LONG"),
+                )
                 if not premove_ok:
                     self._fstat["premove_block"] += 1
                     self._breakout_fired[symbol] = True
+                    self._record_entry_block(symbol, "premove", premove_reason, direction="LONG", signal_label="动能突破多")
                     logger.info("⚡ [%s] 🟡 动能突破多被追涨过滤: %s", symbol, premove_reason)
                     return
                 self._fstat["breakout"] += 1
@@ -1722,12 +1981,19 @@ class BinanceScalpBot:
                 state = self._check_market_state(symbol, "SHORT")
                 if state == "RANGE_CHOP":
                     self._fstat["state_block"] += 1
+                    self._record_entry_block(symbol, "state", "RANGE_CHOP", direction="SHORT", signal_label="动能突破空")
                     logger.info("⚡ [%s] 🟠 动能突破空被状态机过滤: RANGE_CHOP", symbol)
                     return
-                premove_ok, premove_reason = self._breakout_premove_allowed(symbol, "SHORT", price)
+                premove_ok, premove_reason = self._breakout_premove_allowed(
+                    symbol,
+                    "SHORT",
+                    price,
+                    allow_after_pullback=self._playbook_allows_continuation(symbol, "SHORT"),
+                )
                 if not premove_ok:
                     self._fstat["premove_block"] += 1
                     self._breakout_fired[symbol] = True
+                    self._record_entry_block(symbol, "premove", premove_reason, direction="SHORT", signal_label="动能突破空")
                     logger.info("⚡ [%s] 🟠 动能突破空被追空过滤: %s", symbol, premove_reason)
                     return
                 self._fstat["breakout"] += 1
@@ -1771,6 +2037,7 @@ class BinanceScalpBot:
         if not yaobi_ok:
             self._fstat["yaobi_block"] += 1
             self._signal_cooldown[symbol] = time.monotonic()
+            self._record_entry_block(symbol, "yaobi_guard", yaobi_reason, direction=direction, signal_label=signal_label)
             logger.info("⚡ [%s] 🧭 妖币共享数据拦截 %s: %s", symbol, direction, yaobi_reason)
             return
 
@@ -2552,6 +2819,7 @@ class BinanceScalpBot:
             f"  ❌ BTC大盘过滤:  {s['btc_guard']:>4}次",
             f"  🔴 轧空/轧多信号: {s['squeeze']}次",
             f"  🟡 动能突破信号:  {s['breakout']}次",
+            f"  🟢 顺势回踩接力:  {s['continuation']}次",
             f"  ✅ 触发开仓:      {s['passed']}次" + (" ★" if s["passed"] > 0 else " (等待行情)"),
             f"  参数: SQ_OI大币={cfg.get('SQUEEZE_OI_DROP_MAJOR',0.5)}%"
             f" 中型={cfg.get('SQUEEZE_OI_DROP_MID',1.0)}%"
@@ -2576,6 +2844,7 @@ class BinanceScalpBot:
             "atr_block":     s["atr_block"],
             "squeeze":      s["squeeze"],
             "breakout":     s["breakout"],
+            "continuation":  s["continuation"],
             "passed":       s["passed"],
             "cfg_sq_oi_major": cfg.get("SQUEEZE_OI_DROP_MAJOR", 0.5),
             "cfg_sq_oi_mid":   cfg.get("SQUEEZE_OI_DROP_MID",   1.0),

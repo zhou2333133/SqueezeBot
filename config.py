@@ -159,7 +159,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042405
+    PROFILE_VERSION = 2026042406
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -198,6 +198,13 @@ class ConfigManager:
         "BREAKOUT_MAX_PREMOVE_15M_PCT": 2.5,
         "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
         "BREAKOUT_MAX_EMA20_DEVIATION_PCT": 2.0,
+        "CONTINUATION_PULLBACK_ENABLED": True,
+        "CONTINUATION_TAKER_MIN": 0.55,
+        "CONTINUATION_HOT_TAKER_MIN": 0.52,
+        "CONTINUATION_MIN_PULLBACK_PCT": 0.12,
+        "CONTINUATION_RECLAIM_LOOKBACK": 3,
+        "CONTINUATION_ATR_MAX_PCT": 2.50,
+        "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 4.50,
         "SIGNAL_COOLDOWN_SECONDS": 30,
         "OI_POLL_INTERVAL": 10,
         "BTC_GUARD_PCT": 2.0,
@@ -294,6 +301,12 @@ class ConfigManager:
         "BREAKOUT_MAX_PREMOVE_15M_PCT": (0.0,   20.0),
         "BREAKOUT_MAX_PREMOVE_30M_PCT": (0.0,   20.0),
         "BREAKOUT_MAX_EMA20_DEVIATION_PCT": (0.0, 10.0),
+        "CONTINUATION_TAKER_MIN":       (0.4,    0.9),
+        "CONTINUATION_HOT_TAKER_MIN":   (0.4,    0.9),
+        "CONTINUATION_MIN_PULLBACK_PCT": (0.0,   3.0),
+        "CONTINUATION_RECLAIM_LOOKBACK": (1,     8),
+        "CONTINUATION_ATR_MAX_PCT":     (0.0,    10.0),
+        "CONTINUATION_MAX_EMA20_DEVIATION_PCT": (0.0, 15.0),
         "SIGNAL_COOLDOWN_SECONDS":     (1,      60),
         "OI_POLL_INTERVAL":            (5,      60),
         "BTC_GUARD_PCT":               (0.1,    10.0),
@@ -386,6 +399,13 @@ class ConfigManager:
             "BREAKOUT_MAX_PREMOVE_15M_PCT": 2.5,
             "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
             "BREAKOUT_MAX_EMA20_DEVIATION_PCT": 2.0,
+            "CONTINUATION_PULLBACK_ENABLED": True,
+            "CONTINUATION_TAKER_MIN":    0.55,
+            "CONTINUATION_HOT_TAKER_MIN": 0.52,
+            "CONTINUATION_MIN_PULLBACK_PCT": 0.12,
+            "CONTINUATION_RECLAIM_LOOKBACK": 3,
+            "CONTINUATION_ATR_MAX_PCT":   2.50,
+            "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 4.50,
             "SIGNAL_COOLDOWN_SECONDS":   30,
             "OI_POLL_INTERVAL":          10,
             "BTC_GUARD_PCT":             2.0,

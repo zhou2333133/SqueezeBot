@@ -517,6 +517,51 @@ class TestYaobiSources(unittest.TestCase):
         self.assertEqual(payload["rule_bias"], "LONG")
         self.assertIn("lesson_stats", payload)
 
+    def test_ai_gateway_prompt_evaluates_playbook_without_1m_signal(self) -> None:
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        old_usage = ai_gateway._USAGE_FILE
+        old_cache = ai_gateway._CACHE_FILE
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                ai_gateway._USAGE_FILE = os.path.join(tmp, "usage.json")
+                ai_gateway._CACHE_FILE = os.path.join(tmp, "cache.json")
+                config_manager.settings["YAOBI_AI_ENABLED"] = True
+                config_manager.settings["YAOBI_AI_PROVIDER_PRIORITY"] = "gemini"
+                config_manager.settings["YAOBI_AI_DAILY_USD_CAP"] = 0.0
+                captured = {}
+
+                async def fake_gemini(_session, system_prompt, payload, _max_output):
+                    captured["system_prompt"] = system_prompt
+                    captured["payload"] = payload
+                    return json.dumps({
+                        "opportunities": [{
+                            "symbol": "SKR",
+                            "action": "WATCH_LONG_CONTINUATION",
+                            "permission": "ALLOW_IF_1M_SIGNAL",
+                            "confidence": 82,
+                            "summary": "15m playbook is tradable",
+                            "reasons": ["5m/15m flow agrees"],
+                            "risks": [],
+                            "required_confirmation": ["local 1m pullback entry"],
+                        }]
+                    }), 800
+
+                c = Candidate(symbol="SKR", has_futures=True, opportunity_action="WATCH_LONG_CONTINUATION")
+                with patch("scanner.ai_gateway.GEMINI_API_KEY", "test-key"):
+                    with patch("scanner.ai_gateway.ai_credentials_status", return_value={"enabled": True}):
+                        with patch("scanner.ai_gateway._call_gemini", fake_gemini):
+                            result = asyncio.run(ai_gateway.analyze_opportunities(None, [c]))
+
+                self.assertEqual(result["items"][0]["permission"], "ALLOW_IF_1M_SIGNAL")
+                self.assertIn("Do not wait for or ask for 1m candles", captured["payload"])
+                self.assertIn("Do not downgrade a candidate to OBSERVE just because no 1m signal is supplied", captured["system_prompt"])
+        finally:
+            ai_gateway._USAGE_FILE = old_usage
+            ai_gateway._CACHE_FILE = old_cache
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+
     def test_ai_gateway_reuses_last_success_during_min_interval(self) -> None:
         from config import config_manager
         orig = config_manager.settings.copy()
