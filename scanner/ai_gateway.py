@@ -29,6 +29,7 @@ _ROOT = os.path.join(DATA_DIR, "ai_knowledge")
 _CACHE_FILE = os.path.join(_ROOT, "ai_cache.json")
 _USAGE_FILE = os.path.join(_ROOT, "ai_usage.json")
 _ENDPOINT = "opportunity_review"
+_LATEST_SUCCESS_KEY = "_latest_success"
 _GEMINI_OPPORTUNITY_JSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -87,12 +88,15 @@ def _usage_snapshot() -> dict:
     today = _today_key()
     row = usage.get(today, {"calls": 0, "estimated_usd": 0.0, "tokens": 0})
     meta = usage.get("_meta", {})
+    latest = usage.get(_LATEST_SUCCESS_KEY, {})
     return {
         "date": today,
         "calls": int(row.get("calls", 0) or 0),
         "estimated_usd": round(float(row.get("estimated_usd", 0.0) or 0.0), 4),
         "tokens": int(row.get("tokens", 0) or 0),
         "last_call_ts": float(meta.get("last_call_ts", 0) or 0),
+        "last_success_ts": float(latest.get("ts", 0) or 0),
+        "last_success_provider": str(latest.get("provider", "") or ""),
     }
 
 
@@ -105,6 +109,42 @@ def _record_usage(tokens: int, estimated_usd: float) -> None:
     row["tokens"] = int(row.get("tokens", 0) or 0) + int(tokens)
     usage["_meta"] = {"last_call_ts": time.time()}
     _save_json(_USAGE_FILE, usage)
+
+
+def _save_latest_success(provider: str, items: list[dict]) -> None:
+    usage = _load_json(_USAGE_FILE, {})
+    usage[_LATEST_SUCCESS_KEY] = {
+        "ts": time.time(),
+        "provider": provider,
+        "items": items,
+    }
+    _save_json(_USAGE_FILE, usage)
+
+
+def _load_latest_success(ttl_sec: float, symbols: set[str]) -> dict | None:
+    usage = _load_json(_USAGE_FILE, {})
+    latest = usage.get(_LATEST_SUCCESS_KEY)
+    if not isinstance(latest, dict):
+        return None
+    ts = float(latest.get("ts", 0) or 0)
+    if not ts or time.time() - ts > ttl_sec:
+        return None
+    rows = latest.get("items")
+    if not isinstance(rows, list):
+        return None
+    filtered = []
+    for row in rows:
+        symbol = _symbol_key(row.get("symbol", ""))
+        if not symbol or symbol not in symbols:
+            continue
+        filtered.append(dict(row, cached=True, reused=True, provider=latest.get("provider", "")))
+    if not filtered:
+        return None
+    return {
+        "provider": str(latest.get("provider", "") or ""),
+        "items": filtered,
+        "ts": ts,
+    }
 
 
 def provider_status() -> dict:
@@ -130,11 +170,11 @@ def provider_status() -> dict:
 
 def _compact_candidate(c: Any) -> dict:
     symbol = getattr(c, "symbol", "") or ""
-    rule_action = str(getattr(c, "opportunity_action", "") or "")
+    rule_action = _normalize_action(str(getattr(c, "opportunity_action", "") or ""))
     rule_bias = "NEUTRAL"
-    if rule_action == "WATCH_LONG":
+    if rule_action.startswith("WATCH_LONG"):
         rule_bias = "LONG"
-    elif rule_action == "WATCH_SHORT":
+    elif rule_action.startswith("WATCH_SHORT"):
         rule_bias = "SHORT"
     return {
         "symbol": symbol,
@@ -208,6 +248,19 @@ def _is_valid_json_text(text: str) -> bool:
         return False
 
 
+def _symbol_key(symbol: str) -> str:
+    return str(symbol or "").upper().replace("USDT", "")
+
+
+def _normalize_action(action: str) -> str:
+    raw = str(action or "").upper()
+    aliases = {
+        "WATCH_LONG": "WATCH_LONG_CONTINUATION",
+        "WATCH_SHORT": "WATCH_SHORT_CONTINUATION",
+    }
+    return aliases.get(raw, raw)
+
+
 def _normalize_ai_items(payload) -> list[dict]:
     if isinstance(payload, dict):
         rows = payload.get("opportunities") or payload.get("items") or payload.get("data") or []
@@ -219,14 +272,21 @@ def _normalize_ai_items(payload) -> list[dict]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        symbol = str(row.get("symbol", "")).upper().replace("USDT", "")
+        symbol = _symbol_key(row.get("symbol", ""))
         if not symbol:
             continue
-        action = str(row.get("action", "OBSERVE")).upper()
+        action = _normalize_action(str(row.get("action", "OBSERVE")).upper())
         permission = str(row.get("permission", "OBSERVE")).upper()
         result.append({
             "symbol": symbol,
-            "action": action if action in {"WATCH_LONG", "WATCH_SHORT", "OBSERVE", "BLOCK"} else "OBSERVE",
+            "action": action if action in {
+                "WATCH_LONG_CONTINUATION",
+                "WATCH_SHORT_CONTINUATION",
+                "WATCH_LONG_FADE",
+                "WATCH_SHORT_FADE",
+                "OBSERVE",
+                "BLOCK",
+            } else "OBSERVE",
             "permission": permission if permission in {"ALLOW_IF_1M_SIGNAL", "OBSERVE", "BLOCK"} else "OBSERVE",
             "confidence": max(0, min(100, int(row.get("confidence", 0) or 0))),
             "summary": str(row.get("summary", ""))[:240],
@@ -284,7 +344,7 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
         "output_schema": {
             "opportunities": [{
                 "symbol": "BASE",
-                "action": "WATCH_LONG|WATCH_SHORT|OBSERVE|BLOCK",
+                "action": "WATCH_LONG_CONTINUATION|WATCH_SHORT_CONTINUATION|WATCH_LONG_FADE|WATCH_SHORT_FADE|OBSERVE|BLOCK",
                 "permission": "ALLOW_IF_1M_SIGNAL|OBSERVE|BLOCK",
                 "confidence": 0,
                 "summary": "short reason",
@@ -314,8 +374,15 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
 
     usage = _usage_snapshot()
     min_interval = float(cfg.get("YAOBI_AI_MIN_INTERVAL_MINUTES", 15) or 15) * 60
+    cache_ttl = float(cfg.get("YAOBI_AI_CACHE_TTL_MINUTES", 30) or 30) * 60
     if usage["last_call_ts"] and time.time() - usage["last_call_ts"] < min_interval:
         record_provider_skip("ai", _ENDPOINT, "min_interval", items=len(rows))
+        reused = _load_latest_success(cache_ttl, {_symbol_key(x["symbol"]) for x in rows})
+        if reused is not None:
+            return {
+                "items": reused["items"],
+                "status": status | {"last_reason": "min_interval_reuse", "last_provider": reused["provider"]},
+            }
         return {"items": [], "status": status | {"last_reason": "min_interval"}}
     daily_cap = float(cfg.get("YAOBI_AI_DAILY_USD_CAP", 3.0) or 0.0)
     if daily_cap > 0 and usage["estimated_usd"] >= daily_cap:
@@ -330,7 +397,9 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
     system_prompt = (
         "You are a crypto market analyst for a short-term 1-minute scalp bot. "
         "Use only the provided compact data. Return strict JSON only. "
-        "Never recommend immediate execution; use ALLOW_IF_1M_SIGNAL at most."
+        "Never recommend immediate execution; use ALLOW_IF_1M_SIGNAL at most. "
+        "WATCH_LONG_CONTINUATION and WATCH_SHORT_CONTINUATION mean regime-aligned entries that still wait for local 1m continuation or pullback confirmation. "
+        "WATCH_LONG_FADE and WATCH_SHORT_FADE mean short holding-period counter-regime reversal scalps, only when the move looks stretched and local flow is fading; these should not be breakout-chasing permissions."
     )
     max_output = int(cfg.get("YAOBI_AI_MAX_OUTPUT_TOKENS", 1200) or 1200)
     last_error = ""
@@ -351,6 +420,7 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
             _cache_put(cache_key, items)
             estimated = max(0.001, token_count / 1_000_000 * 2.0)
             _record_usage(token_count, estimated)
+            _save_latest_success(provider, items)
             record_provider_call(provider, _ENDPOINT, True, status="200", items=len(rows))
             return {
                 "items": [dict(x, provider=provider, cached=False) for x in items],

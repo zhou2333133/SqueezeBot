@@ -428,7 +428,7 @@ class YaobiScanner:
         # ── 14. Surf AI 终审 (Top-N) ─────────────────────────────────────────
         surf_top_n = int(config_manager.settings.get("YAOBI_SURF_TOP_N", 1))
         if (config_manager.settings.get("YAOBI_AI_ENABLED", False)
-                and config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", True)):
+                and config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", False)):
             surf_top_n = max(
                 surf_top_n,
                 int(config_manager.settings.get("YAOBI_AI_MAX_SYMBOLS_PER_RUN", 6) or 6),
@@ -639,13 +639,13 @@ class YaobiScanner:
             permission = "OBSERVE"
             risks.append(f"机会分{score}低于阈值{min_score}")
         elif long_score >= short_score + 8 and long_score >= 20:
-            action = "WATCH_LONG"
+            action = "WATCH_LONG_CONTINUATION"
             permission = "ALLOW_IF_1M_SIGNAL"
-            required.append("只接受多头1m确认，禁止反向追空")
+            required.append("只接受多头1m延续/回踩确认，禁止反向追空")
         elif short_score >= long_score + 8 and short_score >= 20:
-            action = "WATCH_SHORT"
+            action = "WATCH_SHORT_CONTINUATION"
             permission = "ALLOW_IF_1M_SIGNAL"
-            required.append("只接受空头1m确认，禁止反向追多")
+            required.append("只接受空头1m延续/回踩确认，禁止反向追多")
         else:
             action = "OBSERVE"
             permission = "OBSERVE"
@@ -654,12 +654,28 @@ class YaobiScanner:
         confidence = max(0, min(100, score + abs(long_score - short_score) - len(risks) * 6))
         return max(0, min(100, score)), action, permission, confidence, reasons[:6], risks[:6], required[:6]
 
+    @staticmethod
+    def _action_direction(action: str) -> str:
+        raw = str(action or "").upper()
+        if raw in {"WATCH_LONG", "WATCH_LONG_CONTINUATION", "WATCH_LONG_FADE"}:
+            return "LONG"
+        if raw in {"WATCH_SHORT", "WATCH_SHORT_CONTINUATION", "WATCH_SHORT_FADE"}:
+            return "SHORT"
+        return ""
+
+    @staticmethod
+    def _is_watch_action(action: str) -> bool:
+        return YaobiScanner._action_direction(action) in {"LONG", "SHORT"}
+
+    @staticmethod
+    def _is_fade_action(action: str) -> bool:
+        return str(action or "").upper().endswith("_FADE")
+
     def _apply_dual_ai_consensus(self, candidates: list[Candidate]) -> None:
-        if not bool(config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", True)):
-            return
         if not bool(config_manager.settings.get("YAOBI_AI_ENABLED", False)):
             return
 
+        strict_consensus = bool(config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", False))
         min_conf = int(config_manager.settings.get("YAOBI_SURF_DIRECTION_MIN_CONFIDENCE", 55) or 55)
         surf_enabled = (
             _surf_enabled()
@@ -669,7 +685,7 @@ class YaobiScanner:
         for c in candidates:
             if c.opportunity_permission == "BLOCK":
                 continue
-            if c.opportunity_action not in {"WATCH_LONG", "WATCH_SHORT"}:
+            if not self._is_watch_action(c.opportunity_action):
                 continue
             if c.surf_ai_risk_level == "HIGH":
                 c.opportunity_action = "BLOCK"
@@ -679,17 +695,27 @@ class YaobiScanner:
                 c.opportunity_risks = risks[:5]
                 continue
 
-            expected = "LONG" if c.opportunity_action == "WATCH_LONG" else "SHORT"
             if not surf_enabled:
-                c.opportunity_action = "OBSERVE"
-                c.opportunity_permission = "OBSERVE"
-                risks = list(c.opportunity_risks or [])
-                risks.insert(0, "双AI共识开启，但Surf方向终审未启用")
-                c.opportunity_risks = risks[:5]
+                if strict_consensus:
+                    c.opportunity_action = "OBSERVE"
+                    c.opportunity_permission = "OBSERVE"
+                    risks = list(c.opportunity_risks or [])
+                    risks.insert(0, "双AI同向已开启，但Surf方向终审未启用")
+                    c.opportunity_risks = risks[:5]
                 continue
 
+            expected = self._action_direction(c.opportunity_action)
             bias = str(c.surf_ai_bias or "").upper()
             confidence = int(c.surf_ai_confidence or 0)
+            if not strict_consensus:
+                reasons = list(c.opportunity_reasons or [])
+                if bias and bias not in {"NEUTRAL", expected} and confidence >= min_conf:
+                    reasons.insert(0, f"Surf逆向提示: {bias}({confidence})")
+                elif bias == expected and confidence >= min_conf:
+                    reasons.insert(0, f"Surf同向确认: {bias}({confidence})")
+                c.opportunity_reasons = reasons[:5]
+                continue
+
             if bias != expected or confidence < min_conf:
                 c.opportunity_action = "OBSERVE"
                 c.opportunity_permission = "OBSERVE"
@@ -744,7 +770,7 @@ class YaobiScanner:
         ai_required = bool(config_manager.settings.get("YAOBI_AI_REQUIRED_FOR_PERMISSION", True))
         if ai_required:
             for c in queue_candidates:
-                if c.opportunity_action in {"WATCH_LONG", "WATCH_SHORT"} and c.opportunity_permission != "BLOCK":
+                if self._is_watch_action(c.opportunity_action) and c.opportunity_permission != "BLOCK":
                     c.opportunity_permission = "OBSERVE"
                     required = list(c.opportunity_required_confirmation or [])
                     required.insert(0, "等待Gemini方向终审通过后，才允许1m执行")
@@ -790,7 +816,7 @@ class YaobiScanner:
                 if ai_action == "BLOCK" or ai_permission == "BLOCK":
                     c.opportunity_action = "BLOCK"
                     c.opportunity_permission = "BLOCK"
-                elif ai_action in {"WATCH_LONG", "WATCH_SHORT"}:
+                elif self._is_watch_action(ai_action):
                     c.opportunity_action = ai_action
                     c.opportunity_permission = "ALLOW_IF_1M_SIGNAL" if ai_permission == "ALLOW_IF_1M_SIGNAL" else c.opportunity_permission
                 elif ai_required:
@@ -824,7 +850,7 @@ class YaobiScanner:
             allow_cnt,
             observe_cnt,
             block_cnt,
-            "ON" if config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", True) else "OFF",
+            "ON" if config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", False) else "OFF",
         )
 
         queue_candidates.sort(

@@ -1,5 +1,7 @@
 import json
 import asyncio
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -200,7 +202,7 @@ class TestYaobiSources(unittest.TestCase):
             rows = get_opportunity_queue()
 
             self.assertEqual(rows[0]["symbol"], "BAS")
-            self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG")
+            self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG_CONTINUATION")
             self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
         finally:
             config_manager.settings.clear()
@@ -237,7 +239,7 @@ class TestYaobiSources(unittest.TestCase):
                 return {
                     "items": [{
                         "symbol": "BAS",
-                        "action": "WATCH_LONG",
+                        "action": "WATCH_LONG_CONTINUATION",
                         "permission": "ALLOW_IF_1M_SIGNAL",
                         "confidence": 81,
                         "summary": "AI confirms long bias",
@@ -252,7 +254,7 @@ class TestYaobiSources(unittest.TestCase):
                 asyncio.run(scanner._apply_opportunity_queue([c]))
 
             rows = get_opportunity_queue()
-            self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG")
+            self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG_CONTINUATION")
             self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
         finally:
             config_manager.settings.clear()
@@ -294,7 +296,7 @@ class TestYaobiSources(unittest.TestCase):
                 return {
                     "items": [{
                         "symbol": "BAS",
-                        "action": "WATCH_LONG",
+                        "action": "WATCH_LONG_CONTINUATION",
                         "permission": "ALLOW_IF_1M_SIGNAL",
                         "confidence": 81,
                         "summary": "Gemini confirms long bias",
@@ -313,6 +315,62 @@ class TestYaobiSources(unittest.TestCase):
             self.assertEqual(rows[0]["opportunity_action"], "OBSERVE")
             self.assertEqual(rows[0]["opportunity_permission"], "OBSERVE")
             self.assertIn("Surf偏SHORT与Gemini偏LONG不一致", rows[0]["opportunity_risks"][0])
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+            clear_candidates()
+
+    def test_surf_veto_only_keeps_gemini_direction_when_strict_consensus_off(self) -> None:
+        clear_candidates()
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_ENABLED"] = True
+            config_manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"] = True
+            config_manager.settings["YAOBI_DUAL_AI_CONSENSUS_REQUIRED"] = False
+            config_manager.settings["YAOBI_SURF_AI_ENABLED"] = True
+            c = Candidate(
+                symbol="SKR",
+                has_futures=True,
+                score=68,
+                anomaly_score=58,
+                contract_activity_score=72,
+                oi_change_15m_pct=8.5,
+                oi_change_5m_pct=1.1,
+                volume_5m_ratio=0.7,
+                taker_buy_ratio_5m=0.46,
+                price_change_24h=28.0,
+                surf_ai_bias="SHORT",
+                surf_ai_confidence=72,
+                surf_ai_risk_level="LOW",
+                surf_ai_reason="Local flow fades after expansion",
+            )
+            scanner = YaobiScanner()
+            scanner._apply_anomaly_radar([c])
+            scanner._apply_decision_cards([c])
+
+            async def fake_ai(_session, _cands):
+                return {
+                    "items": [{
+                        "symbol": "SKR",
+                        "action": "WATCH_SHORT_FADE",
+                        "permission": "ALLOW_IF_1M_SIGNAL",
+                        "confidence": 79,
+                        "summary": "Use only local fade setup",
+                        "reasons": ["Strong 15m trend but 5m flow weakens"],
+                        "risks": [],
+                        "required_confirmation": ["only allow local squeeze fade, not breakout chase"],
+                    }],
+                    "status": {"last_reason": "ok", "last_provider": "gemini"},
+                }
+
+            with patch("scanner.yaobi_scanner._surf_enabled", return_value=True):
+                with patch("scanner.yaobi_scanner.analyze_opportunities", fake_ai):
+                    asyncio.run(scanner._apply_opportunity_queue([c]))
+
+            rows = get_opportunity_queue()
+            self.assertEqual(rows[0]["opportunity_action"], "WATCH_SHORT_FADE")
+            self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
         finally:
             config_manager.settings.clear()
             config_manager.settings.update(orig)
@@ -361,7 +419,7 @@ class TestYaobiSources(unittest.TestCase):
             long_account_pct=61.0,
             surf_news_sentiment="positive",
             surf_news_titles=["Protocol upgrade scheduled"],
-            opportunity_action="WATCH_LONG",
+            opportunity_action="WATCH_LONG_CONTINUATION",
             opportunity_score=74,
         )
 
@@ -373,6 +431,47 @@ class TestYaobiSources(unittest.TestCase):
         self.assertEqual(payload["surf_news_sentiment"], "positive")
         self.assertEqual(payload["rule_bias"], "LONG")
         self.assertIn("lesson_stats", payload)
+
+    def test_ai_gateway_reuses_last_success_during_min_interval(self) -> None:
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        old_usage = ai_gateway._USAGE_FILE
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                usage_path = os.path.join(tmp, "usage.json")
+                ai_gateway._USAGE_FILE = usage_path
+                config_manager.settings["YAOBI_AI_ENABLED"] = True
+                config_manager.settings["YAOBI_AI_MIN_INTERVAL_MINUTES"] = 15
+                config_manager.settings["YAOBI_AI_CACHE_TTL_MINUTES"] = 30
+                ai_gateway._save_json(usage_path, {
+                    "_meta": {"last_call_ts": ai_gateway.time.time()},
+                    ai_gateway._LATEST_SUCCESS_KEY: {
+                        "ts": ai_gateway.time.time(),
+                        "provider": "gemini",
+                        "items": [{
+                            "symbol": "SKR",
+                            "action": "WATCH_SHORT_FADE",
+                            "permission": "ALLOW_IF_1M_SIGNAL",
+                            "confidence": 81,
+                            "summary": "reuse",
+                            "reasons": ["cached"],
+                            "risks": [],
+                            "required_confirmation": ["wait 1m fade signal"],
+                        }],
+                    },
+                })
+                c = Candidate(symbol="SKR", opportunity_action="OBSERVE")
+
+                with patch("scanner.ai_gateway.ai_credentials_status", return_value={"enabled": True}):
+                    result = asyncio.run(ai_gateway.analyze_opportunities(None, [c]))
+
+                self.assertEqual(result["status"]["last_reason"], "min_interval_reuse")
+                self.assertEqual(result["items"][0]["action"], "WATCH_SHORT_FADE")
+                self.assertEqual(result["items"][0]["provider"], "gemini")
+        finally:
+            ai_gateway._USAGE_FILE = old_usage
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
 
     def test_gemini_request_body_enforces_json_schema(self) -> None:
         body = ai_gateway._gemini_request_body("sys", '{"k":1}', 512)

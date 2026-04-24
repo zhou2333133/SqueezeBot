@@ -135,7 +135,7 @@ class Candidate:
     # ── AI/机会队列（只作上游筛选，不直接下单）──────────────────────────────
     opportunity_rank:       int  = 0
     opportunity_score:      int  = 0
-    opportunity_action:     str  = "OBSERVE"  # WATCH_LONG / WATCH_SHORT / OBSERVE / BLOCK
+    opportunity_action:     str  = "OBSERVE"  # WATCH_*_CONTINUATION / WATCH_*_FADE / OBSERVE / BLOCK
     opportunity_permission: str  = "OBSERVE"  # ALLOW_IF_1M_SIGNAL / OBSERVE / BLOCK
     opportunity_confidence: int  = 0
     opportunity_reasons:    list = field(default_factory=list)

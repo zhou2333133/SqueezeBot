@@ -227,7 +227,7 @@ class TestScalpEngine(unittest.TestCase):
         bot.candidate_meta["BASUSDT"] = {
             "yaobi_context": True,
             "yaobi_decision_action": "观察",
-            "yaobi_opportunity_action": "WATCH_LONG",
+            "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
             "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
             "yaobi_opportunity_rank": 1,
         }
@@ -238,6 +238,25 @@ class TestScalpEngine(unittest.TestCase):
         self.assertIn("禁止反向追空", reason)
 
         ok, _ = bot._yaobi_entry_guard("BASUSDT", "LONG")
+
+        self.assertTrue(ok)
+
+    def test_fade_permission_blocks_breakout_chase(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["SKRUSDT"] = {
+            "yaobi_context": True,
+            "yaobi_decision_action": "观察",
+            "yaobi_opportunity_action": "WATCH_SHORT_FADE",
+            "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+            "yaobi_opportunity_rank": 1,
+        }
+
+        ok, reason = bot._yaobi_entry_guard("SKRUSDT", "SHORT", "动能突破空")
+
+        self.assertFalse(ok)
+        self.assertIn("FADE许可", reason)
+
+        ok, _ = bot._yaobi_entry_guard("SKRUSDT", "SHORT", "轧多猎杀空")
 
         self.assertTrue(ok)
 
@@ -323,7 +342,7 @@ class TestScalpEngine(unittest.TestCase):
             score=82,
             anomaly_score=44,
             decision_action="允许交易",
-            opportunity_action="WATCH_LONG",
+            opportunity_action="WATCH_LONG_CONTINUATION",
             opportunity_permission="ALLOW_IF_1M_SIGNAL",
             opportunity_rank=1,
             price_usd=1.23,
@@ -351,7 +370,7 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_score": 75,
             "yaobi_decision_action": "允许交易",
             "yaobi_oi_trend_grade": "A",
-            "yaobi_opportunity_action": "WATCH_LONG",
+            "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
             "yaobi_opportunity_score": 81,
             "scalp_candidate_seen_price": 1.0,
             "scalp_candidate_seen_ts": 1.0,
@@ -377,7 +396,7 @@ class TestScalpEngine(unittest.TestCase):
 
         self.assertTrue(ctx["yaobi_context"])
         self.assertEqual(ctx["yaobi_score"], 75)
-        self.assertEqual(ctx["yaobi_opportunity_action"], "WATCH_LONG")
+        self.assertEqual(ctx["yaobi_opportunity_action"], "WATCH_LONG_CONTINUATION")
         self.assertEqual(ctx["yaobi_opportunity_score"], 81)
         self.assertEqual(ctx["candidate_sources"], ["binance_24h", "yaobi_shared"])
         self.assertAlmostEqual(ctx["scalp_candidate_max_up_pct"], 12.0, places=3)

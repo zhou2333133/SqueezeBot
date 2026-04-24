@@ -1177,13 +1177,13 @@
                   <input type="checkbox" name="YAOBI_DUAL_AI_CONSENSUS_REQUIRED" :checked="cfg.YAOBI_DUAL_AI_CONSENSUS_REQUIRED!==false" @change="cfg.YAOBI_DUAL_AI_CONSENSUS_REQUIRED=$event.target.checked">
                   <span class="ttrack"></span>
                 </label>
-                <span class="text-sm text-gray-400">双 AI 同向共识</span>
+                <span class="text-sm text-gray-400">Surf 方向也必须同向</span>
               </label>
               <div><label class="text-xs text-gray-500">Surf方向最低置信度</label>
                 <input class="inp mt-1" type="number" name="YAOBI_SURF_DIRECTION_MIN_CONFIDENCE" :value="cfg.YAOBI_SURF_DIRECTION_MIN_CONFIDENCE??55" style="border-color:#1a3a2a"></div>
             </div>
             <div class="mt-2 text-[11px] text-gray-600 leading-relaxed">
-              Surf 现在会批量审查 Top N，并输出方向+风险；双 AI 共识开启后，Gemini 与 Surf 同向才会给 1m 自动执行许可。
+              默认由 Gemini 主判方向，Surf 只做高风险 veto；打开这个开关后，才要求 Surf 方向也和 Gemini 同向。
             </div>
             <div class="mt-3">
               <label class="text-xs text-gray-500">监控链 (逗号分隔)</label>
@@ -2339,14 +2339,16 @@ function app() {
       return hasKey ? 'Ready' : 'No Key'
     },
     opportunityLabel(action) {
-      if(action==='WATCH_LONG') return '看多'
-      if(action==='WATCH_SHORT') return '看空'
+      if(action==='WATCH_LONG' || action==='WATCH_LONG_CONTINUATION') return '顺势多'
+      if(action==='WATCH_SHORT' || action==='WATCH_SHORT_CONTINUATION') return '顺势空'
+      if(action==='WATCH_LONG_FADE') return '反打多'
+      if(action==='WATCH_SHORT_FADE') return '反打空'
       if(action==='BLOCK') return '拦截'
       return '观察'
     },
     opportunityClass(action) {
-      if(action==='WATCH_LONG') return 'op-side-long'
-      if(action==='WATCH_SHORT') return 'op-side-short'
+      if((action||'').startsWith('WATCH_LONG')) return 'op-side-long'
+      if((action||'').startsWith('WATCH_SHORT')) return 'op-side-short'
       if(action==='BLOCK') return 'op-side-block'
       return 'op-side-observe'
     },

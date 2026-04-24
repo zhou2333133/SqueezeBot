@@ -159,7 +159,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042403
+    PROFILE_VERSION = 2026042404
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -237,7 +237,7 @@ class ConfigManager:
         "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
         "YAOBI_AI_ENABLED": True,
         "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
-        "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": True,
+        "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": False,
         "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": 55,
         "YAOBI_AI_PROVIDER_PRIORITY": "gemini,openai,anthropic",
         "YAOBI_AI_MODEL_OPENAI": "gpt-4o-mini",
@@ -437,7 +437,7 @@ class ConfigManager:
             "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
             "YAOBI_AI_ENABLED":           True,
             "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
-            "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": True,
+            "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": False,
             "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": 55,
             "YAOBI_AI_PROVIDER_PRIORITY": "gemini,openai,anthropic",
             "YAOBI_AI_MODEL_OPENAI":      "gpt-4o-mini",

@@ -345,9 +345,9 @@ class BinanceScalpBot:
 
     def _yaobi_direction_bias(self, ctx: dict) -> str:
         action = str(ctx.get("yaobi_opportunity_action") or "")
-        if action == "WATCH_LONG":
+        if self._yaobi_action_direction(action) == "LONG":
             return "LONG_ONLY"
-        if action == "WATCH_SHORT":
+        if self._yaobi_action_direction(action) == "SHORT":
             return "SHORT_ONLY"
         sentiment = str(ctx.get("yaobi_sentiment_label") or "").lower()
         if sentiment == "bullish":
@@ -355,6 +355,24 @@ class BinanceScalpBot:
         if sentiment == "bearish":
             return "SHORT_ONLY"
         return "ANY"
+
+    @staticmethod
+    def _yaobi_action_direction(action: str) -> str:
+        raw = str(action or "").upper()
+        if raw in {"WATCH_LONG", "WATCH_LONG_CONTINUATION", "WATCH_LONG_FADE"}:
+            return "LONG"
+        if raw in {"WATCH_SHORT", "WATCH_SHORT_CONTINUATION", "WATCH_SHORT_FADE"}:
+            return "SHORT"
+        return ""
+
+    @staticmethod
+    def _yaobi_action_style(action: str) -> str:
+        raw = str(action or "").upper()
+        if raw.endswith("_FADE"):
+            return "FADE"
+        if raw in {"WATCH_LONG", "WATCH_SHORT"} or raw.endswith("_CONTINUATION"):
+            return "CONTINUATION"
+        return ""
 
     def _build_candidates_from_yaobi_context(self, contexts: dict[str, dict], watchlist: set[str] | None = None) -> dict[str, dict]:
         candidates: dict[str, dict] = {}
@@ -470,7 +488,7 @@ class BinanceScalpBot:
         if seen_ts > 0:
             meta["scalp_candidate_elapsed_min"] = round((time.monotonic() - seen_ts) / 60, 2)
 
-    def _yaobi_entry_guard(self, symbol: str, direction: str) -> tuple[bool, str]:
+    def _yaobi_entry_guard(self, symbol: str, direction: str, signal_label: str = "") -> tuple[bool, str]:
         if not self.cfg.get("SCALP_USE_YAOBI_CONTEXT", True):
             return True, ""
         meta = self.candidate_meta.get(symbol, {})
@@ -495,16 +513,21 @@ class BinanceScalpBot:
             op_action = str(meta.get("yaobi_opportunity_action") or "")
             op_permission = str(meta.get("yaobi_opportunity_permission") or "")
             op_rank = int(meta.get("yaobi_opportunity_rank", 0) or 0)
+            op_dir = self._yaobi_action_direction(op_action)
+            op_style = self._yaobi_action_style(op_action)
+            is_breakout = "动能突破" in str(signal_label or "")
             if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_QUEUE", False) and not op_rank:
                 return False, "未进入妖币机会队列Top名单"
             if op_action == "BLOCK" or op_permission == "BLOCK":
                 return False, f"机会队列BLOCK: {meta.get('yaobi_intelligence_summary') or meta.get('yaobi_opportunity_risks')}"
             if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_PERMISSION", True) and op_permission != "ALLOW_IF_1M_SIGNAL":
                 return False, f"机会队列未给自动执行许可: {op_action or 'OBSERVE'}"
-            if op_action == "WATCH_LONG" and direction == "SHORT":
-                return False, "机会队列只允许等待多头1m确认，禁止反向追空"
-            if op_action == "WATCH_SHORT" and direction == "LONG":
-                return False, "机会队列只允许等待空头1m确认，禁止反向追多"
+            if op_dir == "LONG" and direction == "SHORT":
+                return False, "机会队列当前只允许做多模板，禁止反向追空"
+            if op_dir == "SHORT" and direction == "LONG":
+                return False, "机会队列当前只允许做空模板，禁止反向追多"
+            if op_style == "FADE" and is_breakout:
+                return False, "FADE许可只允许顶部/底部反打，不做1m突破追单"
 
         if self.cfg.get("SCALP_YAOBI_FUNDING_OI_GUARD", True):
             grade = str(meta.get("yaobi_oi_trend_grade") or "").upper()
@@ -1705,7 +1728,7 @@ class BinanceScalpBot:
                            symbol, self.daily_realized_r, daily_drawdown_r, max_daily_r)
             return
 
-        yaobi_ok, yaobi_reason = self._yaobi_entry_guard(symbol, direction)
+        yaobi_ok, yaobi_reason = self._yaobi_entry_guard(symbol, direction, signal_label)
         if not yaobi_ok:
             self._fstat["yaobi_block"] += 1
             self._signal_cooldown[symbol] = time.monotonic()
