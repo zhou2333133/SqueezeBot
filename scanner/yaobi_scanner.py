@@ -755,6 +755,16 @@ class YaobiScanner:
             async with aiohttp.ClientSession(trust_env=True) as session:
                 ai_result = await analyze_opportunities(session, queue_candidates[:ai_top])
             ai_status = ai_result.get("status", ai_status)
+            logger.info(
+                "🔍 Gemini终审: top=%d | reason=%s | provider=%s | calls=%s | budget_left=%s",
+                ai_top,
+                ai_status.get("last_reason", ""),
+                ai_status.get("last_provider", ""),
+                (ai_status.get("usage") or {}).get("calls", 0),
+                ai_status.get("budget_left_usd", ""),
+            )
+            if ai_status.get("last_error"):
+                logger.warning("🔍 Gemini终审失败细节: %s", ai_status.get("last_error"))
             ai_by_symbol = {
                 str(item.get("symbol", "")).upper().replace("USDT", ""): item
                 for item in ai_result.get("items", [])
@@ -804,6 +814,18 @@ class YaobiScanner:
                         c.intelligence_summary = ("未进入Gemini终审TopN；" + summary).strip("；")
 
         self._apply_dual_ai_consensus(queue_candidates)
+
+        allow_cnt = sum(1 for c in queue_candidates if c.opportunity_permission == "ALLOW_IF_1M_SIGNAL")
+        block_cnt = sum(1 for c in queue_candidates if c.opportunity_permission == "BLOCK")
+        observe_cnt = max(0, len(queue_candidates) - allow_cnt - block_cnt)
+        logger.info(
+            "🔍 机会队列结果: 候选%d | AI许可%d | 观察%d | Block%d | 双AI=%s",
+            len(queue_candidates),
+            allow_cnt,
+            observe_cnt,
+            block_cnt,
+            "ON" if config_manager.settings.get("YAOBI_DUAL_AI_CONSENSUS_REQUIRED", True) else "OFF",
+        )
 
         queue_candidates.sort(
             key=lambda c: (
