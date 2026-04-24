@@ -159,7 +159,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042401
+    PROFILE_VERSION = 2026042402
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -168,6 +168,7 @@ class ConfigManager:
         "SCALP_TP2_RATIO": 0.30,
         "SCALP_TP3_TRAIL_PCT": 8.0,
         "SCALP_CANDIDATE_LIMIT": 40,
+        "SCALP_CANDIDATE_SOURCE_MODE": "YAOBI_ONLY",
         "SCALP_MAX_DAILY_LOSS_USDT": 200.0,
         "SCALP_MAX_DAILY_LOSS_R": 10.0,
         "SCALP_TP1_RR": 1.2,
@@ -206,6 +207,7 @@ class ConfigManager:
         "SCALP_SURF_ENTRY_AI_ENABLED": False,
         "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": 80.0,
         "SCALP_USE_YAOBI_CONTEXT": True,
+        "SCALP_REQUIRE_YAOBI_CONTEXT": True,
         "SCALP_YAOBI_CONTEXT_TOP_N": 30,
         "SCALP_YAOBI_MIN_SCORE": 30,
         "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
@@ -222,8 +224,8 @@ class ConfigManager:
         "YAOBI_SURF_NEWS_ENABLED": False,
         "YAOBI_SURF_NEWS_TOP_N": 20,
         "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
-        "YAOBI_SURF_AI_ENABLED": False,
-        "YAOBI_SURF_TOP_N": 1,
+        "YAOBI_SURF_AI_ENABLED": True,
+        "YAOBI_SURF_TOP_N": 3,
         "YAOBI_OKX_HOT_LIMIT": 50,
         "YAOBI_OKX_HEAVY_TOP_N": 40,
         "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
@@ -233,11 +235,12 @@ class ConfigManager:
         "YAOBI_OPPORTUNITY_TOP_N": 6,
         "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
         "YAOBI_AI_ENABLED": True,
+        "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
         "YAOBI_AI_PROVIDER_PRIORITY": "gemini,openai,anthropic",
         "YAOBI_AI_MODEL_OPENAI": "gpt-4o-mini",
         "YAOBI_AI_MODEL_GEMINI": "gemini-2.5-flash",
         "YAOBI_AI_MODEL_ANTHROPIC": "claude-3-5-haiku-latest",
-        "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 8,
+        "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
         "YAOBI_AI_TOP_OUTPUT": 6,
         "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
         "YAOBI_AI_CACHE_TTL_MINUTES": 30,
@@ -340,6 +343,7 @@ class ConfigManager:
             "SCALP_TP3_TRAIL_PCT":       8.0,
             "SCALP_WATCHLIST":           "",
             "SCALP_CANDIDATE_LIMIT":     40,
+            "SCALP_CANDIDATE_SOURCE_MODE": "YAOBI_ONLY",
             "SCALP_PAPER_TRADE":         False,
             "MANUAL_REAL_TRADE_ENABLED": False,
             # ── 动态止损 & 风控 ───────────────────────────────────────────────
@@ -386,6 +390,7 @@ class ConfigManager:
             "SCALP_SURF_ENTRY_AI_ENABLED": False,
             "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": 80.0,
             "SCALP_USE_YAOBI_CONTEXT":    True,
+            "SCALP_REQUIRE_YAOBI_CONTEXT": True,
             "SCALP_YAOBI_CONTEXT_TOP_N":  30,
             "SCALP_YAOBI_MIN_SCORE":      30,
             "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
@@ -411,8 +416,8 @@ class ConfigManager:
             "YAOBI_SURF_NEWS_ENABLED":   False,
             "YAOBI_SURF_NEWS_TOP_N":     20,
             "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
-            "YAOBI_SURF_AI_ENABLED":     False,
-            "YAOBI_SURF_TOP_N":          1,
+            "YAOBI_SURF_AI_ENABLED":     True,
+            "YAOBI_SURF_TOP_N":          3,
             "YAOBI_SQUARE_ENABLED":      True,
             "YAOBI_SQUARE_ROWS":         50,
             "YAOBI_OKX_ENABLED":         True,
@@ -426,11 +431,12 @@ class ConfigManager:
             "YAOBI_OPPORTUNITY_TOP_N":    6,
             "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
             "YAOBI_AI_ENABLED":           True,
+            "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
             "YAOBI_AI_PROVIDER_PRIORITY": "gemini,openai,anthropic",
             "YAOBI_AI_MODEL_OPENAI":      "gpt-4o-mini",
             "YAOBI_AI_MODEL_GEMINI":      "gemini-2.5-flash",
             "YAOBI_AI_MODEL_ANTHROPIC":   "claude-3-5-haiku-latest",
-            "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 8,
+            "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
             "YAOBI_AI_TOP_OUTPUT":        6,
             "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
             "YAOBI_AI_CACHE_TTL_MINUTES": 30,

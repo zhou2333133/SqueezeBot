@@ -682,6 +682,15 @@ class YaobiScanner:
         )
 
         ai_status = ai_provider_status()
+        ai_required = bool(config_manager.settings.get("YAOBI_AI_REQUIRED_FOR_PERMISSION", True))
+        if ai_required:
+            for c in queue_candidates:
+                if c.opportunity_action in {"WATCH_LONG", "WATCH_SHORT"} and c.opportunity_permission != "BLOCK":
+                    c.opportunity_permission = "OBSERVE"
+                    required = list(c.opportunity_required_confirmation or [])
+                    required.insert(0, "等待Gemini方向终审通过后，才允许1m执行")
+                    c.opportunity_required_confirmation = required[:5]
+
         if config_manager.settings.get("YAOBI_AI_ENABLED", False) and queue_candidates:
             ai_top = int(config_manager.settings.get("YAOBI_AI_MAX_SYMBOLS_PER_RUN", 12) or 12)
             async with aiohttp.ClientSession(trust_env=True) as session:
@@ -715,7 +724,25 @@ class YaobiScanner:
                 elif ai_action in {"WATCH_LONG", "WATCH_SHORT"}:
                     c.opportunity_action = ai_action
                     c.opportunity_permission = "ALLOW_IF_1M_SIGNAL" if ai_permission == "ALLOW_IF_1M_SIGNAL" else c.opportunity_permission
+                elif ai_required:
+                    c.opportunity_action = "OBSERVE"
+                    c.opportunity_permission = "OBSERVE"
                 c.opportunity_score = max(c.opportunity_score, min(100, c.opportunity_confidence))
+
+            if ai_required:
+                reviewed = set(ai_by_symbol)
+                for c in queue_candidates:
+                    key = c.symbol.upper().replace("USDT", "")
+                    if key in reviewed or c.opportunity_permission == "BLOCK":
+                        continue
+                    c.opportunity_action = "OBSERVE"
+                    c.opportunity_permission = "OBSERVE"
+                    risks = list(c.opportunity_risks or [])
+                    risks.insert(0, "未进入Gemini终审TopN，先观察")
+                    c.opportunity_risks = risks[:5]
+                    summary = c.intelligence_summary or ""
+                    if "Gemini终审" not in summary:
+                        c.intelligence_summary = ("未进入Gemini终审TopN；" + summary).strip("；")
 
         queue_candidates.sort(
             key=lambda c: (

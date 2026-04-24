@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 
 from bot_scalp import BinanceScalpBot, ScalpPosition
@@ -12,6 +13,7 @@ class TestScalpEngine(unittest.TestCase):
         config_manager.settings.update({
             "FEE_RATE_PER_SIDE": 0.0004,
             "SLIPPAGE_RATE_PER_SIDE": 0.0005,
+            "SCALP_CANDIDATE_SOURCE_MODE": "YAOBI_ONLY",
             "BREAKOUT_MIN_PCT": 0.15,
             "BREAKOUT_ATR_MULT": 0.7,
             "BREAKOUT_ATR_MIN_PCT": 0.50,
@@ -24,6 +26,7 @@ class TestScalpEngine(unittest.TestCase):
             "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
             "SCALP_TP3_AGGRESSIVE_RUNNER": True,
             "SCALP_USE_YAOBI_CONTEXT": True,
+            "SCALP_REQUIRE_YAOBI_CONTEXT": True,
             "SCALP_YAOBI_CONTEXT_TOP_N": 30,
             "SCALP_YAOBI_MIN_SCORE": 30,
             "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
@@ -211,6 +214,14 @@ class TestScalpEngine(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("禁止追空", reason)
 
+    def test_b_mode_requires_yaobi_context(self) -> None:
+        bot = BinanceScalpBot()
+
+        ok, reason = bot._yaobi_entry_guard("BTCUSDT", "LONG")
+
+        self.assertFalse(ok)
+        self.assertIn("必须有妖币扫描上下文", reason)
+
     def test_opportunity_guard_blocks_conflicting_direction(self) -> None:
         bot = BinanceScalpBot()
         bot.candidate_meta["BASUSDT"] = {
@@ -304,6 +315,29 @@ class TestScalpEngine(unittest.TestCase):
         self.assertTrue(candidates["BASUSDT"]["yaobi_context"])
         self.assertEqual(candidates["BASUSDT"]["yaobi_score"], 82)
         self.assertEqual(candidates["BASUSDT"]["yaobi_address"], "0xabc")
+
+    def test_refresh_candidates_uses_yaobi_only_source_in_b_mode(self) -> None:
+        upsert_candidate(Candidate(
+            symbol="BAS",
+            has_futures=True,
+            score=82,
+            anomaly_score=44,
+            decision_action="允许交易",
+            opportunity_action="WATCH_LONG",
+            opportunity_permission="ALLOW_IF_1M_SIGNAL",
+            opportunity_rank=1,
+            price_usd=1.23,
+            price_change_24h=18.4,
+        ))
+        bot = BinanceScalpBot()
+        bot.monitored_symbols = ["BASUSDT", "ETHUSDT"]
+
+        asyncio.run(bot._do_refresh_candidates())
+
+        self.assertEqual(bot.candidate_symbols, ["BASUSDT"])
+        self.assertTrue(bot.candidate_meta["BASUSDT"]["yaobi_context"])
+        self.assertEqual(bot.candidate_meta["BASUSDT"]["candidate_sources"], ["yaobi_scanner"])
+        self.assertEqual(bot.candidate_meta["BASUSDT"]["direction_bias"], "LONG_ONLY")
 
     def test_entry_context_includes_candidate_path_and_yaobi_context(self) -> None:
         bot = BinanceScalpBot()

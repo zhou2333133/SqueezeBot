@@ -233,6 +233,7 @@ class BinanceScalpBot:
             "yaobi_decision_reasons": list(c.get("decision_reasons", []) or [])[:5],
             "yaobi_decision_risks": list(c.get("decision_risks", []) or [])[:5],
             "yaobi_decision_note": c.get("decision_note", ""),
+            "yaobi_surf_news_sentiment": c.get("surf_news_sentiment", ""),
             "yaobi_sentiment_label": c.get("sentiment_label", ""),
             "yaobi_sentiment_score": int(c.get("sentiment_score", 0) or 0),
             "yaobi_sentiment_heat": int(c.get("sentiment_heat", 0) or 0),
@@ -269,6 +270,7 @@ class BinanceScalpBot:
             "yaobi_price_change_1h": self._as_float(c.get("price_change_1h")),
             "yaobi_price_change_4h": self._as_float(c.get("price_change_4h")),
             "yaobi_price_change_24h": self._as_float(c.get("price_change_24h")),
+            "yaobi_volume_24h": self._as_float(c.get("volume_24h")),
             "yaobi_opportunity_rank": int(c.get("opportunity_rank", 0) or 0),
             "yaobi_opportunity_score": int(c.get("opportunity_score", 0) or 0),
             "yaobi_opportunity_action": c.get("opportunity_action", ""),
@@ -298,7 +300,7 @@ class BinanceScalpBot:
         min_score = int(self.cfg.get("SCALP_YAOBI_MIN_SCORE", 30) or 0)
         min_anomaly = int(self.cfg.get("SCALP_YAOBI_MIN_ANOMALY_SCORE", 35) or 0)
         monitored = set(self.monitored_symbols)
-        selected: list[tuple[int, int, str, dict]] = []
+        selected: list[tuple[int, int, int, int, int, str, dict]] = []
 
         for c in items:
             if not c.get("has_futures"):
@@ -311,23 +313,63 @@ class BinanceScalpBot:
             action = str(c.get("decision_action", "") or "")
             op_score = int(c.get("opportunity_score", 0) or 0)
             op_permission = str(c.get("opportunity_permission", "") or "")
+            op_rank = int(c.get("opportunity_rank", 0) or 0)
             if (score < min_score
                     and anomaly < min_anomaly
                     and action not in ("允许交易", "等待确认", "禁止交易")
                     and op_permission not in ("ALLOW_IF_1M_SIGNAL", "BLOCK")
                     and op_score < min_anomaly):
                 continue
-            selected.append((max(score, op_score), anomaly, symbol, c))
+            selected.append((
+                1 if op_permission == "ALLOW_IF_1M_SIGNAL" else 0,
+                1 if op_rank > 0 else 0,
+                op_score,
+                score,
+                anomaly,
+                symbol,
+                c,
+            ))
 
-        selected.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        selected.sort(key=lambda x: (x[0], x[1], x[2], x[3], x[4]), reverse=True)
         contexts: dict[str, dict] = {}
-        for _, _, symbol, c in selected:
+        for _, _, _, _, _, symbol, c in selected:
             if symbol in contexts:
                 continue
             contexts[symbol] = self._yaobi_context_from_candidate(c)
             if len(contexts) >= top_n:
                 break
         return contexts
+
+    def _yaobi_direction_bias(self, ctx: dict) -> str:
+        action = str(ctx.get("yaobi_opportunity_action") or "")
+        if action == "WATCH_LONG":
+            return "LONG_ONLY"
+        if action == "WATCH_SHORT":
+            return "SHORT_ONLY"
+        sentiment = str(ctx.get("yaobi_sentiment_label") or "").lower()
+        if sentiment == "bullish":
+            return "LONG_ONLY"
+        if sentiment == "bearish":
+            return "SHORT_ONLY"
+        return "ANY"
+
+    def _build_candidates_from_yaobi_context(self, contexts: dict[str, dict], watchlist: set[str] | None = None) -> dict[str, dict]:
+        candidates: dict[str, dict] = {}
+        watchlist = watchlist or set()
+        for i, (symbol, ctx) in enumerate(contexts.items(), 1):
+            if watchlist and symbol not in watchlist:
+                continue
+            candidates[symbol] = {
+                "change_24h": self._as_float(ctx.get("yaobi_price_change_24h")),
+                "volume_24h": self._as_float(ctx.get("yaobi_volume_24h")),
+                "rank": i,
+                "direction_bias": self._yaobi_direction_bias(ctx),
+                "news_sentiment": str(ctx.get("yaobi_surf_news_sentiment") or "neutral") or "neutral",
+                "last_price": self._as_float(ctx.get("yaobi_price_usd")),
+                "candidate_sources": ["yaobi_scanner"],
+            }
+            candidates[symbol].update(ctx)
+        return candidates
 
     def _merge_yaobi_context(
         self,
@@ -429,6 +471,8 @@ class BinanceScalpBot:
         if not self.cfg.get("SCALP_USE_YAOBI_CONTEXT", True):
             return True, ""
         meta = self.candidate_meta.get(symbol, {})
+        if self.cfg.get("SCALP_REQUIRE_YAOBI_CONTEXT", True) and not meta.get("yaobi_context"):
+            return False, "B模式要求必须有妖币扫描上下文"
         if not meta.get("yaobi_context"):
             return True, ""
 
@@ -551,27 +595,60 @@ class BinanceScalpBot:
           - 涨跌幅偏置标记（SHORT_ONLY / LONG_ONLY / ANY）
         """
         cfg = self.cfg
+        yaobi_only = str(cfg.get("SCALP_CANDIDATE_SOURCE_MODE", "YAOBI_ONLY") or "").upper() == "YAOBI_ONLY"
         custom = cfg.get("SCALP_WATCHLIST", "").strip()
         if custom:
             syms = [s.strip().upper() for s in custom.split(",") if s.strip()]
-            candidates = {
-                s: {
-                    "change_24h": 0.0,
-                    "volume_24h": 0.0,
-                    "rank": i + 1,
-                    "direction_bias": "ANY",
-                    "news_sentiment": self.candidate_meta.get(s, {}).get("news_sentiment", "neutral"),
-                    "candidate_sources": ["manual_watchlist"],
+            watchset = set(syms)
+            if yaobi_only:
+                contexts = self._load_yaobi_futures_context()
+                candidates = self._build_candidates_from_yaobi_context(contexts, watchset)
+                yb_stats = {
+                    "available": len(contexts),
+                    "merged": len(candidates),
+                    "added": 0,
+                    "blocked": sum(1 for m in candidates.values() if str(m.get("yaobi_decision_action") or "") == "禁止交易"),
                 }
-                for i, s in enumerate(syms)
-            }
-            yb_stats = self._merge_yaobi_context(candidates, allow_add=False)
+            else:
+                candidates = {
+                    s: {
+                        "change_24h": 0.0,
+                        "volume_24h": 0.0,
+                        "rank": i + 1,
+                        "direction_bias": "ANY",
+                        "news_sentiment": self.candidate_meta.get(s, {}).get("news_sentiment", "neutral"),
+                        "candidate_sources": ["manual_watchlist"],
+                    }
+                    for i, s in enumerate(syms)
+                }
+                yb_stats = self._merge_yaobi_context(candidates, allow_add=False)
             self._prepare_candidate_path_meta(candidates)
             self.candidate_symbols = list(candidates.keys())
             self.candidate_meta    = candidates
             await self._sync_ws_subscriptions()
-            if yb_stats["merged"]:
+            if yaobi_only:
+                logger.info("⚡ 候选币(妖币模式/自选): %d个 | 可用%d个 | 禁入%d个",
+                            len(candidates), yb_stats["available"], yb_stats["blocked"])
+            elif yb_stats["merged"]:
                 logger.info("⚡ 妖币共享: 自选池已补充 %d 个候选上下文", yb_stats["merged"])
+            return
+
+        if yaobi_only:
+            contexts = self._load_yaobi_futures_context()
+            candidates = self._build_candidates_from_yaobi_context(contexts)
+            self._prepare_candidate_path_meta(candidates)
+            self.candidate_symbols = list(candidates.keys())
+            self.candidate_meta = candidates
+            await self._sync_ws_subscriptions()
+            allow_cnt = sum(1 for m in candidates.values() if str(m.get("yaobi_opportunity_permission") or "") == "ALLOW_IF_1M_SIGNAL")
+            block_cnt = sum(1 for m in candidates.values() if str(m.get("yaobi_opportunity_permission") or "") == "BLOCK")
+            logger.info(
+                "⚡ 候选币(妖币模式): %d个 | AI许可%d个 | 观察%d个 | Block%d个",
+                len(candidates),
+                allow_cnt,
+                max(0, len(candidates) - allow_cnt - block_cnt),
+                block_cnt,
+            )
             return
 
         try:

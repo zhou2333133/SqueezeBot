@@ -1,4 +1,6 @@
+import asyncio
 import unittest
+from unittest.mock import patch
 
 from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, get_opportunity_queue, upsert_candidate
 from scanner.sources import binance_futures, binance_square, okx_market, surf_api
@@ -169,7 +171,11 @@ class TestYaobiSources(unittest.TestCase):
 
     def test_opportunity_queue_prefers_short_term_confirmed_direction(self) -> None:
         clear_candidates()
+        from config import config_manager
+        orig = config_manager.settings.copy()
         try:
+            config_manager.settings["YAOBI_AI_ENABLED"] = False
+            config_manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"] = False
             c = Candidate(
                 symbol="BAS",
                 has_futures=True,
@@ -195,6 +201,59 @@ class TestYaobiSources(unittest.TestCase):
             self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG")
             self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
         finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+            clear_candidates()
+
+    def test_ai_required_permission_keeps_rule_watch_in_observe_until_ai_approves(self) -> None:
+        clear_candidates()
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_ENABLED"] = True
+            config_manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"] = True
+            config_manager.settings["YAOBI_AI_MAX_SYMBOLS_PER_RUN"] = 1
+            c = Candidate(
+                symbol="BAS",
+                has_futures=True,
+                score=62,
+                anomaly_score=55,
+                contract_activity_score=70,
+                oi_change_15m_pct=5.2,
+                oi_change_5m_pct=1.4,
+                volume_5m_ratio=2.8,
+                taker_buy_ratio_5m=0.64,
+                funding_rate_pct=-0.07,
+                retail_short_pct=68,
+            )
+            scanner = YaobiScanner()
+            scanner._apply_anomaly_radar([c])
+            scanner._apply_decision_cards([c])
+
+            async def fake_ai(_session, _cands):
+                return {
+                    "items": [{
+                        "symbol": "BAS",
+                        "action": "WATCH_LONG",
+                        "permission": "ALLOW_IF_1M_SIGNAL",
+                        "confidence": 81,
+                        "summary": "AI confirms long bias",
+                        "reasons": ["OI/taker aligned"],
+                        "risks": [],
+                        "required_confirmation": ["wait for local 1m breakout"],
+                    }],
+                    "status": {"last_reason": "ok", "last_provider": "gemini"},
+                }
+
+            with patch("scanner.yaobi_scanner.analyze_opportunities", fake_ai):
+                asyncio.run(scanner._apply_opportunity_queue([c]))
+
+            rows = get_opportunity_queue()
+            self.assertEqual(rows[0]["opportunity_action"], "WATCH_LONG")
+            self.assertEqual(rows[0]["opportunity_permission"], "ALLOW_IF_1M_SIGNAL")
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
             clear_candidates()
 
     def test_anomaly_candidates_sorted_by_anomaly_score(self) -> None:

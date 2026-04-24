@@ -292,13 +292,13 @@
                   <span class="ttrack"></span>
                 </label>
                 <div>
-                  <span class="text-sm text-green-300">接入妖币候选</span>
-                  <div class="text-xs text-gray-600 mt-0.5">有币安合约的妖币候选会进入超短线共享上下文。</div>
+                  <span class="text-sm text-green-300">妖币扫描选币</span>
+                  <div class="text-xs text-gray-600 mt-0.5">B模式下超短线只使用妖币扫描候选；没有妖币上下文不自动开仓。</div>
                 </div>
               </label>
               <div>
                 <label class="text-xs text-gray-400 font-medium">妖币共享 Top N</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">每次候选刷新最多合并多少个妖币合约候选。默认 30。</div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">超短线最多订阅多少个妖币合约候选。默认 30。</div>
                 <input class="inp inp-o" type="number" name="SCALP_YAOBI_CONTEXT_TOP_N" :value="cfg.SCALP_YAOBI_CONTEXT_TOP_N??30"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">妖币最低分</label>
@@ -1110,9 +1110,16 @@
                 <span class="text-sm text-gray-400">启用 AI 队列审查</span>
               </label>
               <div><label class="text-xs text-gray-500">AI Top N</label>
-                <input class="inp mt-1" type="number" name="YAOBI_AI_MAX_SYMBOLS_PER_RUN" :value="cfg.YAOBI_AI_MAX_SYMBOLS_PER_RUN??8" style="border-color:#1a3a2a"></div>
+                <input class="inp mt-1" type="number" name="YAOBI_AI_MAX_SYMBOLS_PER_RUN" :value="cfg.YAOBI_AI_MAX_SYMBOLS_PER_RUN??6" style="border-color:#1a3a2a"></div>
               <div class="col-span-2"><label class="text-xs text-gray-500">Provider 优先级</label>
                 <input class="inp mt-1" type="text" name="YAOBI_AI_PROVIDER_PRIORITY" :value="cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini,openai,anthropic'" style="border-color:#1a3a2a"></div>
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <label class="toggle" style="--t:#a78bfa">
+                  <input type="checkbox" name="YAOBI_AI_REQUIRED_FOR_PERMISSION" :checked="cfg.YAOBI_AI_REQUIRED_FOR_PERMISSION!==false" @change="cfg.YAOBI_AI_REQUIRED_FOR_PERMISSION=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-gray-400">AI 必须给方向许可</span>
+              </label>
               <div><label class="text-xs text-gray-500">调用间隔 min</label>
                 <input class="inp mt-1" type="number" name="YAOBI_AI_MIN_INTERVAL_MINUTES" :value="cfg.YAOBI_AI_MIN_INTERVAL_MINUTES??15" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">缓存 TTL min</label>
@@ -1144,7 +1151,7 @@
               <div><label class="text-xs text-gray-500">新闻审查 Top N</label>
                 <input class="inp mt-1" type="number" name="YAOBI_SURF_NEWS_TOP_N" :value="cfg.YAOBI_SURF_NEWS_TOP_N??20" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">AI终审 Top N</label>
-                <input class="inp mt-1" type="number" name="YAOBI_SURF_TOP_N" :value="cfg.YAOBI_SURF_TOP_N??1" style="border-color:#1a3a2a"></div>
+                <input class="inp mt-1" type="number" name="YAOBI_SURF_TOP_N" :value="cfg.YAOBI_SURF_TOP_N??3" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">搜索兜底上限</label>
                 <input class="inp mt-1" type="number" name="YAOBI_SURF_FALLBACK_SEARCH_LIMIT" :value="cfg.YAOBI_SURF_FALLBACK_SEARCH_LIMIT??3" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">Surf 请求间隔秒</label>
@@ -2255,7 +2262,7 @@ function app() {
     },
     async saveYaobiConfig() {
       const fd=new FormData(document.getElementById('yaobiForm'))
-      const bk=['YAOBI_ENABLED','YAOBI_SQUARE_ENABLED','YAOBI_OKX_ENABLED','YAOBI_OKX_HOT_ENABLED','YAOBI_BINANCE_SHORT_INTEL_ENABLED','YAOBI_BINANCE_LIQUIDATION_WS_ENABLED','YAOBI_AI_ENABLED','YAOBI_SURF_NEWS_ENABLED','YAOBI_SURF_AI_ENABLED']; bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
+      const bk=['YAOBI_ENABLED','YAOBI_SQUARE_ENABLED','YAOBI_OKX_ENABLED','YAOBI_OKX_HOT_ENABLED','YAOBI_BINANCE_SHORT_INTEL_ENABLED','YAOBI_BINANCE_LIQUIDATION_WS_ENABLED','YAOBI_AI_ENABLED','YAOBI_AI_REQUIRED_FOR_PERMISSION','YAOBI_SURF_NEWS_ENABLED','YAOBI_SURF_AI_ENABLED']; bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()
         this.showToast(d.message,d.status==='success'?'success':'error')
