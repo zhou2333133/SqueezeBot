@@ -159,7 +159,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042407
+    PROFILE_VERSION = 2026042424
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -181,13 +181,28 @@ class ConfigManager:
         "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
         "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
         "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
+        # L5: TP wick 双 tick 确认
+        "SCALP_TP_CONFIRM_TICKS": 2,
+        # L3: TREND_LATE 状态自动半仓
+        "SCALP_TREND_LATE_SIZE_MULT": 0.5,
+        # L7: 单币熔断阈值 + 滑动窗口 + 自定义熔断时长
+        "SCALP_SYMBOL_BAN_WINDOW_MINUTES": 120,
+        "SCALP_SYMBOL_BAN_SL_COUNT": 2,
+        "SCALP_SYMBOL_BAN_LOSS_R": 2.0,
+        "SCALP_SYMBOL_BAN_DURATION_MINUTES": 0,
         "FEE_RATE_PER_SIDE": 0.0004,
         "SLIPPAGE_RATE_PER_SIDE": 0.0005,
         "SQUEEZE_OI_DROP_MAJOR": 0.5,
         "SQUEEZE_OI_DROP_MID": 1.0,
         "SQUEEZE_OI_DROP_MEME": 1.5,
         "SQUEEZE_WICK_PCT": 1.0,
-        "SQUEEZE_TAKER_MIN": 0.65,
+        # L2: squeeze taker 默认更敏感（旧 0.65 → 0.58），新增多/空独立项
+        "SQUEEZE_TAKER_MIN": 0.58,
+        "SQUEEZE_TAKER_MIN_LONG": 0.58,
+        "SQUEEZE_TAKER_MIN_SHORT": 0.58,
+        # L4: BTC 守卫分级（旧 BTC_GUARD_PCT 仅作 reject 兜底）
+        "BTC_GUARD_REJECT_PCT": 1.5,
+        "BTC_GUARD_WARN_PCT": 0.8,
         "BREAKOUT_TAKER_MIN": 0.62,
         "BREAKOUT_MIN_PCT": 0.15,
         "BREAKOUT_ATR_MULT": 0.7,
@@ -208,7 +223,7 @@ class ConfigManager:
         "SIGNAL_COOLDOWN_SECONDS": 30,
         "OI_POLL_INTERVAL": 10,
         "SCALP_OI_PREFETCH_TOP_N": 30,
-        "BTC_GUARD_PCT": 2.0,
+        "BTC_GUARD_PCT": 1.5,
         "SCALP_SURF_NEWS_ENABLED": False,
         "SCALP_SURF_NEWS_INTERVAL_MINUTES": 60,
         "SCALP_SURF_NEWS_TOP_N": 8,
@@ -286,6 +301,12 @@ class ConfigManager:
         "SCALP_NET_BREAKEVEN_LOCK_PCT": (0.0,   2.0),
         "SCALP_TP1_SOFT_BREAKEVEN_PCT": (0.0,   2.0),
         "SCALP_REVERSAL_STOP_SL_FRACTION": (0.1, 1.0),
+        "SCALP_TP_CONFIRM_TICKS":      (1,      5),
+        "SCALP_TREND_LATE_SIZE_MULT":  (0.1,    1.0),
+        "SCALP_SYMBOL_BAN_WINDOW_MINUTES": (10, 1440),
+        "SCALP_SYMBOL_BAN_SL_COUNT":   (1,      10),
+        "SCALP_SYMBOL_BAN_LOSS_R":     (0.5,    20.0),
+        "SCALP_SYMBOL_BAN_DURATION_MINUTES": (0, 1440),
         "FEE_RATE_PER_SIDE":           (0.0,    0.01),
         "SLIPPAGE_RATE_PER_SIDE":      (0.0,    0.05),
         # V3.0 轧空猎杀 & 动能突破
@@ -294,6 +315,10 @@ class ConfigManager:
         "SQUEEZE_OI_DROP_MEME":        (0.3,    15.0),
         "SQUEEZE_WICK_PCT":            (0.3,    5.0),
         "SQUEEZE_TAKER_MIN":           (0.5,    0.9),
+        "SQUEEZE_TAKER_MIN_LONG":      (0.5,    0.9),
+        "SQUEEZE_TAKER_MIN_SHORT":     (0.5,    0.9),
+        "BTC_GUARD_REJECT_PCT":        (0.3,    10.0),
+        "BTC_GUARD_WARN_PCT":          (0.1,    5.0),
         "BREAKOUT_TAKER_MIN":          (0.4,    0.9),
         "BREAKOUT_MIN_PCT":            (0.01,   5.0),
         "BREAKOUT_ATR_MULT":           (0.0,    5.0),
@@ -385,6 +410,13 @@ class ConfigManager:
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
             "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
             "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
+            # L5/L3/L7 新增可调项
+            "SCALP_TP_CONFIRM_TICKS":    2,
+            "SCALP_TREND_LATE_SIZE_MULT": 0.5,
+            "SCALP_SYMBOL_BAN_WINDOW_MINUTES": 120,
+            "SCALP_SYMBOL_BAN_SL_COUNT": 2,
+            "SCALP_SYMBOL_BAN_LOSS_R":   2.0,
+            "SCALP_SYMBOL_BAN_DURATION_MINUTES": 0,
             "FEE_RATE_PER_SIDE":         0.0004,
             "SLIPPAGE_RATE_PER_SIDE":    0.0005,
             # ── V3.0 轧空猎杀参数 ─────────────────────────────────────────────
@@ -392,7 +424,10 @@ class ConfigManager:
             "SQUEEZE_OI_DROP_MID":       1.0,
             "SQUEEZE_OI_DROP_MEME":      1.5,
             "SQUEEZE_WICK_PCT":          1.0,
-            "SQUEEZE_TAKER_MIN":         0.65,
+            # L2: 默认 0.58 比旧 0.65 更敏感；多/空可独立覆盖
+            "SQUEEZE_TAKER_MIN":         0.58,
+            "SQUEEZE_TAKER_MIN_LONG":    0.58,
+            "SQUEEZE_TAKER_MIN_SHORT":   0.58,
             # ── V3.0 动能突破参数 ─────────────────────────────────────────────
             "BREAKOUT_TAKER_MIN":        0.62,
             "BREAKOUT_MIN_PCT":          0.15,
@@ -414,7 +449,10 @@ class ConfigManager:
             "SIGNAL_COOLDOWN_SECONDS":   30,
             "OI_POLL_INTERVAL":          10,
             "SCALP_OI_PREFETCH_TOP_N":   30,
-            "BTC_GUARD_PCT":             2.0,
+            # L4: 旧 BTC_GUARD_PCT 改作 reject 兜底；新增分级
+            "BTC_GUARD_PCT":             1.5,
+            "BTC_GUARD_REJECT_PCT":      1.5,
+            "BTC_GUARD_WARN_PCT":        0.8,
             # Surf 成本控制：默认关闭后台/AI 调用，需要时在 UI 手动开启。
             "SCALP_SURF_NEWS_ENABLED":    False,
             "SCALP_SURF_NEWS_INTERVAL_MINUTES": 60,

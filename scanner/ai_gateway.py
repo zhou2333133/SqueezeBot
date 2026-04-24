@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import ssl
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -24,6 +26,75 @@ from config import (
 )
 from scanner.knowledge_base import relevant_lessons, relevant_lesson_stats
 from scanner.provider_metrics import record_provider_call, record_provider_skip
+
+logger = logging.getLogger(__name__)
+
+# ── SSL 上下文（修复 Gemini 在 Windows 上偶发 SSLV3_ALERT_HANDSHAKE_FAILURE）─────
+# 优先用 certifi 的 CA bundle，更新更频繁；不可用时回退到系统默认。
+_SSL_CONTEXT: ssl.SSLContext | None = None
+try:
+    import certifi
+    _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+except Exception:  # pragma: no cover - certifi 未安装时的兜底
+    try:
+        _SSL_CONTEXT = ssl.create_default_context()
+    except Exception:
+        _SSL_CONTEXT = None
+
+# ── 单 provider 失败 backoff（避免 SSL/网络问题反复刷日志、浪费配额）─────────
+# {provider: (backoff_until_ts, consecutive_failures)}
+_PROVIDER_BACKOFF: dict[str, tuple[float, int]] = {}
+_BACKOFF_BASE_SEC = 60.0    # 第一次失败后冷却 60s
+_BACKOFF_MAX_SEC = 1800.0   # 封顶 30min
+_BACKOFF_RESET_OK = True    # 成功一次即清空
+
+_NETWORK_ERROR_KEYS = (
+    "ssl",
+    "handshake",
+    "clientconnector",
+    "connectionerror",
+    "timeout",
+    "cannot connect",
+    "name resolution",
+    "getaddrinfo",
+)
+
+
+def _provider_in_backoff(provider: str) -> tuple[bool, float]:
+    """返回 (是否处于 backoff, 距离解除秒数)。"""
+    info = _PROVIDER_BACKOFF.get(provider)
+    if not info:
+        return False, 0.0
+    until, _ = info
+    now = time.time()
+    if now >= until:
+        return False, 0.0
+    return True, until - now
+
+
+def _record_provider_failure(provider: str, exc: Exception) -> None:
+    """对网络/SSL 类失败按指数退避；其他错误只记 1 次（避免误判）。"""
+    msg = f"{type(exc).__name__}: {exc}".lower()
+    is_network = any(k in msg for k in _NETWORK_ERROR_KEYS)
+    info = _PROVIDER_BACKOFF.get(provider) or (0.0, 0)
+    fails = info[1] + (1 if is_network else 0)
+    if not is_network:
+        # 非网络问题（如 HTTP 4xx/5xx）不触发长 backoff，只记 1 分钟避免连续 hammer
+        until = time.time() + 60
+    else:
+        backoff = min(_BACKOFF_BASE_SEC * (2 ** max(0, fails - 1)), _BACKOFF_MAX_SEC)
+        until = time.time() + backoff
+    _PROVIDER_BACKOFF[provider] = (until, fails)
+    if is_network:
+        logger.warning(
+            "🌐 [%s] AI 调用网络/SSL 失败#%d (%s)，进入 %.0fs backoff",
+            provider, fails, type(exc).__name__, until - time.time(),
+        )
+
+
+def _clear_provider_backoff(provider: str) -> None:
+    if _BACKOFF_RESET_OK:
+        _PROVIDER_BACKOFF.pop(provider, None)
 
 _ROOT = os.path.join(DATA_DIR, "ai_knowledge")
 _CACHE_FILE = os.path.join(_ROOT, "ai_cache.json")
@@ -410,11 +481,16 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
     max_output = int(cfg.get("YAOBI_AI_MAX_OUTPUT_TOKENS", 1200) or 1200)
     last_error = ""
     for provider in providers:
+        # backoff 检查：上次失败仍在冷却期内则跳过，避免反复 hammer SSL 失败的 endpoint
+        in_backoff, remain = _provider_in_backoff(provider)
+        if in_backoff:
+            record_provider_skip(provider, _ENDPOINT, f"backoff_{int(remain)}s", items=len(rows))
+            continue
         try:
             if provider == "openai" and OPENAI_API_KEY:
                 text, token_count = await _call_openai(session, system_prompt, raw_payload, max_output)
             elif provider == "gemini" and GEMINI_API_KEY:
-                text, token_count = await _call_gemini(session, system_prompt, raw_payload, max_output)
+                text, token_count = await _call_gemini(system_prompt, raw_payload, max_output)
             elif provider == "anthropic" and ANTHROPIC_API_KEY:
                 text, token_count = await _call_anthropic(session, system_prompt, raw_payload, max_output)
             else:
@@ -427,6 +503,7 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
             estimated = max(0.001, token_count / 1_000_000 * 2.0)
             _record_usage(token_count, estimated)
             _save_latest_success(provider, items)
+            _clear_provider_backoff(provider)
             record_provider_call(provider, _ENDPOINT, True, status="200", items=len(rows))
             return {
                 "items": [dict(x, provider=provider, cached=False) for x in items],
@@ -434,6 +511,7 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
             }
         except Exception as e:
             last_error = f"{type(e).__name__}: {e}"
+            _record_provider_failure(provider, e)
             record_provider_call(provider or "ai", _ENDPOINT, False, status="exception", error=last_error, items=len(rows))
             continue
     return {"items": [], "status": provider_status() | {"last_reason": "all_failed", "last_error": last_error}}
@@ -497,33 +575,48 @@ def _gemini_request_body(system_prompt: str, payload: str, max_output: int) -> d
     }
 
 
-async def _call_gemini(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:
+async def _call_gemini(system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:
+    """Gemini 调用使用独立 session + certifi SSL 上下文。
+
+    背景：generativelanguage.googleapis.com 在某些 Windows / 代理环境下，
+    用 Python 默认 CA bundle 时会触发 SSLV3_ALERT_HANDSHAKE_FAILURE。
+    显式指定 certifi CA + 启用 trust_env (HTTPS_PROXY 等代理) 可显著降低发生率。
+    """
     api_key = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
     last_error = ""
-    for model in _gemini_model_candidates():
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        body = _gemini_request_body(system_prompt, payload, max_output)
-        async with session.post(
-            url,
-            headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-            json=body,
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            data = await resp.json(content_type=None)
-            if resp.status == 404:
-                last_error = f"gemini_http_404[{model}]: {str(data)[:160]}"
-                continue
-            if resp.status >= 300:
-                raise RuntimeError(f"gemini_http_{resp.status}[{model}]: {str(data)[:160]}")
-            parts = data["candidates"][0]["content"]["parts"]
-            text = "".join(p.get("text", "") for p in parts)
-            if not _is_valid_json_text(text):
-                excerpt = str(text or "").replace("\n", " ")[:180]
-                last_error = f"gemini_non_json[{model}]: {excerpt or 'empty_response'}"
-                continue
-            usage = data.get("usageMetadata") or {}
-            tokens = int(usage.get("totalTokenCount") or (_estimate_tokens(payload) + _estimate_tokens(text)))
-            return text, tokens
+    connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT) if _SSL_CONTEXT is not None else None
+    async with aiohttp.ClientSession(
+        connector=connector,
+        trust_env=True,
+        timeout=aiohttp.ClientTimeout(total=30),
+    ) as gem_session:
+        for model in _gemini_model_candidates():
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            body = _gemini_request_body(system_prompt, payload, max_output)
+            try:
+                async with gem_session.post(
+                    url,
+                    headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                    json=body,
+                ) as resp:
+                    data = await resp.json(content_type=None)
+                    if resp.status == 404:
+                        last_error = f"gemini_http_404[{model}]: {str(data)[:160]}"
+                        continue
+                    if resp.status >= 300:
+                        raise RuntimeError(f"gemini_http_{resp.status}[{model}]: {str(data)[:160]}")
+                    parts = data["candidates"][0]["content"]["parts"]
+                    text = "".join(p.get("text", "") for p in parts)
+                    if not _is_valid_json_text(text):
+                        excerpt = str(text or "").replace("\n", " ")[:180]
+                        last_error = f"gemini_non_json[{model}]: {excerpt or 'empty_response'}"
+                        continue
+                    usage = data.get("usageMetadata") or {}
+                    tokens = int(usage.get("totalTokenCount") or (_estimate_tokens(payload) + _estimate_tokens(text)))
+                    return text, tokens
+            except (aiohttp.ClientConnectorSSLError, aiohttp.ClientConnectorError, ssl.SSLError) as exc:
+                # 网络 / SSL 类失败：往上抛由 analyze_opportunities 触发 backoff
+                raise RuntimeError(f"gemini_network[{model}]: {type(exc).__name__}: {exc}")
     raise RuntimeError(last_error or "gemini_model_unavailable")
 
 
