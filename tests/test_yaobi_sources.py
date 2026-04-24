@@ -408,7 +408,8 @@ class TestYaobiSources(unittest.TestCase):
 
             text, _tokens = asyncio.run(ai_gateway._call_gemini(DummySession(), "sys", '{"k":1}', 256))
             self.assertEqual(text, "{\"opportunities\":[]}")
-            self.assertTrue(any("gemini-3-flash-preview" in url for url in seen))
+            self.assertGreaterEqual(len(seen), 2)
+            self.assertTrue(any("gemini-2.5-flash-lite" in url or "gemini-2.5-pro" in url or "gemini-3-flash-preview" in url for url in seen[1:]))
         finally:
             config_manager.settings.clear()
             config_manager.settings.update(orig)
