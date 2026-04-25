@@ -595,32 +595,51 @@ class BinanceScalpBot:
         if seen_ts > 0:
             meta["scalp_candidate_elapsed_min"] = round((time.monotonic() - seen_ts) / 60, 2)
 
-    def _yaobi_entry_guard(self, symbol: str, direction: str, signal_label: str = "") -> tuple[bool, str]:
+    @staticmethod
+    def _yaobi_opportunity_expired(meta: dict) -> bool:
+        """B3: 检查 AI 给的 opportunity_expires_at 是否已过期。"""
+        expires_at = str(meta.get("yaobi_opportunity_expires_at") or "")
+        if not expires_at:
+            return False
+        try:
+            ts = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return False
+        return datetime.now() > ts
+
+    def _yaobi_entry_guard(self, symbol: str, direction: str, signal_label: str = "") -> tuple[bool, str, float]:
+        """返回 (ok, reason, size_mult)。size_mult 默认 1.0；软警戒触发时返回 < 1.0 缩仓系数。"""
         if not self.cfg.get("SCALP_USE_YAOBI_CONTEXT", True):
-            return True, ""
+            return True, "", 1.0
         meta = self.candidate_meta.get(symbol, {})
         if self.cfg.get("SCALP_REQUIRE_YAOBI_CONTEXT", True) and not meta.get("yaobi_context"):
-            return False, "B模式要求必须有妖币扫描上下文"
+            return False, "B模式要求必须有妖币扫描上下文", 1.0
         if not meta.get("yaobi_context"):
-            return True, ""
+            return True, "", 1.0
 
         action = str(meta.get("yaobi_decision_action") or "")
         op_permission = str(meta.get("yaobi_opportunity_permission") or "")
         op_setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
         if self.cfg.get("SCALP_YAOBI_BLOCK_DECISION_BAN", True) and action == "禁止交易":
-            return False, f"妖币扫描决策=禁止交易: {meta.get('yaobi_decision_note') or meta.get('yaobi_decision_risks')}"
+            return False, f"妖币扫描决策=禁止交易: {meta.get('yaobi_decision_note') or meta.get('yaobi_decision_risks')}", 1.0
         if (
             self.cfg.get("SCALP_YAOBI_BLOCK_WAIT_CONFIRM", True)
             and action == "等待确认"
             and not (op_permission == "ALLOW_IF_1M_SIGNAL" and op_setup in {"ARMED", "HOT"})
         ):
-            return False, f"妖币扫描决策=等待确认，仅观察不自动交易: {meta.get('yaobi_decision_note') or ''}"
+            return False, f"妖币扫描决策=等待确认，仅观察不自动交易: {meta.get('yaobi_decision_note') or ''}", 1.0
 
         if self.cfg.get("SCALP_YAOBI_BLOCK_HIGH_RISK", True):
             if bool(meta.get("yaobi_surf_ai_hard_block")):
-                return False, f"Surf AI高风险: {meta.get('yaobi_decision_note') or ''}"
+                return False, f"Surf AI高风险: {meta.get('yaobi_decision_note') or ''}", 1.0
             if int(meta.get("yaobi_okx_risk_level", 0) or 0) >= 4:
-                return False, f"OKX风险等级{meta.get('yaobi_okx_risk_level')}"
+                return False, f"OKX风险等级{meta.get('yaobi_okx_risk_level')}", 1.0
+
+        # B3: AI 剧本到期检查（仅当 opportunity_permission 是 ALLOW_IF_1M_SIGNAL 时有意义）
+        if (self.cfg.get("SCALP_OPPORTUNITY_EXPIRY_GUARD", True)
+                and op_permission == "ALLOW_IF_1M_SIGNAL"
+                and self._yaobi_opportunity_expired(meta)):
+            return False, f"AI 剧本许可已过期 ({meta.get('yaobi_opportunity_expires_at')})，等待下一轮 AI 评估", 1.0
 
         if self.cfg.get("SCALP_OPPORTUNITY_GUARD_ENABLED", True):
             op_action = str(meta.get("yaobi_opportunity_action") or "")
@@ -632,23 +651,25 @@ class BinanceScalpBot:
             is_breakout = "动能突破" in str(signal_label or "") or "顺势回踩" in str(signal_label or "")
             is_squeeze = "猎杀" in str(signal_label or "")
             if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_QUEUE", False) and not op_rank:
-                return False, "未进入妖币机会队列Top名单"
+                return False, "未进入妖币机会队列Top名单", 1.0
             if op_action == "BLOCK" or op_permission == "BLOCK":
-                return False, f"机会队列BLOCK: {meta.get('yaobi_intelligence_summary') or meta.get('yaobi_opportunity_risks')}"
+                return False, f"机会队列BLOCK: {meta.get('yaobi_intelligence_summary') or meta.get('yaobi_opportunity_risks')}", 1.0
             if self.cfg.get("SCALP_REQUIRE_OPPORTUNITY_PERMISSION", True) and op_permission != "ALLOW_IF_1M_SIGNAL":
                 extra = f" | {op_setup_note}" if op_setup_note else ""
-                return False, f"机会队列未给自动执行许可: {op_action or 'OBSERVE'} / {op_setup or 'WAIT'}{extra}"
+                return False, f"机会队列未给自动执行许可: {op_action or 'OBSERVE'} / {op_setup or 'WAIT'}{extra}", 1.0
             if op_dir == "LONG" and direction == "SHORT":
-                return False, "机会队列当前只允许做多模板，禁止反向追空"
+                return False, "机会队列当前只允许做多模板，禁止反向追空", 1.0
             if op_dir == "SHORT" and direction == "LONG":
-                return False, "机会队列当前只允许做空模板，禁止反向追多"
+                return False, "机会队列当前只允许做空模板，禁止反向追多", 1.0
             if op_trigger == "BREAKOUT" and is_squeeze:
-                return False, "当前剧本是顺势接力，只接受1m突破/回踩，不做反打猎杀"
+                return False, "当前剧本是顺势接力，只接受1m突破/回踩，不做反打猎杀", 1.0
             if op_trigger == "SQUEEZE" and is_breakout:
-                return False, "当前剧本是局部反打，只接受1m衰竭反打，不做突破追单"
+                return False, "当前剧本是局部反打，只接受1m衰竭反打，不做突破追单", 1.0
             if op_style == "FADE" and is_breakout:
-                return False, "FADE许可只允许顶部/底部反打，不做1m突破追单"
+                return False, "FADE许可只允许顶部/底部反打，不做1m突破追单", 1.0
 
+        # B1: 资金费率/OI 拥挤 → 软警戒（默认缩仓而非拒绝）
+        soft_size_mult = 1.0
         if self.cfg.get("SCALP_YAOBI_FUNDING_OI_GUARD", True):
             grade = str(meta.get("yaobi_oi_trend_grade") or "").upper()
             oi24 = self._as_float(meta.get("yaobi_oi_change_24h_pct"))
@@ -661,19 +682,29 @@ class BinanceScalpBot:
                 oi24 >= self.cfg.get("SCALP_YAOBI_OI_GUARD_MIN_24H_PCT", 50.0)
             )
             funding_extreme = self.cfg.get("SCALP_YAOBI_FUNDING_EXTREME_PCT", 0.05)
-            if crowded_oi and direction == "SHORT" and funding <= -funding_extreme:
-                return False, f"OI强增长/评级{grade or '-'} + 资金费率{funding:.4f}%偏空拥挤，禁止追空"
-            if crowded_oi and direction == "LONG" and funding >= funding_extreme:
-                return False, f"OI强增长/评级{grade or '-'} + 资金费率{funding:.4f}%偏多拥挤，禁止追多"
+            crowded_short_warn = crowded_oi and direction == "SHORT" and funding <= -funding_extreme
+            crowded_long_warn = crowded_oi and direction == "LONG" and funding >= funding_extreme
+            if crowded_short_warn or crowded_long_warn:
+                hard = self.cfg.get("SCALP_YAOBI_FUNDING_OI_GUARD_HARD", False)
+                side = "追多" if crowded_long_warn else "追空"
+                if hard:
+                    return False, f"OI强增长/评级{grade or '-'} + 资金费率{funding:.4f}% 拥挤，禁止{side}", 1.0
+                soft_mult = float(self.cfg.get("SCALP_YAOBI_FUNDING_OI_SOFT_MULT", 0.5) or 0.5)
+                soft_mult = max(0.1, min(1.0, soft_mult))
+                soft_size_mult = soft_mult
+                logger.info(
+                    "⚡ [%s] ⚠ OI拥挤+反向FR，软警戒%s 仓位×%.2f (评级%s funding%.4f%%)",
+                    symbol, side, soft_mult, grade or "-", funding,
+                )
 
         if self.cfg.get("SCALP_YAOBI_DIRECTION_GUARD", False):
             sentiment = str(meta.get("yaobi_sentiment_label") or "").lower()
             if direction == "LONG" and sentiment == "bearish" and action != "允许交易":
-                return False, "妖币情绪偏空，阻止动能多"
+                return False, "妖币情绪偏空，阻止动能多", 1.0
             if direction == "SHORT" and sentiment == "bullish" and action != "允许交易":
-                return False, "妖币情绪偏多，阻止动能空"
+                return False, "妖币情绪偏多，阻止动能空", 1.0
 
-        return True, ""
+        return True, "", soft_size_mult
 
     # ─── 启动 ──────────────────────────────────────────────────────────────────
 
@@ -1527,14 +1558,67 @@ class BinanceScalpBot:
         atr_pct = self._calc_atr_pct(buf) if atr_pct is None else atr_pct
         return max(min_pct, atr_pct * self.cfg.get("BREAKOUT_ATR_MULT", 0.5))
 
+    def _market_volatility_scale(self) -> float:
+        """C: 根据 BTC 当前 1m ATR 给 alts ATR 上限的缩放倍数。
+        BTC 平稳 (ATR ≈ baseline)  → 1.0x
+        BTC 活跃 (ATR > baseline)  → 等比放大
+        BTC 死寂 (ATR < baseline)  → 等比缩小
+        缩放区间默认 [0.8, 2.5]。
+        """
+        cfg = self.cfg
+        baseline = float(cfg.get("MARKET_VOL_BTC_ATR_BASELINE", 0.15) or 0.15)
+        if baseline <= 0:
+            return 1.0
+        btc_buf = self.kline_buffer.get("BTCUSDT", [])
+        if len(btc_buf) < 15:
+            return 1.0
+        btc_atr = self._calc_atr_pct(btc_buf, n=14)
+        if btc_atr <= 0:
+            return 1.0
+        scale = btc_atr / baseline
+        floor = float(cfg.get("MARKET_VOL_SCALE_MIN", 0.8) or 0.8)
+        ceiling = float(cfg.get("MARKET_VOL_SCALE_MAX", 2.5) or 2.5)
+        return max(floor, min(ceiling, scale))
+
     def _breakout_atr_allowed(self, atr_pct: float) -> bool:
-        atr_min = self.cfg.get("BREAKOUT_ATR_MIN_PCT", 0.0)
-        atr_max = self.cfg.get("BREAKOUT_ATR_MAX_PCT", 0.0)
+        cfg = self.cfg
+        atr_min = float(cfg.get("BREAKOUT_ATR_MIN_PCT", 0.0) or 0.0)
+        atr_max = float(cfg.get("BREAKOUT_ATR_MAX_PCT", 0.0) or 0.0)
+        # C: 自适应 — 上限按 BTC ATR 比例放大；下限按平方根缩小（更柔和）
+        if cfg.get("BREAKOUT_ATR_ADAPTIVE", True):
+            scale = self._market_volatility_scale()
+            if atr_max > 0:
+                atr_max = atr_max * scale
+            if atr_min > 0 and scale > 1.0:
+                atr_min = atr_min / (scale ** 0.5)
         if atr_min and atr_pct < atr_min:
             return False
         if atr_max and atr_pct > atr_max:
             return False
         return True
+
+    def _squeeze_oi_stabilized_for_long(self, symbol: str) -> tuple[bool, str]:
+        """B2: 轧空做多前确认 OI 已停止下行。
+        要求：最近 N 秒内 OI 已从最低点反弹 ≥ rebound_pct%（说明空头停止平仓）。
+        返回 (是否企稳, 调试描述)。"""
+        cfg = self.cfg
+        lookback = float(cfg.get("SCALP_SQUEEZE_OI_STABILIZE_LOOKBACK_SEC", 60) or 60)
+        rebound_pct = float(cfg.get("SCALP_SQUEEZE_OI_REBOUND_PCT", 0.05) or 0.05)
+        cache = list(self._oi_cache.get(symbol, []))
+        if len(cache) < 3:
+            return True, "OI 样本不足，跳过企稳检查"
+        now = time.monotonic()
+        recent = [(t, v) for t, v in cache if now - t <= lookback and v > 0]
+        if len(recent) < 2:
+            return True, "lookback 内 OI 样本不足"
+        min_oi = min(v for _, v in recent)
+        latest_oi = recent[-1][1]
+        if min_oi <= 0:
+            return True, "min OI 异常"
+        rebound = (latest_oi - min_oi) / min_oi * 100
+        if rebound >= rebound_pct:
+            return True, f"OI 已从最低反弹 {rebound:.3f}%"
+        return False, f"OI 仍未企稳，最近 {int(lookback)}s 反弹 {rebound:.3f}% < {rebound_pct:.2f}%"
 
     def _recent_directional_move_pct(
         self,
@@ -1963,6 +2047,16 @@ class BinanceScalpBot:
                         (price - recent_low) / recent_low * 100, taker_ratio * 100,
                     )
                     if self._btc_guard("LONG"):
+                        # B2: OI 二次企稳门 — 防 CHIP 类反弹失败再砸
+                        if cfg.get("SCALP_SQUEEZE_OI_STABILIZE_ENABLED", True):
+                            stab_ok, stab_msg = self._squeeze_oi_stabilized_for_long(symbol)
+                            if not stab_ok:
+                                self._record_entry_block(
+                                    symbol, "squeeze_oi_unstable", stab_msg,
+                                    direction="LONG", signal_label="轧空猎杀多",
+                                )
+                                logger.info("⚡ [%s] ⏸ 轧空猎杀多 跳过：%s", symbol, stab_msg)
+                                return
                         state = self._check_market_state(symbol, "LONG")
                         await self._execute_entry(symbol, "LONG", abs(oi_change_pct), "轧空猎杀多", state)
                         return
@@ -2143,7 +2237,7 @@ class BinanceScalpBot:
                            symbol, self.daily_realized_r, daily_drawdown_r, max_daily_r)
             return
 
-        yaobi_ok, yaobi_reason = self._yaobi_entry_guard(symbol, direction, signal_label)
+        yaobi_ok, yaobi_reason, yaobi_size_mult = self._yaobi_entry_guard(symbol, direction, signal_label)
         if not yaobi_ok:
             self._fstat["yaobi_block"] += 1
             self._signal_cooldown[symbol] = time.monotonic()
@@ -2227,12 +2321,16 @@ class BinanceScalpBot:
         tp2_ratio = exit_profile.get("tp2_ratio", cfg.get("SCALP_TP2_RATIO", 0.30))
         time_stop_minutes = exit_profile.get("time_stop_minutes", cfg.get("SCALP_TIME_STOP_MINUTES", 30))
         tp2_timeout_minutes = exit_profile.get("tp2_timeout_minutes", cfg.get("SCALP_TP2_TIMEOUT_MINUTES", 120))
-        # L3: 状态机仓位倍数（TREND_LATE 默认半仓）
-        size_mult = max(0.1, min(1.0, float(exit_profile.get("size_multiplier", 1.0) or 1.0)))
+        # L3: 状态机仓位倍数（TREND_LATE 默认半仓）+ B1: 妖币软警戒缩仓
+        state_size_mult = max(0.1, min(1.0, float(exit_profile.get("size_multiplier", 1.0) or 1.0)))
+        size_mult = state_size_mult * max(0.1, min(1.0, float(yaobi_size_mult or 1.0)))
         if size_mult < 1.0:
             quantity *= size_mult
             actual_risk_usdt *= size_mult
-            logger.info("⚡ [%s] ⚖ 状态=%s，自动缩仓至 ×%.2f", symbol, market_state, size_mult)
+            logger.info(
+                "⚡ [%s] ⚖ 自动缩仓至 ×%.2f（状态=%s ×%.2f / 软警戒 ×%.2f）",
+                symbol, size_mult, market_state, state_size_mult, yaobi_size_mult,
+            )
         # M3: TP1+TP2 比例和不能 >= 1.0，否则 runner 会负
         if tp1_ratio + tp2_ratio >= 0.99:
             logger.warning(
@@ -3044,7 +3142,9 @@ class BinanceScalpBot:
             f" 中型={cfg.get('SQUEEZE_OI_DROP_MID',1.0)}%"
             f" Meme={cfg.get('SQUEEZE_OI_DROP_MEME',1.5)}%"
             f" | Taker轧空≥{cfg.get('SQUEEZE_TAKER_MIN',0.65):.0%}"
-            f" 突破≥{cfg.get('BREAKOUT_TAKER_MIN',0.62):.0%}",
+            f" 突破≥{cfg.get('BREAKOUT_TAKER_MIN',0.62):.0%}"
+            f" | ATR{cfg.get('BREAKOUT_ATR_MIN_PCT',0.3):.2f}~{cfg.get('BREAKOUT_ATR_MAX_PCT',3.0):.2f}%"
+            f" ×{self._market_volatility_scale():.2f}(BTC波动)",
             "  ────────────────────────────────────────────────────────────",
         ]
         logger.info("\n".join(lines))

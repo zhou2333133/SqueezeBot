@@ -159,7 +159,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042424
+    PROFILE_VERSION = 2026042504
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -206,9 +206,16 @@ class ConfigManager:
         "BREAKOUT_TAKER_MIN": 0.62,
         "BREAKOUT_MIN_PCT": 0.15,
         "BREAKOUT_ATR_MULT": 0.7,
-        "BREAKOUT_ATR_MIN_PCT": 0.50,
-        "BREAKOUT_ATR_MAX_PCT": 1.20,
-        "BREAKOUT_MIN_VOL_RATIO": 0.60,
+        # 放宽 ATR 区间：把妖币（ATR 1.5~2.5%）和大币（ATR 0.3~0.5%）都纳入
+        "BREAKOUT_ATR_MIN_PCT": 0.30,
+        "BREAKOUT_ATR_MAX_PCT": 3.00,
+        # 放宽 volume 门槛：原 0.6 在深夜震荡市过滤太多
+        "BREAKOUT_MIN_VOL_RATIO": 0.40,
+        # ATR 自适应：根据 BTC 当前 1m ATR 动态缩放上下限
+        "BREAKOUT_ATR_ADAPTIVE": True,
+        "MARKET_VOL_BTC_ATR_BASELINE": 0.15,
+        "MARKET_VOL_SCALE_MIN": 0.8,
+        "MARKET_VOL_SCALE_MAX": 2.5,
         "BREAKOUT_MAX_PREMOVE_5M_PCT": 1.2,
         "BREAKOUT_MAX_PREMOVE_15M_PCT": 2.5,
         "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
@@ -239,6 +246,15 @@ class ConfigManager:
         "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
         "SCALP_YAOBI_DIRECTION_GUARD": False,
         "SCALP_YAOBI_FUNDING_OI_GUARD": True,
+        # B1 软警戒：默认不再硬拒绝拥挤方向，改为缩仓 (Hard=False → 缩到 SOFT_MULT)
+        "SCALP_YAOBI_FUNDING_OI_GUARD_HARD": False,
+        "SCALP_YAOBI_FUNDING_OI_SOFT_MULT": 0.5,
+        # B2 SQUEEZE 多单：要求 OI 在最近 N 秒已停止下行（防反弹失败二次砸）
+        "SCALP_SQUEEZE_OI_STABILIZE_ENABLED": True,
+        "SCALP_SQUEEZE_OI_STABILIZE_LOOKBACK_SEC": 60,
+        "SCALP_SQUEEZE_OI_REBOUND_PCT": 0.05,
+        # B3 AI 剧本到期检查：opportunity_expires_at < now 时不再放行
+        "SCALP_OPPORTUNITY_EXPIRY_GUARD": True,
         "SCALP_OPPORTUNITY_GUARD_ENABLED": True,
         "SCALP_REQUIRE_OPPORTUNITY_QUEUE": True,
         "SCALP_REQUIRE_OPPORTUNITY_PERMISSION": True,
@@ -325,6 +341,12 @@ class ConfigManager:
         "BREAKOUT_ATR_MIN_PCT":        (0.0,    5.0),
         "BREAKOUT_ATR_MAX_PCT":        (0.0,    10.0),
         "BREAKOUT_MIN_VOL_RATIO":      (0.01,   5.0),
+        "MARKET_VOL_BTC_ATR_BASELINE": (0.05,   1.0),
+        "MARKET_VOL_SCALE_MIN":        (0.1,    2.0),
+        "MARKET_VOL_SCALE_MAX":        (1.0,    10.0),
+        "SCALP_YAOBI_FUNDING_OI_SOFT_MULT": (0.1, 1.0),
+        "SCALP_SQUEEZE_OI_STABILIZE_LOOKBACK_SEC": (10, 600),
+        "SCALP_SQUEEZE_OI_REBOUND_PCT": (0.0, 5.0),
         "BREAKOUT_MAX_PREMOVE_5M_PCT":  (0.0,   10.0),
         "BREAKOUT_MAX_PREMOVE_15M_PCT": (0.0,   20.0),
         "BREAKOUT_MAX_PREMOVE_30M_PCT": (0.0,   20.0),
@@ -432,9 +454,14 @@ class ConfigManager:
             "BREAKOUT_TAKER_MIN":        0.62,
             "BREAKOUT_MIN_PCT":          0.15,
             "BREAKOUT_ATR_MULT":         0.7,
-            "BREAKOUT_ATR_MIN_PCT":      0.50,
-            "BREAKOUT_ATR_MAX_PCT":      1.20,
-            "BREAKOUT_MIN_VOL_RATIO":    0.60,
+            "BREAKOUT_ATR_MIN_PCT":      0.30,
+            "BREAKOUT_ATR_MAX_PCT":      3.00,
+            "BREAKOUT_MIN_VOL_RATIO":    0.40,
+            # ATR 自适应：根据 BTC 当前 1m ATR 动态缩放上下限
+            "BREAKOUT_ATR_ADAPTIVE":     True,
+            "MARKET_VOL_BTC_ATR_BASELINE": 0.15,
+            "MARKET_VOL_SCALE_MIN":      0.8,
+            "MARKET_VOL_SCALE_MAX":      2.5,
             "BREAKOUT_MAX_PREMOVE_5M_PCT": 1.2,
             "BREAKOUT_MAX_PREMOVE_15M_PCT": 2.5,
             "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
@@ -469,6 +496,12 @@ class ConfigManager:
             "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
             "SCALP_YAOBI_DIRECTION_GUARD": False,
             "SCALP_YAOBI_FUNDING_OI_GUARD": True,
+            "SCALP_YAOBI_FUNDING_OI_GUARD_HARD": False,
+            "SCALP_YAOBI_FUNDING_OI_SOFT_MULT": 0.5,
+            "SCALP_SQUEEZE_OI_STABILIZE_ENABLED": True,
+            "SCALP_SQUEEZE_OI_STABILIZE_LOOKBACK_SEC": 60,
+            "SCALP_SQUEEZE_OI_REBOUND_PCT": 0.05,
+            "SCALP_OPPORTUNITY_EXPIRY_GUARD": True,
             "SCALP_OPPORTUNITY_GUARD_ENABLED": True,
             "SCALP_REQUIRE_OPPORTUNITY_QUEUE": True,
             "SCALP_REQUIRE_OPPORTUNITY_PERMISSION": True,
