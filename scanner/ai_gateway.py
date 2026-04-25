@@ -605,11 +605,13 @@ async def _call_gemini(system_prompt: str, payload: str, max_output: int) -> tup
                         continue
                     if resp.status >= 300:
                         raise RuntimeError(f"gemini_http_{resp.status}[{model}]: {str(data)[:160]}")
-                    parts = data["candidates"][0]["content"]["parts"]
-                    text = "".join(p.get("text", "") for p in parts)
+                    text, finish_info = _parse_gemini_response(data, model)
+                    if text is None:
+                        last_error = finish_info  # 已经是可读字符串
+                        continue
                     if not _is_valid_json_text(text):
                         excerpt = str(text or "").replace("\n", " ")[:180]
-                        last_error = f"gemini_non_json[{model}]: {excerpt or 'empty_response'}"
+                        last_error = f"gemini_non_json[{model}]: {finish_info} | {excerpt or 'empty_response'}"
                         continue
                     usage = data.get("usageMetadata") or {}
                     tokens = int(usage.get("totalTokenCount") or (_estimate_tokens(payload) + _estimate_tokens(text)))
@@ -618,6 +620,38 @@ async def _call_gemini(system_prompt: str, payload: str, max_output: int) -> tup
                 # 网络 / SSL 类失败：往上抛由 analyze_opportunities 触发 backoff
                 raise RuntimeError(f"gemini_network[{model}]: {type(exc).__name__}: {exc}")
     raise RuntimeError(last_error or "gemini_model_unavailable")
+
+
+def _parse_gemini_response(data: dict, model: str) -> tuple[str | None, str]:
+    """从 Gemini generateContent 响应中健壮地抽出文本。
+
+    返回 (text, info)：
+      - 成功：(text, finishReason 描述)
+      - 失败：(None, 可读的失败原因字符串，包含 finishReason / blockReason / 摘要)
+
+    应对的真实 case（线上日志触发过）：
+      - data["candidates"] 为空（被 promptFeedback.blockReason 拦下）
+      - candidates[0].content 字段缺失
+      - candidates[0].content.parts 字段缺失或为空（finishReason=MAX_TOKENS/SAFETY/RECITATION）
+      - parts 里 text 为空字符串
+    """
+    prompt_feedback = data.get("promptFeedback") or {}
+    block_reason = str(prompt_feedback.get("blockReason", "") or "")
+    candidates_list = data.get("candidates") or []
+    if not candidates_list:
+        return None, f"gemini_no_candidates[{model}]: prompt_block={block_reason or '-'}"
+    cand = candidates_list[0] if isinstance(candidates_list[0], dict) else {}
+    finish = str(cand.get("finishReason", "") or "")
+    content = cand.get("content") if isinstance(cand.get("content"), dict) else {}
+    parts = content.get("parts") if isinstance(content.get("parts"), list) else []
+    if not parts:
+        # 安全过滤 / 配额截断 / 模型直接放弃，都会落到这里
+        return None, f"gemini_empty_parts[{model}]: finish={finish or '-'} block={block_reason or '-'}"
+    text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+    if not text.strip():
+        return None, f"gemini_blank_text[{model}]: finish={finish or '-'} parts={len(parts)}"
+    # 即使 finish=MAX_TOKENS 文本仍可能是合法 JSON 的前缀，留给上层 _is_valid_json_text 判断
+    return text, f"finish={finish or 'STOP'}"
 
 
 async def _call_anthropic(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:

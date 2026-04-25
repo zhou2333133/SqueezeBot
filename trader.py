@@ -46,12 +46,48 @@ def _as_decimal(value) -> Decimal:
 
 class BinanceTrader:
     BASE_URL = "https://fapi.binance.com"
+    _SERVER_TIME_SYNC_INTERVAL = 300.0   # 5min 重新拉一次服务器时间
+    _SERVER_TIME_SYNC_TIMEOUT = 5.0
+    _SERVER_TIME_WARN_OFFSET_MS = 1000   # 偏差 > 1s 才打警告，避免日志噪音
 
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
         self.api_key = BINANCE_API_KEY
         self.api_secret = BINANCE_API_SECRET
         self._symbol_filters: dict[str, dict] = {}
+        # ── 时钟漂移修复 ──────────────────────────────────────────────────
+        # Windows 系统经常出现 +/- 数秒漂移，导致 -1021 Timestamp out of recvWindow。
+        # 我们定期拉 GET /fapi/v1/time，按服务器时间补偿本地戳。
+        self._time_offset_ms: int = 0
+        self._last_time_sync: float = 0.0
+
+    async def _ensure_server_time_synced(self) -> None:
+        now = time.time()
+        if now - self._last_time_sync < self._SERVER_TIME_SYNC_INTERVAL:
+            return
+        try:
+            async with self.session.get(
+                f"{self.BASE_URL}/fapi/v1/time",
+                timeout=aiohttp.ClientTimeout(total=self._SERVER_TIME_SYNC_TIMEOUT),
+            ) as resp:
+                if resp.status >= 400:
+                    return
+                data = await resp.json()
+                server_ms = int(data.get("serverTime", 0) or 0)
+                if server_ms <= 0:
+                    return
+                local_ms = int(time.time() * 1000)
+                offset = server_ms - local_ms
+                prev = self._time_offset_ms
+                self._time_offset_ms = offset
+                self._last_time_sync = now
+                if abs(offset) >= self._SERVER_TIME_WARN_OFFSET_MS or abs(offset - prev) >= self._SERVER_TIME_WARN_OFFSET_MS:
+                    logger.warning(
+                        "⏱ Binance 服务器时间偏差 %+d ms (本地 %d → 服务器 %d)，已自动补偿",
+                        offset, local_ms, server_ms,
+                    )
+        except Exception as e:
+            logger.debug("⏱ Binance server time 同步失败: %s", e)
 
     def _sign(self, params: dict) -> str:
         """生成 HMAC-SHA256 签名"""
@@ -62,15 +98,18 @@ class BinanceTrader:
             hashlib.sha256,
         ).hexdigest()
 
-    async def _request(self, method: str, endpoint: str, params: dict):
-        """发送已签名的请求"""
+    async def _request(self, method: str, endpoint: str, params: dict, _retry_on_time_skew: bool = True):
+        """发送已签名的请求；遇到 -1021 时强制重新同步时间并自动重试一次。"""
         if not self.api_key or self.api_key == "YOUR_BINANCE_API_KEY":
             logger.warning("交易功能未开启：BINANCE_API_KEY 未配置。")
             return None
 
-        params["timestamp"]  = int(time.time() * 1000)
-        params["recvWindow"] = 10000   # 容忍最多10秒的服务器时钟偏差
-        params["signature"]  = self._sign(params)
+        await self._ensure_server_time_synced()
+        # 复制一份 params，重试时不污染调用方
+        signed = dict(params)
+        signed["timestamp"]  = int(time.time() * 1000) + self._time_offset_ms
+        signed["recvWindow"] = 10000   # 叠加 offset 修复后再容忍 ±10s
+        signed["signature"]  = self._sign(signed)
         headers = {"X-MBX-APIKEY": self.api_key}
 
         try:
@@ -78,11 +117,18 @@ class BinanceTrader:
                 method,
                 f"{self.BASE_URL}{endpoint}",
                 headers=headers,
-                params=params,
+                params=signed,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 body = await resp.json()
                 if resp.status >= 400:
+                    code = (body or {}).get("code") if isinstance(body, dict) else None
+                    if code == -1021 and _retry_on_time_skew:
+                        # 强制立即重新同步时间并重试一次（recvWindow 时间戳偏差）
+                        logger.warning("⏱ -1021 时间戳偏差，强制重新同步并重试一次")
+                        self._last_time_sync = 0.0
+                        await self._ensure_server_time_synced()
+                        return await self._request(method, endpoint, params, _retry_on_time_skew=False)
                     logger.error(
                         "币安 API 错误 %s [%s %s]: %s",
                         resp.status, method, endpoint, body,

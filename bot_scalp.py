@@ -167,9 +167,11 @@ class BinanceScalpBot:
         self._live_trading_suspended_reason: str          = ""
         # Surf 成本控制：后台新闻扫描按配置限频，默认关闭。
         self._last_surf_news_scan_at: float                = 0.0
-        # OI暖机截止时间（首轮OI就绪后静默60秒，防信号井喷）
+        # OI暖机截止时间（首轮OI就绪后静默60秒，防信号井喷）—— 旧版全局暖机，保留兼容
         self._oi_warmup_until:  float                    = 0.0
         self._last_oi_poll_symbols: set[str]              = set()
+        # 按币暖机（新加入候选 + 真正缺 OI 数据时才阻塞，已就绪的老币不打断）
+        self._symbol_warmup_until: dict[str, float]      = {}
         # 过滤统计（每5分钟输出）
         self._fstat:            dict[str, int]           = {
             "checked": 0, "no_candidate": 0, "oi_miss": 0,
@@ -1104,23 +1106,40 @@ class BinanceScalpBot:
             await asyncio.sleep(interval)
             poll_symbols = self._oi_poll_symbols()
             poll_set = set(poll_symbols)
-            # L8: 监控的 OI 候选集合变化时重置暖机，要求重新计满 80% 才解除
+            # 按币暖机：只对真正"新加入且还没有 OI 数据"的币静默 60s，
+            # 已经在跑、已经有 OI 缓存的老币不再被打断（修旧版每 5min 重置导致的窗口浪费）。
             if poll_set != self._last_oi_poll_symbols:
                 added = poll_set - self._last_oi_poll_symbols
+                removed = self._last_oi_poll_symbols - poll_set
                 self._last_oi_poll_symbols = poll_set
-                self._oi_warmup_until = 0.0
-                # 新加入的币清空旧 OI 缓存，避免拿过期缓存当"已就绪"
+                # 已经掉出候选的币：清空暖机标记
+                for sym in removed:
+                    self._symbol_warmup_until.pop(sym, None)
+                # 新加入的币：仅"无现成缓存"才需要暖机
+                warm_deadline = time.monotonic() + 60.0
                 for sym in added:
-                    self._oi_cache.pop(sym, None)
+                    if len(self._oi_cache.get(sym, [])) < 2:
+                        self._symbol_warmup_until[sym] = warm_deadline
             if poll_symbols:
                 await asyncio.gather(*[_poll_one(s) for s in poll_symbols])
-                # 首轮 / 集合变化后：每轮都重检直到 80% 已就绪才进入 60 秒暖机静默
-                if self._oi_warmup_until == 0.0:
-                    ready = sum(1 for s in poll_symbols if len(self._oi_cache.get(s, [])) >= 2)
-                    if ready >= len(poll_symbols) * 0.8:
-                        self._oi_warmup_until = time.monotonic() + 60
-                        logger.info("⚡ OI暖机完成(%d/%d), 静默60秒防信号井喷",
-                                    ready, len(poll_symbols))
+                # 暖机币 OI 一旦补够 2 条样本，立刻解除（不必死等到 60s）
+                now_mono = time.monotonic()
+                ready_unblocked = []
+                for sym, until in list(self._symbol_warmup_until.items()):
+                    if len(self._oi_cache.get(sym, [])) >= 2:
+                        # 给一点点缓冲（5s），避免 OI 第一根刚到立刻打信号
+                        if until - now_mono > 5:
+                            self._symbol_warmup_until[sym] = now_mono + 5
+                    if now_mono >= self._symbol_warmup_until.get(sym, 0):
+                        ready_unblocked.append(sym)
+                        self._symbol_warmup_until.pop(sym, None)
+                # 首次启动时打一次完成日志（兼容旧观感）
+                if self._oi_warmup_until == 0.0 and not self._symbol_warmup_until:
+                    self._oi_warmup_until = now_mono  # 标记"已完成首轮暖机"
+                    logger.info("⚡ OI 首轮暖机完成 (%d 个币全部就绪)", len(poll_symbols))
+                elif ready_unblocked and len(ready_unblocked) >= 5:
+                    logger.info("⚡ OI 暖机解除 %d 个币 (剩待暖机 %d)",
+                                len(ready_unblocked), len(self._symbol_warmup_until))
 
     # ─── Surf 新闻扫描 + 急救平仓 ─────────────────────────────────────────────
 
@@ -1904,8 +1923,9 @@ class BinanceScalpBot:
         if len(buf) < 20:
             return
 
-        # OI暖机期静默，防首轮OI就绪引爆10+信号
-        if time.monotonic() < self._oi_warmup_until:
+        # OI 暖机期静默：按币跟踪，避免一个币重启就静默全部 30 个候选
+        sym_warm_until = self._symbol_warmup_until.get(symbol, 0.0)
+        if sym_warm_until and time.monotonic() < sym_warm_until:
             return
 
         news        = meta.get("news_sentiment", "neutral")
