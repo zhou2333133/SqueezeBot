@@ -45,15 +45,30 @@ def _as_decimal(value) -> Decimal:
 
 
 class BinanceTrader:
+    """
+    币安 U 本位合约下单封装。
+
+    凭证：
+        api_key/api_secret 可通过构造参数注入（V4AF 走独立账户）；
+        留 None 时回退到 config 的 BINANCE_API_KEY/SECRET（scalp 主账户）。
+    label 仅用于日志区分多账户。
+    """
     BASE_URL = "https://fapi.binance.com"
     _SERVER_TIME_SYNC_INTERVAL = 300.0   # 5min 重新拉一次服务器时间
     _SERVER_TIME_SYNC_TIMEOUT = 5.0
     _SERVER_TIME_WARN_OFFSET_MS = 1000   # 偏差 > 1s 才打警告，避免日志噪音
 
-    def __init__(self, session: aiohttp.ClientSession):
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+        label: str = "main",
+    ):
         self.session = session
-        self.api_key = BINANCE_API_KEY
-        self.api_secret = BINANCE_API_SECRET
+        self.api_key = api_key if api_key is not None else BINANCE_API_KEY
+        self.api_secret = api_secret if api_secret is not None else BINANCE_API_SECRET
+        self.label = label
         self._symbol_filters: dict[str, dict] = {}
         # ── 时钟漂移修复 ──────────────────────────────────────────────────
         # Windows 系统经常出现 +/- 数秒漂移，导致 -1021 Timestamp out of recvWindow。
@@ -100,8 +115,8 @@ class BinanceTrader:
 
     async def _request(self, method: str, endpoint: str, params: dict, _retry_on_time_skew: bool = True):
         """发送已签名的请求；遇到 -1021 时强制重新同步时间并自动重试一次。"""
-        if not self.api_key or self.api_key == "YOUR_BINANCE_API_KEY":
-            logger.warning("交易功能未开启：BINANCE_API_KEY 未配置。")
+        if not self.api_key or self.api_key.startswith("YOUR_") or not self.api_secret:
+            logger.warning("交易功能未开启 (account=%s): API Key 未配置。", self.label)
             return None
 
         await self._ensure_server_time_synced()

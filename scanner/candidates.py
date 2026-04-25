@@ -168,6 +168,16 @@ class Candidate:
     logo_url: str = ""
     tags: list = field(default_factory=list)
 
+    # ── V4AF 选币所需（由 token_supply 启发式填充）──────────────────────────
+    listing_age_days:    int   = 0      # 距币安合约首次上线的天数
+    circulating_supply:  float = 0.0
+    total_supply:        float = 0.0
+    circulation_pct:     float = 0.0    # circulating_supply / total_supply (0-1)
+    fdv_ratio:           float = 0.0    # market_cap / FDV (0-1)，越高越接近全流通
+    vesting_phase:       str   = ""     # pre_unlock / unlock_active / unlock_late / post_unlock / near_full_meme / unknown
+    flash_eligible:      bool  = False  # 启发式判定是否纳入 V4AF 目标池
+    flash_ban_reason:    str   = ""     # 被 ban 的原因（low_volume / near_full_circ / unknown_supply 等）
+
     def key(self) -> str:
         if self.address and self.chain_id:
             return f"{self.chain_id}:{self.address.lower()}"
@@ -285,6 +295,14 @@ class Candidate:
             "links":              self.links,
             "logo_url":           self.logo_url,
             "tags":               self.tags,
+            "listing_age_days":   self.listing_age_days,
+            "circulating_supply": self.circulating_supply,
+            "total_supply":       self.total_supply,
+            "circulation_pct":    round(self.circulation_pct, 4),
+            "fdv_ratio":          round(self.fdv_ratio, 4),
+            "vesting_phase":      self.vesting_phase,
+            "flash_eligible":     self.flash_eligible,
+            "flash_ban_reason":   self.flash_ban_reason,
         }
 
 

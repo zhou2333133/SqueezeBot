@@ -33,6 +33,13 @@ async def main() -> None:
         bot_state.yaobi_task    = asyncio.create_task(bot_state.yaobi_scanner.run())
         logger.info("🔍 妖币扫描器随主程序自动启动")
 
+    # 若配置已启用 V4AF 闪崩模块，自动拉起
+    if config_manager.settings.get("FLASH_ENABLED", False):
+        from bot_flash import FlashCrashBot
+        bot_state.flash_bot  = FlashCrashBot()
+        bot_state.flash_task = asyncio.create_task(bot_state.flash_bot.run())
+        logger.info("⚡ V4AF 闪崩做空模块随主程序自动启动")
+
     uvi_config = uvicorn.Config(
         "web:app",
         host=PANEL_HOST,

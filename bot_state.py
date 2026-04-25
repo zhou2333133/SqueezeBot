@@ -10,3 +10,7 @@ scalp_bot = None  # BinanceScalpBot 实例
 # 妖币扫描器全局状态
 yaobi_task: asyncio.Task | None = None
 yaobi_scanner = None  # YaobiScanner 实例
+
+# V4AF 闪崩做空模块全局状态
+flash_task: asyncio.Task | None = None
+flash_bot = None  # FlashCrashBot 实例

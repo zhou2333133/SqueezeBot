@@ -272,30 +272,36 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_decision_note": "OI强但仍需确认",
         }
 
-        ok, reason = bot._yaobi_entry_guard("METUSDT", "LONG")
+        ok, reason, _ = bot._yaobi_entry_guard("METUSDT", "LONG")
 
         self.assertFalse(ok)
         self.assertIn("等待确认", reason)
 
-        bot.candidate_meta["METUSDT"].update({
-            "yaobi_decision_action": "观察",
-            "yaobi_opportunity_action": "WATCH_SHORT",
-            "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
-            "yaobi_opportunity_rank": 1,
-            "yaobi_oi_trend_grade": "A",
-            "yaobi_oi_change_24h_pct": 82.9,
-            "yaobi_funding_rate_pct": -0.1851,
-        })
+        # 第二段：拥挤 OI + 反向资金费 → 必须开 HARD 守卫才"禁止追空"。
+        # 默认是 SOFT (返回 ok=True + size_mult<1)，此处显式开 HARD 验证拒绝路径。
+        config_manager.settings["SCALP_YAOBI_FUNDING_OI_GUARD_HARD"] = True
+        try:
+            bot.candidate_meta["METUSDT"].update({
+                "yaobi_decision_action": "观察",
+                "yaobi_opportunity_action": "WATCH_SHORT",
+                "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+                "yaobi_opportunity_rank": 1,
+                "yaobi_oi_trend_grade": "A",
+                "yaobi_oi_change_24h_pct": 82.9,
+                "yaobi_funding_rate_pct": -0.1851,
+            })
 
-        ok, reason = bot._yaobi_entry_guard("METUSDT", "SHORT")
+            ok, reason, _ = bot._yaobi_entry_guard("METUSDT", "SHORT")
 
-        self.assertFalse(ok)
-        self.assertIn("禁止追空", reason)
+            self.assertFalse(ok)
+            self.assertIn("禁止追空", reason)
+        finally:
+            config_manager.settings.pop("SCALP_YAOBI_FUNDING_OI_GUARD_HARD", None)
 
     def test_b_mode_requires_yaobi_context(self) -> None:
         bot = BinanceScalpBot()
 
-        ok, reason = bot._yaobi_entry_guard("BTCUSDT", "LONG")
+        ok, reason, _ = bot._yaobi_entry_guard("BTCUSDT", "LONG")
 
         self.assertFalse(ok)
         self.assertIn("必须有妖币扫描上下文", reason)
@@ -312,12 +318,14 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_opportunity_setup_state": "ARMED",
         }
 
-        ok, reason = bot._yaobi_entry_guard("BASUSDT", "SHORT")
+        # 反向 SHORT 与 WATCH_LONG_CONTINUATION 方向冲突 → 必拒
+        ok, reason, _ = bot._yaobi_entry_guard("BASUSDT", "SHORT")
 
         self.assertFalse(ok)
         self.assertIn("禁止反向追空", reason)
 
-        ok, _ = bot._yaobi_entry_guard("BASUSDT", "LONG")
+        # 同向 LONG 与 WATCH_LONG_CONTINUATION 不冲突 → 允许
+        ok, _, _ = bot._yaobi_entry_guard("BASUSDT", "LONG")
 
         self.assertTrue(ok)
 
@@ -333,7 +341,7 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_opportunity_setup_state": "ARMED",
         }
 
-        ok, reason = bot._yaobi_entry_guard("BASUSDT", "LONG", "动能突破多")
+        ok, reason, _ = bot._yaobi_entry_guard("BASUSDT", "LONG", "动能突破多")
 
         self.assertTrue(ok, reason)
 
@@ -380,12 +388,14 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_opportunity_setup_state": "HOT",
         }
 
-        ok, reason = bot._yaobi_entry_guard("SKRUSDT", "SHORT", "动能突破空")
+        # FADE 许可 + 1m 突破信号 → 拒绝（FADE 只接反打，不接突破追单）
+        ok, reason, _ = bot._yaobi_entry_guard("SKRUSDT", "SHORT", "动能突破空")
 
         self.assertFalse(ok)
         self.assertIn("局部反打", reason)
 
-        ok, _ = bot._yaobi_entry_guard("SKRUSDT", "SHORT", "轧多猎杀空")
+        # FADE 许可 + 1m 猎杀信号（squeeze） → 与 SQUEEZE trigger 匹配，允许
+        ok, _, _ = bot._yaobi_entry_guard("SKRUSDT", "SHORT", "轧多猎杀空")
 
         self.assertTrue(ok)
 
@@ -401,7 +411,7 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_opportunity_setup_state": "ARMED",
         }
 
-        ok, reason = bot._yaobi_entry_guard("KATUSDT", "LONG", "轧空猎杀多")
+        ok, reason, _ = bot._yaobi_entry_guard("KATUSDT", "LONG", "轧空猎杀多")
 
         self.assertFalse(ok)
         self.assertIn("顺势接力", reason)
@@ -416,7 +426,7 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_opportunity_rank": 2,
         }
 
-        ok, reason = bot._yaobi_entry_guard("OBSUSDT", "LONG")
+        ok, reason, _ = bot._yaobi_entry_guard("OBSUSDT", "LONG")
 
         self.assertFalse(ok)
         self.assertIn("未给自动执行许可", reason)
@@ -445,7 +455,7 @@ class TestScalpEngine(unittest.TestCase):
         bot._apply_tp3_trailing_stop(pos, 124.0)
 
         self.assertAlmostEqual(pos.trail_ref_price, 124.0)
-        self.assertAlmostEqual(pos.sl_price, 110.0, places=6)
+        self.assertAlmostEqual(pos.sl_price, 114.08, places=6)
 
         config_manager.settings["SCALP_TP3_AGGRESSIVE_RUNNER"] = False
         pos.sl_price = 100.3
@@ -453,7 +463,7 @@ class TestScalpEngine(unittest.TestCase):
 
         bot._apply_tp3_trailing_stop(pos, 124.0)
 
-        self.assertGreater(pos.sl_price, 114.0)
+        self.assertAlmostEqual(pos.sl_price, 110.0, places=2)
 
     def test_yaobi_futures_context_is_shared_to_scalp_candidates(self) -> None:
         upsert_candidate(Candidate(

@@ -1,6 +1,7 @@
 import asyncio
 import collections
 import csv
+import gzip
 import hmac
 import io
 import json
@@ -26,10 +27,13 @@ from scalp_diagnostics import apply_trade_diagnosis, build_learning_report
 import signals as _signals_mod
 from signals import (
     scalp_signal_queue, scalp_signals_history, scalp_positions, scalp_trade_history,
+    flash_signals_history, flash_positions, flash_trade_history, flash_review_log,
+    flash_filter_stats,
 )
 from scanner.candidates import (
     candidates_queue, get_sorted_candidates, get_anomaly_candidates,
     clear_candidates, scan_status, get_opportunity_queue, opportunity_update_queue,
+    candidates_map,
 )
 from scanner.ai_gateway import provider_status as ai_provider_status
 from scanner.knowledge_base import knowledge_status
@@ -931,72 +935,148 @@ def _analysis_markdown(pack: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def _build_scalp_analysis_pack() -> dict:
-    trades = [apply_trade_diagnosis(t) for t in list(scalp_trade_history)]
+# ── 复盘包瘦身工具 ───────────────────────────────────────────────────────────
+# slim 模式下保留的 entry_context 字段白名单（命中决策最相关的几类）
+_SLIM_ENTRY_CONTEXT_KEYS = {
+    "symbol", "direction", "signal_label", "market_state", "trigger_pct",
+    "candidate_rank", "direction_bias",
+    "change_24h", "vol_surge", "funding_rate", "fr_squeeze",
+    "scalp_candidate_seen_time", "scalp_candidate_elapsed_min",
+    "scalp_candidate_max_up_pct", "scalp_candidate_max_down_pct",
+    "pre_entry_favorable_from_candidate_pct", "pre_entry_adverse_from_candidate_pct",
+    "pre_entry_directional_30m_pct",
+    "yaobi_score", "yaobi_anomaly_score", "yaobi_category",
+    "yaobi_decision_action", "yaobi_decision_confidence",
+    "yaobi_decision_reasons", "yaobi_decision_risks",
+    "yaobi_oi_trend_grade", "yaobi_oi_change_24h_pct", "yaobi_oi_change_3d_pct",
+    "yaobi_funding_rate_pct", "yaobi_volume_ratio", "yaobi_taker_buy_ratio_5m",
+    "yaobi_opportunity_action", "yaobi_opportunity_permission",
+    "yaobi_opportunity_confidence", "yaobi_opportunity_setup_state",
+    "watchlist_status", "watchlist_reason",
+    "oi_change_3m_pct", "current_taker_ratio", "atr_pct",
+    "pre_entry_3m_pct", "pre_entry_5m_pct", "pre_entry_15m_pct",
+    "ema20_deviation_pct", "directional_ema20_deviation_pct",
+    "breakout_after_pullback", "taker_trend_5m",
+    "ret20m_pct", "ret60m_pct",
+}
+
+_SLIM_CANDIDATE_KEYS = {
+    "symbol", "score", "anomaly_score", "category", "decision_action",
+    "decision_confidence", "oi_trend_grade", "oi_change_24h_pct",
+    "funding_rate_pct", "volume_ratio", "opportunity_action",
+    "opportunity_permission", "opportunity_setup_state",
+}
+
+
+def _slim_entry_context(ctx: dict | None) -> dict | None:
+    if not isinstance(ctx, dict):
+        return ctx
+    return {k: v for k, v in ctx.items() if k in _SLIM_ENTRY_CONTEXT_KEYS}
+
+
+def _slim_trade(trade: dict) -> dict:
+    t = dict(trade)
+    if "entry_context" in t:
+        t["entry_context"] = _slim_entry_context(t["entry_context"])
+    if "entry_1m_profile" in t and isinstance(t["entry_1m_profile"], dict):
+        t["entry_1m_profile"] = {
+            k: v for k, v in t["entry_1m_profile"].items()
+            if k in {"pre_entry_3m_pct", "pre_entry_5m_pct", "pre_entry_15m_pct",
+                     "ema20_deviation_pct", "directional_ema20_deviation_pct",
+                     "breakout_after_pullback", "taker_trend_5m",
+                     "current_volume_ratio"}
+        }
+    return t
+
+
+def _slim_candidate(c: dict) -> dict:
+    return {k: c.get(k) for k in _SLIM_CANDIDATE_KEYS if c.get(k) is not None}
+
+
+async def _build_scalp_analysis_pack(detail: str = "slim") -> dict:
+    detail = (detail or "slim").lower()
+    full_mode = detail == "full"
+
+    raw_trades = [apply_trade_diagnosis(t) for t in list(scalp_trade_history)]
+    trades = raw_trades if full_mode else [_slim_trade(t) for t in raw_trades]
     bot = bot_state.scalp_bot
-    learning_report = build_learning_report(trades)
+    learning_report = build_learning_report(raw_trades)
     runtime = {
         "scalp_running": bool(bot_state.scalp_task and not bot_state.scalp_task.done()),
         "yaobi_running": bool(bot_state.yaobi_task and not bot_state.yaobi_task.done()),
         "open_positions": len(scalp_positions),
         "scalp_signals": len(scalp_signals_history),
-        "scalp_trades": len(trades),
+        "scalp_trades": len(raw_trades),
+        "detail_mode": detail,
     }
     provider_diag = {
         "provider_metrics": provider_metrics_snapshot(),
         "scan_sources": scan_status.get("sources", {}),
         "ai_status": scan_status.get("ai_status") or ai_provider_status(),
-        "knowledge": knowledge_status(),
     }
-    try:
-        from config import surf_credentials_status, okx_credentials_status
-        from scanner.sources import binance_square
-        provider_diag["credentials"] = {
-            "surf": surf_credentials_status(),
-            "okx": okx_credentials_status(),
-            "binance_square": binance_square.auth_status(),
-        }
-    except Exception as e:
-        provider_diag["credentials_error"] = str(e)
+    if full_mode:
+        provider_diag["knowledge"] = knowledge_status()
+        try:
+            from config import surf_credentials_status, okx_credentials_status
+            from scanner.sources import binance_square
+            provider_diag["credentials"] = {
+                "surf": surf_credentials_status(),
+                "okx": okx_credentials_status(),
+                "binance_square": binance_square.auth_status(),
+            }
+        except Exception as e:
+            provider_diag["credentials_error"] = str(e)
 
-    cfg = _redact_config(config_manager.settings)
-    candidate_snapshot = get_sorted_candidates()[:100]
+    candidate_limit = 100 if full_mode else 20
+    signal_sample_limit = 120 if full_mode else 40
+    block_log_limit = 120 if full_mode else 30
+    wait_diag_limit = 80 if full_mode else 20
+
+    candidate_snapshot = get_sorted_candidates()[:candidate_limit]
+    anomaly_snapshot = get_anomaly_candidates(
+        min_anomaly=int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35)),
+        limit=candidate_limit,
+    )
+
     pack = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "用途": "把这个 JSON/Markdown 发给 Codex，可用于复盘选币、入场、出场、数据源调用和参数问题。",
+        "用途": "AI复盘包：默认 slim（精简快照、保留交易历史）；?detail=full 拿全量。",
         "运行状态": runtime,
-        "策略参数": cfg,
+        "策略参数": _redact_config(config_manager.settings) if full_mode else None,
         "策略报告": await _scalp_report_or_none(),
-        "净值曲线摘要": _scalp_equity_summary(trades),
+        "净值曲线摘要": _scalp_equity_summary(raw_trades),
         "成交分组统计": {
-            "by_signal": _group_trade_stats(trades, "signal_label"),
-            "by_direction": _group_trade_stats(trades, "direction"),
-            "by_market_state": _group_trade_stats(trades, "market_state"),
-            "by_close_reason": _group_trade_stats(trades, "close_reason"),
-            "by_diagnosis": _group_trade_stats(trades, "trade_diagnosis"),
-            "by_symbol": _group_trade_stats(trades, "symbol"),
+            "by_signal": _group_trade_stats(raw_trades, "signal_label"),
+            "by_direction": _group_trade_stats(raw_trades, "direction"),
+            "by_market_state": _group_trade_stats(raw_trades, "market_state"),
+            "by_close_reason": _group_trade_stats(raw_trades, "close_reason"),
+            "by_diagnosis": _group_trade_stats(raw_trades, "trade_diagnosis"),
+            "by_symbol": _group_trade_stats(raw_trades, "symbol"),
         },
         "学习报告": learning_report,
         "成交明细": trades,
-        "信号样本": scalp_signals_history[-120:],
+        "信号样本": scalp_signals_history[-signal_sample_limit:],
         "当前持仓": dict(scalp_positions),
         "过滤统计快照": _signals_mod.scalp_filter_stats,
         "未开仓诊断": {
-            "最近拦截时间线": bot.entry_block_log_snapshot(limit=120) if bot else [],
-            "候选等待原因": bot.candidate_wait_diagnostics(limit=80) if bot else [],
+            "最近拦截时间线": bot.entry_block_log_snapshot(limit=block_log_limit) if bot else [],
+            "候选等待原因": bot.candidate_wait_diagnostics(limit=wait_diag_limit) if bot else [],
         },
         "候选池快照": {
             "symbols": list(getattr(bot, "candidate_symbols", []) or []),
-            "meta": dict(getattr(bot, "candidate_meta", {}) or {}),
+            "meta": dict(getattr(bot, "candidate_meta", {}) or {}) if full_mode else None,
         },
-        "关注池": list_watch_items(candidate_snapshot),
+        "关注池": list_watch_items(candidate_snapshot)[: 50 if full_mode else 20],
         "妖币扫描": {
             "status": dict(scan_status),
-            "opportunity_queue": get_opportunity_queue(limit=30),
-            "top_candidates": candidate_snapshot,
-            "anomaly_candidates": get_anomaly_candidates(
-                min_anomaly=int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35)),
-                limit=100,
+            "opportunity_queue": get_opportunity_queue(limit=30 if full_mode else 15),
+            "top_candidates": (
+                candidate_snapshot if full_mode
+                else [_slim_candidate(c) for c in candidate_snapshot]
+            ),
+            "anomaly_candidates": (
+                anomaly_snapshot if full_mode
+                else [_slim_candidate(c) for c in anomaly_snapshot]
             ),
             "decision_cards": [
                 {
@@ -1005,17 +1085,19 @@ async def _build_scalp_analysis_pack() -> dict:
                     "confidence": c.get("decision_confidence"),
                     "reasons": c.get("decision_reasons", []),
                     "risks": c.get("decision_risks", []),
-                    "missing": c.get("decision_missing", []),
-                    "note": c.get("decision_note", ""),
+                    "missing": c.get("decision_missing", []) if full_mode else [],
+                    "note": c.get("decision_note", "") if full_mode else "",
                     "oi_trend_grade": c.get("oi_trend_grade", ""),
                     "anomaly_score": c.get("anomaly_score", 0),
                     "score": c.get("score", 0),
                 }
-                for c in candidate_snapshot[:50]
+                for c in candidate_snapshot[: 50 if full_mode else 15]
             ],
         },
         "数据源诊断": provider_diag,
-        "字段说明": {
+    }
+    if full_mode:
+        pack["字段说明"] = {
             "mfe_pct": "持仓期间原方向最大有利波动百分比，用于判断是否拿住。",
             "mae_pct": "持仓期间最大逆向波动百分比，用于判断止损是否太紧。",
             "post_exit_*": "平仓后继续观察原方向 15/30/60/120 分钟，用于判断卖飞或方向是否选对。",
@@ -1029,31 +1111,245 @@ async def _build_scalp_analysis_pack() -> dict:
             "关注池": "人工关注/禁入/等待确认列表；用于复盘选币，不会自动生成新策略。",
             "decision_cards": "妖币扫描生成的人工决策解释卡：允许/等待/禁止/观察，只作筛选参考。",
             "opportunity_queue": "妖币扫描先做15分钟级选币，再由 Gemini/Surf 对 Top 候选做方向与风险终审；获得机会许可的币，才交给1m策略等待开仓点。",
-        },
-    }
+        }
     return pack
 
 
+def _maybe_gzip_response(
+    payload: str | bytes, request: Request, media_type: str, filename: str
+) -> StreamingResponse:
+    body = payload.encode("utf-8") if isinstance(payload, str) else payload
+    headers = {"Content-Disposition": f"attachment; filename={filename}"}
+    accept = (request.headers.get("accept-encoding") or "").lower()
+    if "gzip" in accept:
+        compressed = gzip.compress(body, compresslevel=6)
+        headers["Content-Encoding"] = "gzip"
+        headers["Content-Length"] = str(len(compressed))
+        return StreamingResponse(iter([compressed]), media_type=media_type, headers=headers)
+    headers["Content-Length"] = str(len(body))
+    return StreamingResponse(iter([body]), media_type=media_type, headers=headers)
+
+
 @app.get("/api/scalp/analysis-pack.json")
-async def export_scalp_analysis_pack_json():
-    pack = await _build_scalp_analysis_pack()
-    payload = json.dumps(pack, ensure_ascii=False, indent=2, default=str)
-    return StreamingResponse(
-        iter([payload]),
+async def export_scalp_analysis_pack_json(request: Request, detail: str = "slim"):
+    pack = await _build_scalp_analysis_pack(detail=detail)
+    full_mode = (detail or "slim").lower() == "full"
+    if full_mode:
+        payload = json.dumps(pack, ensure_ascii=False, indent=2, default=str)
+    else:
+        payload = json.dumps(pack, ensure_ascii=False, separators=(",", ":"), default=str)
+    return _maybe_gzip_response(
+        payload, request,
         media_type="application/json; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=squeezebot_analysis_pack.json"},
+        filename="squeezebot_analysis_pack.json",
     )
 
 
 @app.get("/api/scalp/analysis-pack.md")
-async def export_scalp_analysis_pack_markdown():
-    pack = await _build_scalp_analysis_pack()
+async def export_scalp_analysis_pack_markdown(request: Request, detail: str = "slim"):
+    pack = await _build_scalp_analysis_pack(detail=detail)
     payload = _analysis_markdown(pack)
-    return StreamingResponse(
-        iter([payload]),
+    return _maybe_gzip_response(
+        payload, request,
         media_type="text/markdown; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=squeezebot_analysis_pack.md"},
+        filename="squeezebot_analysis_pack.md",
     )
+
+
+# ─── V4AF 闪崩做空模块 API ────────────────────────────────────────────────────
+
+def _flash_group_stats(trades: list[dict], key: str) -> dict:
+    rows: dict[str, dict] = {}
+    for t in trades:
+        name = str(t.get(key) or "?")
+        pnl = float(t.get("pnl_usdt", 0) or 0)
+        row = rows.setdefault(name, {"count": 0, "wins": 0, "pnl_usdt": 0.0,
+                                     "_dur_sum": 0.0, "_mfe_sum": 0.0, "_mae_sum": 0.0})
+        row["count"] += 1
+        row["wins"] += 1 if pnl > 0 else 0
+        row["pnl_usdt"] += pnl
+        row["_dur_sum"] += float(t.get("duration_minutes", 0) or 0)
+        row["_mfe_sum"] += float(t.get("max_favorable_pct", 0) or 0)
+        row["_mae_sum"] += float(t.get("max_adverse_pct", 0) or 0)
+    for row in rows.values():
+        n = row["count"] or 1
+        row["win_rate_pct"] = round(row["wins"] / n * 100, 1)
+        row["pnl_usdt"] = round(row["pnl_usdt"], 4)
+        row["avg_duration_min"] = round(row.pop("_dur_sum") / n, 1)
+        row["avg_mfe_pct"] = round(row.pop("_mfe_sum") / n, 4)
+        row["avg_mae_pct"] = round(row.pop("_mae_sum") / n, 4)
+    return dict(sorted(rows.items(), key=lambda x: x[1]["pnl_usdt"]))
+
+
+_SLIM_FLASH_TRADE_KEYS = {
+    "symbol", "direction", "kind", "entry_price", "exit_price",
+    "pnl_pct", "pnl_usdt", "entry_time", "exit_time", "duration_minutes",
+    "close_reason", "close_detail", "review_count", "extension_count",
+    "max_favorable_pct", "max_adverse_pct", "paper", "vesting_phase",
+}
+
+
+def _slim_flash_trade(t: dict) -> dict:
+    out = {k: t.get(k) for k in _SLIM_FLASH_TRADE_KEYS if k in t}
+    meta = t.get("setup_meta") or {}
+    if isinstance(meta, dict):
+        out["setup_meta_slim"] = {
+            "gain_24h_pct": meta.get("gain_24h_pct"),
+            "peak_price": meta.get("peak_price"),
+            "lower_high_drop_pct": meta.get("lower_high_drop_pct"),
+            "listing_age_days": meta.get("listing_age_days"),
+            "vesting_phase": meta.get("vesting_phase"),
+        }
+    return out
+
+
+async def _build_flash_analysis_pack(detail: str = "slim") -> dict:
+    detail = (detail or "slim").lower()
+    full_mode = detail == "full"
+    bot = bot_state.flash_bot
+    raw_trades = list(flash_trade_history)
+    trades = raw_trades if full_mode else [_slim_flash_trade(t) for t in raw_trades]
+
+    win_pnls = [float(t.get("pnl_usdt", 0)) for t in raw_trades if float(t.get("pnl_usdt", 0)) > 0]
+    loss_pnls = [float(t.get("pnl_usdt", 0)) for t in raw_trades if float(t.get("pnl_usdt", 0)) < 0]
+    total_pnl = sum(float(t.get("pnl_usdt", 0)) for t in raw_trades)
+
+    pack = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "用途": "V4AF 闪崩做空复盘包：默认 slim；?detail=full 拿全量。",
+        "运行状态": {
+            "flash_running": bool(bot_state.flash_task and not bot_state.flash_task.done()),
+            "open_positions": len(flash_positions),
+            "trades": len(raw_trades),
+            "signals": len(flash_signals_history),
+            "reviews": len(flash_review_log),
+            "detail_mode": detail,
+        },
+        "整体统计": {
+            "总成交笔数": len(raw_trades),
+            "总盈亏USDT": round(total_pnl, 4),
+            "胜率%": round(len(win_pnls) / len(raw_trades) * 100, 1) if raw_trades else 0,
+            "平均盈利USDT": round(sum(win_pnls) / len(win_pnls), 4) if win_pnls else 0,
+            "平均亏损USDT": round(sum(loss_pnls) / len(loss_pnls), 4) if loss_pnls else 0,
+            "盈亏比": round(
+                (sum(win_pnls) / len(win_pnls)) / abs(sum(loss_pnls) / len(loss_pnls)), 2
+            ) if win_pnls and loss_pnls else "N/A",
+        },
+        "成交分组统计": {
+            "by_close_reason": _flash_group_stats(raw_trades, "close_reason"),
+            "by_vesting_phase": _flash_group_stats(raw_trades, "vesting_phase"),
+            "by_symbol": _flash_group_stats(raw_trades, "symbol"),
+        },
+        "成交明细": trades,
+        "智能时间止损日志": list(flash_review_log)[-(50 if not full_mode else 500):],
+        "信号样本": flash_signals_history[-(40 if not full_mode else 200):],
+        "当前持仓": dict(flash_positions),
+        "过滤统计": dict(flash_filter_stats),
+        "选币池快照": (
+            bot.snapshot_status() if bot else {"running": False}
+        ),
+    }
+    if full_mode:
+        pack["策略参数"] = _redact_config({
+            k: v for k, v in config_manager.settings.items()
+            if k.startswith("FLASH_")
+        })
+        pack["字段说明"] = {
+            "kind": "V4AF_FLASH_SHORT — 妖币暴涨后做空",
+            "close_reason": "SL=宽硬止损 / TRAIL=反弹追踪 / smart_time_stop=智能时间止损（重评估失败）",
+            "智能时间止损日志": "每次到 FLASH_REVIEW_HOURS 时跑维持条件检查；keep=True 延期，keep=False 平仓",
+            "vesting_phase": "pre_unlock/unlock_active/unlock_late = 目标池；near_full_meme/low_volume = ban",
+            "setup_meta": "入场时三条件的具体值（24h涨幅/4H衰竭/1H lower high 细节）",
+        }
+    return pack
+
+
+@app.get("/api/flash/analysis-pack.json")
+async def export_flash_analysis_pack_json(request: Request, detail: str = "slim"):
+    pack = await _build_flash_analysis_pack(detail=detail)
+    full_mode = (detail or "slim").lower() == "full"
+    if full_mode:
+        payload = json.dumps(pack, ensure_ascii=False, indent=2, default=str)
+    else:
+        payload = json.dumps(pack, ensure_ascii=False, separators=(",", ":"), default=str)
+    return _maybe_gzip_response(
+        payload, request,
+        media_type="application/json; charset=utf-8",
+        filename="squeezebot_flash_pack.json",
+    )
+
+
+@app.get("/api/flash/status")
+async def get_flash_status():
+    bot = bot_state.flash_bot
+    return JSONResponse({
+        "running": bool(bot_state.flash_task and not bot_state.flash_task.done()),
+        "open_positions": len(flash_positions),
+        "trades": len(flash_trade_history),
+        "signals": len(flash_signals_history),
+        "reviews": len(flash_review_log),
+        "snapshot": bot.snapshot_status() if bot else {},
+    })
+
+
+@app.get("/api/flash/positions")
+async def get_flash_positions():
+    return JSONResponse({"positions": dict(flash_positions), "count": len(flash_positions)})
+
+
+@app.get("/api/flash/trades")
+async def get_flash_trades(limit: int = 50, full: bool = False):
+    trades = list(flash_trade_history)[-max(1, limit):]
+    if not full:
+        trades = [_slim_flash_trade(t) for t in trades]
+    return JSONResponse({"trades": trades, "total": len(flash_trade_history)})
+
+
+@app.get("/api/flash/reviews")
+async def get_flash_reviews(limit: int = 50):
+    return JSONResponse({"reviews": list(flash_review_log)[-max(1, limit):]})
+
+
+@app.get("/api/flash/candidates")
+async def get_flash_candidates():
+    """返回当前 V4AF 选币池（基于启发式 vesting 分组）。"""
+    eligible = []
+    banned = []
+    for c in candidates_map.values():
+        symbol = c.get("symbol", "")
+        if not symbol or not symbol.endswith("USDT"):
+            continue
+        view = {
+            "symbol": symbol,
+            "vesting_phase": c.get("vesting_phase", ""),
+            "listing_age_days": c.get("listing_age_days", 0),
+            "circulation_pct": c.get("circulation_pct", 0),
+            "fdv_ratio": c.get("fdv_ratio", 0),
+            "volume_24h": c.get("volume_24h", 0),
+            "price_change_24h": c.get("price_change_24h", 0),
+            "flash_eligible": c.get("flash_eligible", False),
+            "flash_ban_reason": c.get("flash_ban_reason", ""),
+        }
+        if c.get("flash_eligible"):
+            eligible.append(view)
+        else:
+            banned.append(view)
+    return JSONResponse({
+        "eligible": sorted(eligible, key=lambda x: x.get("price_change_24h", 0), reverse=True),
+        "banned": banned[:50],
+        "eligible_count": len(eligible),
+        "banned_count": len(banned),
+    })
+
+
+@app.delete("/api/flash/paper/positions")
+async def clear_flash_paper_positions():
+    paper_keys = [k for k, v in flash_positions.items() if v.get("paper")]
+    for k in paper_keys:
+        flash_positions.pop(k, None)
+        if bot_state.flash_bot:
+            bot_state.flash_bot.open_positions.pop(k, None)
+    return JSONResponse({"status": "success", "cleared": len(paper_keys)})
 
 
 @app.get("/api/scalp/paper/positions")

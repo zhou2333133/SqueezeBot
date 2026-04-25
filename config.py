@@ -11,6 +11,9 @@ except ImportError:
 # ── API 密钥 ───────────────────────────────────────────────────────────────────
 BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY",    "YOUR_BINANCE_API_KEY")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "YOUR_BINANCE_API_SECRET")
+# Flash (V4AF) 独立币安账户：留空则与 SCALP 共用主账户。
+BINANCE_FLASH_API_KEY    = os.getenv("BINANCE_FLASH_API_KEY",    "")
+BINANCE_FLASH_API_SECRET = os.getenv("BINANCE_FLASH_API_SECRET", "")
 SURF_API_KEY       = os.getenv("SURF_API_KEY",       "YOUR_SURF_API_KEY")
 OKX_API_KEY        = os.getenv("OKX_API_KEY",        "YOUR_OKX_API_KEY")
 OKX_SECRET_KEY     = os.getenv("OKX_SECRET_KEY",     "YOUR_OKX_SECRET_KEY")
@@ -145,6 +148,15 @@ def okx_credentials_status() -> dict:
     }
 
 
+def flash_credentials_status() -> dict:
+    """V4AF 模块币安账户状态。空 key 表示回退到主账户。"""
+    has_dedicated = _valid_secret(BINANCE_FLASH_API_KEY) and _valid_secret(BINANCE_FLASH_API_SECRET)
+    return {
+        "dedicated_account": has_dedicated,
+        "fallback_to_main": not has_dedicated,
+    }
+
+
 def ai_credentials_status() -> dict:
     providers = {
         "openai": _valid_secret(OPENAI_API_KEY),
@@ -159,21 +171,21 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042504
+    PROFILE_VERSION = 2026042505
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
         "SCALP_MAX_POSITIONS": 3,
-        "SCALP_TP1_RATIO": 0.40,
+        "SCALP_TP1_RATIO": 0.30,
         "SCALP_TP2_RATIO": 0.30,
         "SCALP_TP3_TRAIL_PCT": 8.0,
         "SCALP_CANDIDATE_LIMIT": 40,
         "SCALP_CANDIDATE_SOURCE_MODE": "YAOBI_ONLY",
         "SCALP_MAX_DAILY_LOSS_USDT": 200.0,
         "SCALP_MAX_DAILY_LOSS_R": 10.0,
-        "SCALP_TP1_RR": 1.2,
+        "SCALP_TP1_RR": 1.5,
         "SCALP_TP2_RR": 3.0,
-        "SCALP_TIME_STOP_MINUTES": 30,
+        "SCALP_TIME_STOP_MINUTES": 45,
         "SCALP_TP2_TIMEOUT_MINUTES": 120,
         "SCALP_STRUCTURE_TRAIL_BARS": 14,
         "SCALP_TP3_AGGRESSIVE_RUNNER": True,
@@ -221,12 +233,12 @@ class ConfigManager:
         "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
         "BREAKOUT_MAX_EMA20_DEVIATION_PCT": 2.0,
         "CONTINUATION_PULLBACK_ENABLED": True,
-        "CONTINUATION_TAKER_MIN": 0.55,
+        "CONTINUATION_TAKER_MIN": 0.58,
         "CONTINUATION_HOT_TAKER_MIN": 0.52,
-        "CONTINUATION_MIN_PULLBACK_PCT": 0.12,
+        "CONTINUATION_MIN_PULLBACK_PCT": 0.20,
         "CONTINUATION_RECLAIM_LOOKBACK": 3,
         "CONTINUATION_ATR_MAX_PCT": 2.50,
-        "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 4.50,
+        "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 3.00,
         "SIGNAL_COOLDOWN_SECONDS": 30,
         "OI_POLL_INTERVAL": 10,
         "SCALP_OI_PREFETCH_TOP_N": 30,
@@ -240,7 +252,7 @@ class ConfigManager:
         "SCALP_REQUIRE_YAOBI_CONTEXT": True,
         "SCALP_YAOBI_CONTEXT_TOP_N": 30,
         "SCALP_YAOBI_MIN_SCORE": 30,
-        "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
+        "SCALP_YAOBI_MIN_ANOMALY_SCORE": 45,
         "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
         "SCALP_YAOBI_BLOCK_WAIT_CONFIRM": True,
         "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
@@ -294,6 +306,30 @@ class ConfigManager:
         "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
         "OKX_MIN_REQUEST_INTERVAL": 0.20,
         "SURF_MIN_REQUEST_INTERVAL": 0.20,
+        # ── V4AF 闪崩做空模块（独立 bot，独立账户可选）──────────────────────────
+        "FLASH_ENABLED": False,
+        "FLASH_AUTO_TRADE": False,                # paper 模式默认
+        "FLASH_PAPER_TRADE": True,
+        "FLASH_POSITION_USDT": 100.0,
+        "FLASH_LEVERAGE": 5,
+        "FLASH_MAX_POSITIONS": 3,
+        "FLASH_24H_GAIN_MIN_PCT": 15.0,           # 24H 累计涨幅下限（候选条件）
+        "FLASH_4H_TAKER_SELL_MIN": 0.55,          # 4H Taker 卖压瞬时阈值
+        "FLASH_1H_LOWER_HIGH_LOOKBACK": 8,        # 找 lower high 看最近 N 根 1H
+        "FLASH_1H_LOWER_HIGH_MIN_DROP_PCT": 0.5,  # peak 后 lower high 至少低 X%
+        "FLASH_VOLUME_24H_MIN_USD": 1_000_000.0,  # 低于此量的币不入场
+        "FLASH_FDV_RATIO_MAX": 0.85,              # market_cap/FDV 高于此值视为接近全流通（meme ban）
+        "FLASH_SCAN_INTERVAL_SECONDS": 60,        # 扫描频率
+        "FLASH_KLINE_REFRESH_SECONDS": 300,       # 1H/4H K 线刷新间隔
+        "FLASH_SL_PCT": 4.0,                      # 宽硬止损（开仓价 + X%）
+        "FLASH_TRAIL_ACTIVATION_PCT": 1.0,        # 浮盈达到此值开始 trail
+        "FLASH_TRAIL_PCT": 1.5,                   # trail 回调出场
+        "FLASH_REVIEW_HOURS": 8,                  # 智能时间止损：每 N 小时重评估
+        "FLASH_REVIEW_EXTEND_HOURS": 4,           # 重评估通过后延长 N 小时
+        "FLASH_REVIEW_MAX_EXTENSIONS": 2,         # 最多延长几次
+        "FLASH_REVIEW_HOLD_LOSS_MAX_PCT": 1.0,    # 浮亏超过 X% 时不再延期
+        "FLASH_REQUIRE_VESTING_GROUP": True,      # 必须命中 V4AF 的目标 vesting 组
+        "FLASH_BAN_NEAR_FULL_CIRC_MEME": True,    # 接近全流通 meme 直接 ban
     }
 
     _BOUNDS: dict[str, tuple] = {
@@ -395,6 +431,25 @@ class ConfigManager:
         "YAOBI_AI_MAX_OUTPUT_TOKENS":   (200,    8000),
         "OKX_MIN_REQUEST_INTERVAL":    (0.02,   5.0),
         "SURF_MIN_REQUEST_INTERVAL":   (0.02,   5.0),
+        # ── V4AF 闪崩 ────────────────────────────────────────────────────────────
+        "FLASH_POSITION_USDT":         (1,      1_000_000),
+        "FLASH_LEVERAGE":              (1,      125),
+        "FLASH_MAX_POSITIONS":         (1,      20),
+        "FLASH_24H_GAIN_MIN_PCT":      (1.0,    100.0),
+        "FLASH_4H_TAKER_SELL_MIN":     (0.4,    0.9),
+        "FLASH_1H_LOWER_HIGH_LOOKBACK": (3,     30),
+        "FLASH_1H_LOWER_HIGH_MIN_DROP_PCT": (0.0, 10.0),
+        "FLASH_VOLUME_24H_MIN_USD":    (0.0,    1_000_000_000.0),
+        "FLASH_FDV_RATIO_MAX":         (0.0,    1.0),
+        "FLASH_SCAN_INTERVAL_SECONDS": (10,     600),
+        "FLASH_KLINE_REFRESH_SECONDS": (30,     1800),
+        "FLASH_SL_PCT":                (0.5,    20.0),
+        "FLASH_TRAIL_ACTIVATION_PCT":  (0.0,    20.0),
+        "FLASH_TRAIL_PCT":             (0.1,    10.0),
+        "FLASH_REVIEW_HOURS":          (1,      48),
+        "FLASH_REVIEW_EXTEND_HOURS":   (1,      24),
+        "FLASH_REVIEW_MAX_EXTENSIONS": (0,      10),
+        "FLASH_REVIEW_HOLD_LOSS_MAX_PCT": (0.0, 10.0),
     }
 
     def __init__(self):
@@ -409,7 +464,7 @@ class ConfigManager:
             "SCALP_POSITION_USDT":       100.0,
             "SCALP_LEVERAGE":            10,
             "SCALP_STOP_LOSS_PCT":       50.0,
-            "SCALP_TP1_RATIO":           0.40,
+            "SCALP_TP1_RATIO":           0.30,
             "SCALP_TP2_RATIO":           0.30,
             "SCALP_TP3_TRAIL_PCT":       8.0,
             "SCALP_WATCHLIST":           "",
@@ -422,9 +477,9 @@ class ConfigManager:
             "SCALP_RISK_PER_TRADE_USDT": 20.0,
             "SCALP_MAX_DAILY_LOSS_USDT": 200.0,
             "SCALP_MAX_DAILY_LOSS_R":    10.0,
-            "SCALP_TP1_RR":              1.2,
+            "SCALP_TP1_RR":              1.5,
             "SCALP_TP2_RR":              3.0,
-            "SCALP_TIME_STOP_MINUTES":   30,
+            "SCALP_TIME_STOP_MINUTES":   45,
             "SCALP_TP2_TIMEOUT_MINUTES": 120,
             "SCALP_STRUCTURE_TRAIL_BARS": 14,
             "SCALP_TP3_AGGRESSIVE_RUNNER": True,
@@ -467,12 +522,12 @@ class ConfigManager:
             "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
             "BREAKOUT_MAX_EMA20_DEVIATION_PCT": 2.0,
             "CONTINUATION_PULLBACK_ENABLED": True,
-            "CONTINUATION_TAKER_MIN":    0.55,
+            "CONTINUATION_TAKER_MIN":    0.58,
             "CONTINUATION_HOT_TAKER_MIN": 0.52,
-            "CONTINUATION_MIN_PULLBACK_PCT": 0.12,
+            "CONTINUATION_MIN_PULLBACK_PCT": 0.20,
             "CONTINUATION_RECLAIM_LOOKBACK": 3,
             "CONTINUATION_ATR_MAX_PCT":   2.50,
-            "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 4.50,
+            "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 3.00,
             "SIGNAL_COOLDOWN_SECONDS":   30,
             "OI_POLL_INTERVAL":          10,
             "SCALP_OI_PREFETCH_TOP_N":   30,
@@ -490,7 +545,7 @@ class ConfigManager:
             "SCALP_REQUIRE_YAOBI_CONTEXT": True,
             "SCALP_YAOBI_CONTEXT_TOP_N":  30,
             "SCALP_YAOBI_MIN_SCORE":      30,
-            "SCALP_YAOBI_MIN_ANOMALY_SCORE": 35,
+            "SCALP_YAOBI_MIN_ANOMALY_SCORE": 45,
             "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
             "SCALP_YAOBI_BLOCK_WAIT_CONFIRM": True,
             "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
@@ -554,6 +609,30 @@ class ConfigManager:
             "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
             "OKX_MIN_REQUEST_INTERVAL":  0.20,
             "SURF_MIN_REQUEST_INTERVAL": 0.20,
+            # ── V4AF 闪崩做空模块 ───────────────────────────────────────────────
+            "FLASH_ENABLED":             False,
+            "FLASH_AUTO_TRADE":          False,
+            "FLASH_PAPER_TRADE":         True,
+            "FLASH_POSITION_USDT":       100.0,
+            "FLASH_LEVERAGE":            5,
+            "FLASH_MAX_POSITIONS":       3,
+            "FLASH_24H_GAIN_MIN_PCT":    15.0,
+            "FLASH_4H_TAKER_SELL_MIN":   0.55,
+            "FLASH_1H_LOWER_HIGH_LOOKBACK": 8,
+            "FLASH_1H_LOWER_HIGH_MIN_DROP_PCT": 0.5,
+            "FLASH_VOLUME_24H_MIN_USD":  1_000_000.0,
+            "FLASH_FDV_RATIO_MAX":       0.85,
+            "FLASH_SCAN_INTERVAL_SECONDS": 60,
+            "FLASH_KLINE_REFRESH_SECONDS": 300,
+            "FLASH_SL_PCT":              4.0,
+            "FLASH_TRAIL_ACTIVATION_PCT": 1.0,
+            "FLASH_TRAIL_PCT":           1.5,
+            "FLASH_REVIEW_HOURS":        8,
+            "FLASH_REVIEW_EXTEND_HOURS": 4,
+            "FLASH_REVIEW_MAX_EXTENSIONS": 2,
+            "FLASH_REVIEW_HOLD_LOSS_MAX_PCT": 1.0,
+            "FLASH_REQUIRE_VESTING_GROUP": True,
+            "FLASH_BAN_NEAR_FULL_CIRC_MEME": True,
         }
         self.settings: dict = self.load()
 

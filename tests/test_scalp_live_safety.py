@@ -97,6 +97,8 @@ class TestScalpLiveSafety(unittest.TestCase):
             "SCALP_TP3_TRAIL_PCT": 8.0,
             "SCALP_SURF_ENTRY_AI_ENABLED": False,
             "SCALP_USE_YAOBI_CONTEXT": False,
+            # 测试不模拟 wick 双 tick 确认；单 tick 即触发 TP/SL
+            "SCALP_TP_CONFIRM_TICKS": 1,
         })
 
     def tearDown(self) -> None:

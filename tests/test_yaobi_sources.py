@@ -582,7 +582,7 @@ class TestYaobiSources(unittest.TestCase):
                 config_manager.settings["YAOBI_AI_DAILY_USD_CAP"] = 0.0
                 captured = {}
 
-                async def fake_gemini(_session, system_prompt, payload, _max_output):
+                async def fake_gemini(system_prompt, payload, _max_output):
                     captured["system_prompt"] = system_prompt
                     captured["payload"] = payload
                     return json.dumps({
@@ -680,13 +680,21 @@ class TestYaobiSources(unittest.TestCase):
                     return False
 
             class DummySession:
+                def __init__(self, *_, **__):
+                    pass
                 def post(self, url, headers=None, json=None, timeout=None):
                     seen.append(url)
                     if "gemini-2.5-flash" in url:
                         return DummyResp(200, {"candidates": [{"content": {"parts": [{"text": "not-json"}]}}]})
                     return DummyResp(200, {"candidates": [{"content": {"parts": [{"text": "{\"opportunities\":[]}"}]}}]})
+                async def __aenter__(self):
+                    return self
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
 
-            text, _tokens = asyncio.run(ai_gateway._call_gemini(DummySession(), "sys", '{"k":1}', 256))
+            with patch("scanner.ai_gateway.aiohttp.ClientSession", DummySession):
+                with patch("scanner.ai_gateway.GEMINI_API_KEY", "test-key"):
+                    text, _tokens = asyncio.run(ai_gateway._call_gemini("sys", '{"k":1}', 256))
             self.assertEqual(text, "{\"opportunities\":[]}")
             self.assertGreaterEqual(len(seen), 2)
             self.assertTrue(any("gemini-2.5-flash-lite" in url or "gemini-2.5-pro" in url or "gemini-3-flash-preview" in url for url in seen[1:]))
