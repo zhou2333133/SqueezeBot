@@ -37,6 +37,7 @@
   .to-toggle input:checked ~ .ttrack { background:#f97316; }
   .tab-sc-on   { background:#3a1f0a; color:#fb923c; box-shadow:0 0 18px rgba(249,115,22,.2); }
   .tab-yb-on   { background:#0f2a1a; color:#4ade80; box-shadow:0 0 18px rgba(74,222,128,.2); }
+  .tab-fl-on   { background:#3a0a1f; color:#f472b6; box-shadow:0 0 18px rgba(244,114,182,.25); }
   .tab-off     { color:#4b5563; }
   .tab-off:hover { color:#9ca3af; background:#10102a; }
   .score-bar-bg { background:#0e1a14; border-radius:6px; overflow:hidden; height:6px; }
@@ -96,6 +97,10 @@
       <button @click="mode='yaobi'" :class="mode==='yaobi'?'tab-yb-on':'tab-off'"
         class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
         🔍 妖币扫描
+      </button>
+      <button @click="mode='flash'" :class="mode==='flash'?'tab-fl-on':'tab-off'"
+        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
+        💥 V4AF 闪崩
       </button>
     </div>
 
@@ -1838,6 +1843,258 @@
 
 </div><!-- /yaobi -->
 
+<!-- ═══════════ V4AF FLASH TAB ════════════════════════════════════════════════ -->
+<div x-show="mode==='flash'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
+
+  <!-- Control Bar -->
+  <div class="card px-5 py-4 flex flex-wrap items-center gap-4" style="border-color:rgba(244,114,182,.25)">
+    <div class="flex items-center gap-3">
+      <span class="w-2.5 h-2.5 rounded-full" :class="flashRunning?'bg-pink-400 shadow-[0_0_8px_#f472b6] animate-pulse':'bg-gray-600'"></span>
+      <span class="font-semibold" :class="flashRunning?'text-pink-300':'text-gray-500'"
+        x-text="flashRunning?'💥 闪崩做空运行中':'● 已停止'"></span>
+      <span x-show="flashRunning" class="text-xs text-gray-500"
+        x-text="'选币池 '+(flashStatus.snapshot?.candidate_symbols?.length||0)+' 个'"></span>
+      <span x-show="Object.keys(flashPositions).length>0"
+        class="px-2 py-0.5 rounded-md text-xs"
+        style="background:rgba(244,114,182,.15);color:#f472b6"
+        x-text="Object.keys(flashPositions).length+' 个持仓'"></span>
+      <span class="px-2 py-0.5 rounded-md text-xs"
+        :style="(cfg.FLASH_AUTO_TRADE && !cfg.FLASH_PAPER_TRADE) ? 'background:rgba(239,68,68,.18);color:#fca5a5' : 'background:rgba(245,158,11,.18);color:#fcd34d'"
+        x-text="(cfg.FLASH_AUTO_TRADE && !cfg.FLASH_PAPER_TRADE) ? '🔴 实盘' : '🟡 Paper模式'"></span>
+    </div>
+    <div class="flex items-center gap-2 ml-auto">
+      <button @click="flashRunning?stopFlash():startFlash()"
+        :class="flashRunning?'bg-red-700 hover:bg-red-600':'bg-pink-600 hover:bg-pink-500'"
+        class="px-6 py-2 rounded-xl text-white text-sm font-bold transition-colors">
+        <span x-text="flashRunning?'■ 停止闪崩':'▶ 启动闪崩'"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats Row -->
+  <div class="grid grid-cols-2 sm:grid-cols-5 gap-4">
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">活跃持仓</div>
+      <div class="text-2xl font-bold text-pink-400" x-text="Object.keys(flashPositions).length"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="'最大 '+(cfg.FLASH_MAX_POSITIONS??3)+' 个'"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">累计成交</div>
+      <div class="text-2xl font-bold text-white" x-text="flashTrades.length+'笔'"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="'胜率 '+flashWinRate()+'%'"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">累计盈亏</div>
+      <div class="text-2xl font-bold" :class="flashTotalPnl()>=0?'text-green-400':'text-red-400'"
+        x-text="(flashTotalPnl()>=0?'+':'')+flashTotalPnl().toFixed(2)+' U'"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">合格选币池</div>
+      <div class="text-2xl font-bold text-cyan-300" x-text="flashCandidates.eligible_count||0"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="'排除 '+(flashCandidates.banned_count||0)+' 个'"></div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">智能续期</div>
+      <div class="text-2xl font-bold text-yellow-300" x-text="flashReviews.length"></div>
+      <div class="text-xs text-gray-600 mt-0.5">8H 重评估次数</div>
+    </div>
+  </div>
+
+  <!-- Open Positions -->
+  <div class="card p-4" x-show="Object.keys(flashPositions).length>0">
+    <div class="flex items-center justify-between mb-3">
+      <div class="text-sm font-semibold text-pink-300">活跃做空持仓（智能时间止损）</div>
+      <button @click="clearFlashPaper()" class="text-xs text-gray-500 hover:text-red-400">清空 paper 持仓</button>
+    </div>
+    <div class="space-y-2">
+      <template x-for="(p, sym) in flashPositions" :key="sym">
+        <div class="border border-[#2a1535] rounded-lg p-3 bg-[#0c0820]">
+          <div class="flex flex-wrap items-center gap-3 text-sm">
+            <span class="font-bold text-pink-300" x-text="p.symbol"></span>
+            <span class="px-2 py-0.5 rounded text-xs" style="background:rgba(239,68,68,.18);color:#fca5a5"
+              x-text="'SHORT'"></span>
+            <span class="text-xs text-gray-500" x-text="'入 '+(p.entry_price||0).toFixed(6)"></span>
+            <span class="text-xs text-gray-500" x-text="'SL '+(p.sl_price||0).toFixed(6)"></span>
+            <span class="text-xs text-gray-500" x-text="'peak '+(p.peak_price||0).toFixed(6)"></span>
+            <span class="text-xs px-2 py-0.5 rounded" style="background:rgba(250,204,21,.15);color:#fcd34d"
+              x-show="p.next_review_at" x-text="'下次重评估 '+(p.next_review_at||'').slice(11,16)"></span>
+            <span class="text-xs text-gray-500" x-show="p.review_count>0"
+              x-text="'已审 '+p.review_count+' 次 / 续期 '+p.extension_count"></span>
+            <span class="ml-auto text-xs"
+              :class="(p.max_favorable_pct||0)>0?'text-green-400':'text-gray-500'"
+              x-text="'MFE '+((p.max_favorable_pct||0).toFixed(2))+'% / MAE '+((p.max_adverse_pct||0).toFixed(2))+'%'"></span>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-12 gap-5">
+
+    <!-- Left: settings + reviews -->
+    <div class="col-span-12 xl:col-span-5 space-y-5">
+
+      <!-- Settings -->
+      <div class="card p-4">
+        <div class="text-sm font-semibold text-pink-300 mb-3">V4AF 参数</div>
+        <form @submit.prevent="saveFlashConfig()" class="space-y-2 text-sm">
+          <div class="grid grid-cols-2 gap-3">
+            <label class="flex items-center gap-2">
+              <input type="checkbox" x-model="cfg.FLASH_PAPER_TRADE" class="accent-pink-500">
+              <span class="text-yellow-300">📋 模拟模式</span>
+            </label>
+            <label class="flex items-center gap-2">
+              <input type="checkbox" x-model="cfg.FLASH_AUTO_TRADE" class="accent-red-500">
+              <span class="text-red-300">🔴 实盘下单</span>
+            </label>
+          </div>
+          <div class="grid grid-cols-2 gap-3 mt-3">
+            <div>
+              <div class="text-xs text-gray-500 mb-1">每仓 USDT</div>
+              <input type="number" x-model.number="cfg.FLASH_POSITION_USDT" class="inp" step="10" min="1">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">杠杆</div>
+              <input type="number" x-model.number="cfg.FLASH_LEVERAGE" class="inp" step="1" min="1">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">最大持仓数</div>
+              <input type="number" x-model.number="cfg.FLASH_MAX_POSITIONS" class="inp" step="1" min="1">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">24H涨幅下限 %</div>
+              <input type="number" x-model.number="cfg.FLASH_24H_GAIN_MIN_PCT" class="inp" step="1" min="1">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">硬 SL %</div>
+              <input type="number" x-model.number="cfg.FLASH_SL_PCT" class="inp" step="0.5" min="0.5">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">Trail %</div>
+              <input type="number" x-model.number="cfg.FLASH_TRAIL_PCT" class="inp" step="0.1" min="0.1">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">重评估间隔 (h)</div>
+              <input type="number" x-model.number="cfg.FLASH_REVIEW_HOURS" class="inp" step="1" min="1">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">续期最多 N 次</div>
+              <input type="number" x-model.number="cfg.FLASH_REVIEW_MAX_EXTENSIONS" class="inp" step="1" min="0">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">1H lower-high 回看</div>
+              <input type="number" x-model.number="cfg.FLASH_1H_LOWER_HIGH_LOOKBACK" class="inp" step="1" min="3">
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">最低 24h 量 USD</div>
+              <input type="number" x-model.number="cfg.FLASH_VOLUME_24H_MIN_USD" class="inp" step="100000" min="0">
+            </div>
+          </div>
+          <div class="flex justify-end mt-3">
+            <button type="submit" class="px-4 py-1.5 rounded bg-pink-600 hover:bg-pink-500 text-white text-xs font-semibold">保存</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Smart time-stop reviews -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold text-pink-300">智能时间止损评估日志</div>
+          <span class="text-xs text-gray-600" x-text="flashReviews.length+' 条'"></span>
+        </div>
+        <div class="space-y-1.5 max-h-96 overflow-y-auto pr-1">
+          <template x-for="r in [...flashReviews].slice(-30).reverse()" :key="r.time+r.symbol">
+            <div class="text-xs border-l-2 pl-2 py-1"
+              :class="r.keep?'border-green-500 text-green-300':'border-red-500 text-red-300'">
+              <span x-text="(r.time||'').slice(11,16)"></span>
+              <span class="mx-1 text-gray-500">|</span>
+              <span class="font-bold text-white" x-text="r.symbol"></span>
+              <span class="ml-1" x-text="r.keep?'✓ 续期':'✗ 平仓'"></span>
+              <span class="ml-1 text-gray-500" x-text="r.reason"></span>
+              <span class="ml-1 text-gray-600" x-text="'#'+r.review_count+' / 已持 '+r.elapsed_minutes+'min'"></span>
+            </div>
+          </template>
+          <div x-show="flashReviews.length===0" class="text-xs text-gray-700 text-center py-6">
+            暂无重评估记录（持仓达到 FLASH_REVIEW_HOURS 才会触发）
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right: candidates + trades -->
+    <div class="col-span-12 xl:col-span-7 space-y-5">
+
+      <!-- Eligible candidates -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold text-pink-300">合格选币池（启发式 vesting 分组）</div>
+          <button @click="loadFlashCandidates()" class="text-xs text-gray-500 hover:text-pink-400">↻ 刷新</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead class="text-gray-600 border-b border-[#1c1c38]">
+              <tr>
+                <th class="text-left py-1.5">币种</th>
+                <th class="text-left">分组</th>
+                <th class="text-right">上线天</th>
+                <th class="text-right">流通%</th>
+                <th class="text-right">FDV比</th>
+                <th class="text-right">24h量 (M)</th>
+                <th class="text-right">24h涨</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="c in (flashCandidates.eligible||[]).slice(0,30)" :key="c.symbol">
+                <tr class="border-b border-[#0e0e22] hover:bg-[#0c0820]">
+                  <td class="py-1 font-bold text-white" x-text="c.symbol"></td>
+                  <td class="text-cyan-300" x-text="c.vesting_phase||'-'"></td>
+                  <td class="text-right text-gray-400" x-text="c.listing_age_days"></td>
+                  <td class="text-right text-gray-400" x-text="((c.circulation_pct||0)*100).toFixed(0)+'%'"></td>
+                  <td class="text-right text-gray-400" x-text="(c.fdv_ratio||0).toFixed(2)"></td>
+                  <td class="text-right text-gray-400" x-text="((c.volume_24h||0)/1e6).toFixed(1)"></td>
+                  <td class="text-right" :class="(c.price_change_24h||0)>=15?'text-pink-300 font-bold':'text-gray-500'"
+                    x-text="((c.price_change_24h||0)>=0?'+':'')+(c.price_change_24h||0).toFixed(1)+'%'"></td>
+                </tr>
+              </template>
+              <tr x-show="(flashCandidates.eligible||[]).length===0">
+                <td colspan="7" class="text-center text-gray-700 py-4">
+                  暂无合格选币（启动 V4AF 后从妖币扫描候选池启发式分类）
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Recent trades -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-sm font-semibold text-pink-300">最近成交</div>
+          <a href="/api/flash/analysis-pack.json"
+            download class="text-xs text-gray-500 hover:text-pink-400" title="V4AF 复盘包 (slim+gzip)">⬇ 复盘包</a>
+        </div>
+        <div class="space-y-1 max-h-96 overflow-y-auto pr-1 text-xs">
+          <template x-for="t in [...flashTrades].slice(-30).reverse()" :key="t.exit_time+t.symbol">
+            <div class="flex items-center gap-2 border-b border-[#0e0e22] py-1">
+              <span class="text-gray-500" x-text="(t.exit_time||'').slice(11,16)"></span>
+              <span class="font-bold text-white" x-text="t.symbol"></span>
+              <span class="text-red-300" x-text="t.close_reason"></span>
+              <span :class="(t.pnl_usdt||0)>=0?'text-green-400':'text-red-400'"
+                x-text="((t.pnl_usdt||0)>=0?'+':'')+(t.pnl_usdt||0).toFixed(2)+'U'"></span>
+              <span class="text-gray-500" x-text="((t.pnl_pct||0).toFixed(2))+'%'"></span>
+              <span class="text-gray-600 ml-auto" x-text="(t.duration_minutes||0).toFixed(0)+'min · 续'+(t.extension_count||0)+'次'"></span>
+            </div>
+          </template>
+          <div x-show="flashTrades.length===0" class="text-center text-gray-700 py-6">暂无成交</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div><!-- /flash -->
+
 </main>
 
 <!-- Panel Auth -->
@@ -1900,6 +2157,11 @@ function app() {
     modelOptions: MODEL_OPTIONS,
 
 
+    // V4AF flash-crash short module state
+    flashRunning: false, flashStatus: { snapshot: {} },
+    flashPositions: {}, flashTrades: [], flashReviews: [],
+    flashCandidates: { eligible: [], banned: [], eligible_count: 0, banned_count: 0 },
+
     yaobiCandidates: [], yaobiOpportunities: [], yaobiKnowledge: { rows:0, symbols:0 }, yaobiRunning: false, yaobiOpen: true,
     yaobiStatus: { last_scan:null, scanning:false, total_scanned:0, scored:0, anomalies:0, min_anomaly:35, sources:{}, provider_metrics:{}, credentials:{}, errors:[] },
     obsidianStatus: { vault_path:'', exists:false, file_count:0 },
@@ -1949,6 +2211,17 @@ function app() {
       setInterval(() => this.loadBalance(), 30000)
       this.loadScalpFilterStats()
       this.loadBalance()
+      // V4AF polling
+      this.pollFlashStatus()
+      this.loadFlashPositions()
+      this.loadFlashTrades()
+      this.loadFlashReviews()
+      this.loadFlashCandidates()
+      setInterval(() => this.pollFlashStatus(), 5000)
+      setInterval(() => this.loadFlashPositions(), 3000)
+      setInterval(() => this.loadFlashTrades(), 15000)
+      setInterval(() => this.loadFlashReviews(), 15000)
+      setInterval(() => this.loadFlashCandidates(), 30000)
     },
 
     async unlockPanel(silent=false) {
@@ -2241,6 +2514,90 @@ function app() {
         this.showToast(d.message, d.status==='success'?'success':'error')
         await this.pollScalpStatus()
       } catch{}
+    },
+
+    // ── V4AF flash-crash short module ───────────────────────────────────────
+    async pollFlashStatus() {
+      try {
+        const d=await(await this.apiFetch('/api/flash/status')).json()
+        this.flashRunning = !!d.running
+        this.flashStatus = d
+      } catch{}
+    },
+    async loadFlashPositions() {
+      try {
+        const d=await(await this.apiFetch('/api/flash/positions')).json()
+        this.flashPositions = d.positions || {}
+      } catch{}
+    },
+    async loadFlashTrades() {
+      try {
+        const d=await(await this.apiFetch('/api/flash/trades?limit=100')).json()
+        this.flashTrades = d.trades || []
+      } catch{}
+    },
+    async loadFlashReviews() {
+      try {
+        const d=await(await this.apiFetch('/api/flash/reviews?limit=100')).json()
+        this.flashReviews = d.reviews || []
+      } catch{}
+    },
+    async loadFlashCandidates() {
+      try {
+        const d=await(await this.apiFetch('/api/flash/candidates')).json()
+        this.flashCandidates = d
+      } catch{}
+    },
+    async startFlash() {
+      try {
+        const d=await(await this.apiFetch('/api/flash/start',{method:'POST'})).json()
+        this.cfg.FLASH_ENABLED = true
+        this.showToast(d.message, d.status==='started'||d.status==='already_running'?'success':'error')
+        await this.pollFlashStatus()
+      } catch(e){ this.showToast('❌ 启动失败: '+e,'error') }
+    },
+    async stopFlash() {
+      try {
+        const d=await(await this.apiFetch('/api/flash/stop',{method:'POST'})).json()
+        this.cfg.FLASH_ENABLED = false
+        this.flashRunning = false
+        this.flashPositions = {}
+        this.showToast(d.message, d.status==='stopped'?'success':'error')
+      } catch(e){ this.showToast('❌ 停止失败: '+e,'error') }
+    },
+    async saveFlashConfig() {
+      const fd = new FormData()
+      const flashKeys = [
+        'FLASH_PAPER_TRADE','FLASH_AUTO_TRADE','FLASH_POSITION_USDT','FLASH_LEVERAGE',
+        'FLASH_MAX_POSITIONS','FLASH_24H_GAIN_MIN_PCT','FLASH_SL_PCT','FLASH_TRAIL_PCT',
+        'FLASH_REVIEW_HOURS','FLASH_REVIEW_MAX_EXTENSIONS','FLASH_1H_LOWER_HIGH_LOOKBACK',
+        'FLASH_VOLUME_24H_MIN_USD',
+      ]
+      flashKeys.forEach(k => {
+        const v = this.cfg[k]
+        if (typeof v === 'boolean') fd.set(k, v ? 'true' : 'false')
+        else if (v !== undefined && v !== null) fd.set(k, String(v))
+      })
+      try {
+        await this.apiFetch('/api/config', {method:'POST', body:fd})
+        this.showToast('✅ V4AF 参数已保存', 'success')
+      } catch(e){ this.showToast('❌ 保存失败: '+e,'error') }
+    },
+    async clearFlashPaper() {
+      try {
+        const d=await(await this.apiFetch('/api/flash/paper/positions',{method:'DELETE'})).json()
+        this.showToast('已清除 '+(d.cleared||0)+' 个 paper 持仓','success')
+        await this.loadFlashPositions()
+      } catch{}
+    },
+    flashWinRate() {
+      const t = this.flashTrades
+      if (!t.length) return 0
+      const wins = t.filter(x => (x.pnl_usdt||0) > 0).length
+      return Math.round(wins / t.length * 1000) / 10
+    },
+    flashTotalPnl() {
+      return this.flashTrades.reduce((s,t)=>s+(t.pnl_usdt||0), 0)
     },
 
 

@@ -1342,6 +1342,36 @@ async def get_flash_candidates():
     })
 
 
+@app.post("/api/flash/start")
+async def flash_start():
+    if bot_state.flash_task and not bot_state.flash_task.done():
+        return JSONResponse({"status": "already_running", "message": "💥 V4AF 已在运行中"})
+    from bot_flash import FlashCrashBot
+    bot_state.flash_bot  = FlashCrashBot()
+    bot_state.flash_task = asyncio.create_task(bot_state.flash_bot.run())
+    config_manager.save({"FLASH_ENABLED": "true"})
+    logger.info("💥 V4AF 闪崩模块通过 Web 面板启动")
+    return JSONResponse({"status": "started", "message": "💥 V4AF 闪崩模块已启动"})
+
+
+@app.post("/api/flash/stop")
+async def flash_stop():
+    if bot_state.flash_bot:
+        bot_state.flash_bot.stop()
+    if bot_state.flash_task and not bot_state.flash_task.done():
+        bot_state.flash_task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(bot_state.flash_task), timeout=3)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+    bot_state.flash_task = None
+    bot_state.flash_bot  = None
+    flash_positions.clear()
+    config_manager.save({"FLASH_ENABLED": "false"})
+    logger.info("💥 V4AF 闪崩模块通过 Web 面板停止")
+    return JSONResponse({"status": "stopped", "message": "💥 V4AF 闪崩模块已停止"})
+
+
 @app.delete("/api/flash/paper/positions")
 async def clear_flash_paper_positions():
     paper_keys = [k for k, v in flash_positions.items() if v.get("paper")]
