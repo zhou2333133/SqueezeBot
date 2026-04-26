@@ -221,7 +221,8 @@ python -m unittest tests.test_token_supply tests.test_flash_signals -v
 | `SCALP_TIME_STOP_MINUTES` | 45 | 30 | 超时 2 笔吃 -46U；给回踩 setup 多 15 分钟发酵 | 2026-04-25 |
 | `CONTINUATION_TAKER_MIN` | 0.58 | 0.55 | entry_bad 占亏损 75%，主动买侧门槛收紧 | 2026-04-25 |
 | `CONTINUATION_MIN_PULLBACK_PCT` | 0.20 | 0.12 | 要求更深回踩，过滤毛刺 | 2026-04-25 |
-| `CONTINUATION_MAX_EMA20_DEVIATION_PCT` | 3.00 | 4.50 | 不在偏离 EMA20 过远时入场（追高） | 2026-04-25 |
+| `CONTINUATION_MAX_EMA20_DEVIATION_PCT` | 4.00 | 3.00 | 4-25 收紧到 3.0 后实测开仓 0；4-26 部分回退（V4AF 接管已涨完候选） | 2026-04-26 |
+| `BREAKOUT_MAX_EMA20_DEVIATION_PCT` | 3.0 | 2.0 | 同上 — 突破侧给 1% 呼吸空间 | 2026-04-26 |
 | `SCALP_YAOBI_MIN_ANOMALY_SCORE` | 45 | 35 | 提高妖币背书门槛 | 2026-04-25 |
 
 > 调参规则：每次改 defaults，**必须**(1) 同步改 `PROFILE_MIGRATION_DEFAULTS` 和 `default_settings`，(2) bump `PROFILE_VERSION`（用 `YYYYMMDDNN`），(3) 在本表追加/更新一行，(4) 看 `tests/test_config_migration.py` 是否有 assert 需要同步。
@@ -232,6 +233,8 @@ python -m unittest tests.test_token_supply tests.test_flash_signals -v
 
 按时间倒序，新条目在最上面。每条一行：日期 — 改了什么 — 为什么。删除超过 1 个月或被覆盖的条目。
 
+- **2026-04-26** — 部分回退 EMA20 偏离守卫（BREAKOUT 2.0→3.0, CONTINUATION 3.0→4.0）。理由：4-25 收紧后实测 21h 开仓 0，候选都是已涨 18-60% 的高偏离币；现在让 V4AF 接管这类（做空），scalp 同时给一点呼吸空间。`PROFILE_VERSION` 2026042505→2026042601。
+- **2026-04-26** — V4AF 模块前端面板补完（templates/index.html 加 "💥 V4AF 闪崩" tab + /api/flash/start|stop 热启停）。
 - **2026-04-25** — 新增 V4AF 闪崩做空模块（bot_flash + binance_klines + token_supply）。独立账户（BINANCE_FLASH_API_KEY），智能时间止损（8H+续期机制），slim+gzip 复盘包。22 个新测试。详见第 10 节接口契约。`PROFILE_VERSION` 2026042501→2026042502。
 - **2026-04-25** — 调 7 个 scalp 策略参数（见上"参数现状"表），目标：收紧 entry_bad（占亏损 75%）+ 让赚的单子赚更久。`PROFILE_VERSION` 2026042407→2026042501。
 - **2026-04-25** — 复盘包默认 slim + gzip 压缩；full 模式经 `?detail=full` 触发。1MB+ → ~20KB（gzip 后）。`web.py:934` 起。
