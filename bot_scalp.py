@@ -972,26 +972,33 @@ class BinanceScalpBot:
                     backoff = min(backoff * 2, 60)
 
     async def _ws_connect(self) -> None:
-        async with self.session.ws_connect(_WS_URL, heartbeat=20) as ws:
-            self._ws = ws
-            self._subscribed_streams = set()
-            params = sorted(self._desired_ws_streams())
-            for i, chunk in enumerate([params[j:j + 200] for j in range(0, len(params), 200)]):
-                await ws.send_str(json.dumps({"method": "SUBSCRIBE", "params": chunk, "id": i + 1}))
-                await asyncio.sleep(0.3)
-            self._subscribed_streams = set(params)
-            logger.info("⚡ WS 已连接，订阅 %d 个候选/持仓币种", len(self._subscribed_streams))
-            async for msg in ws:
-                if not self.running:
-                    break
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    await self._on_message(msg.data)
-                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                    break
-            if self.running:
-                logger.warning("⚡ WS 连接关闭，即将重连...")
-            self._ws = None
-            self._subscribed_streams = set()
+        # WS 走独立 session 不读代理环境变量。
+        # Why: 某些代理软件 (Clash Verge / mihomo 新内核 / 透明代理) 对 fstream
+        # 多 stream + SUBSCRIBE 模式处理不稳，会随机吞掉 server push frame，
+        # 导致 K 线消息收不到、kline_buffer 永远暖不机。
+        # REST 仍由 self.session 走代理（trust_env=True），只把 WS 切到直连。
+        # 前提: fstream.binance.com / fapi.binance.com 在本机能直连（curl 200）。
+        async with aiohttp.ClientSession() as ws_session:
+            async with ws_session.ws_connect(_WS_URL, heartbeat=20) as ws:
+                self._ws = ws
+                self._subscribed_streams = set()
+                params = sorted(self._desired_ws_streams())
+                for i, chunk in enumerate([params[j:j + 200] for j in range(0, len(params), 200)]):
+                    await ws.send_str(json.dumps({"method": "SUBSCRIBE", "params": chunk, "id": i + 1}))
+                    await asyncio.sleep(0.3)
+                self._subscribed_streams = set(params)
+                logger.info("⚡ WS 已连接 (直连不走代理)，订阅 %d 个候选/持仓币种", len(self._subscribed_streams))
+                async for msg in ws:
+                    if not self.running:
+                        break
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await self._on_message(msg.data)
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        break
+                if self.running:
+                    logger.warning("⚡ WS 连接关闭，即将重连...")
+                self._ws = None
+                self._subscribed_streams = set()
 
     async def _on_message(self, raw: str) -> None:
         try:
