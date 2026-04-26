@@ -978,7 +978,22 @@ class BinanceScalpBot:
         # 导致 K 线消息收不到、kline_buffer 永远暖不机。
         # REST 仍由 self.session 走代理（trust_env=True），只把 WS 切到直连。
         # 前提: fstream.binance.com / fapi.binance.com 在本机能直连（curl 200）。
-        async with aiohttp.ClientSession() as ws_session:
+        #
+        # DNS 用公共 DNS (1.1.1.1 + 8.8.8.8)：某些代理环境下系统 DNS
+        # (/etc/resolv.conf 指向 127.0.0.1/127.0.0.53) 不能解析 binance.com，
+        # 表现为 "Temporary failure in name resolution"。绕开系统 DNS 直接
+        # 用公共 DNS 解析。需要 aiodns: pip install aiodns
+        connector = None
+        try:
+            from aiohttp.resolver import AsyncResolver
+            connector = aiohttp.TCPConnector(
+                resolver=AsyncResolver(nameservers=["1.1.1.1", "8.8.8.8"]),
+            )
+        except ImportError:
+            logger.warning(
+                "⚡ aiodns 未安装，WS 走系统 DNS（若解析 fstream.binance.com 失败请: pip install aiodns）"
+            )
+        async with aiohttp.ClientSession(connector=connector) as ws_session:
             async with ws_session.ws_connect(_WS_URL, heartbeat=20) as ws:
                 self._ws = ws
                 self._subscribed_streams = set()

@@ -233,6 +233,7 @@ python -m unittest tests.test_token_supply tests.test_flash_signals -v
 
 按时间倒序，新条目在最上面。每条一行：日期 — 改了什么 — 为什么。删除超过 1 个月或被覆盖的条目。
 
+- **2026-04-26** — bot_scalp.py:974 `_ws_connect` 加 AsyncResolver 公共 DNS（1.1.1.1+8.8.8.8）。Why: 直连后系统 DNS 解析 fstream.binance.com 失败（"Temporary failure in name resolution"），因为系统 resolv.conf 指向 127.0.0.1（Clash DNS 端口）但 Clash 在直连模式下不解析 binance。aiodns 加入 requirements.txt。
 - **2026-04-26** — bot_scalp.py:974 `_ws_connect` 改用独立 session 不走代理。Why: 用户 Linux 测试机的代理（Clash Verge / mihomo 新内核）对 fstream 多 stream + SUBSCRIBE 模式不稳，会吞 server push frame 导致 K 线 8 小时收不到 1 条，bot 永远暖不机。fapi/fstream 本地能直连（curl 200），WS 切直连后立刻恢复。REST 仍走代理（OKX/Surf/Gemini 仍可能需要代理）。
 - **2026-04-26** — 部分回退 EMA20 偏离守卫（BREAKOUT 2.0→3.0, CONTINUATION 3.0→4.0）。理由：4-25 收紧后实测 21h 开仓 0，候选都是已涨 18-60% 的高偏离币；现在让 V4AF 接管这类（做空），scalp 同时给一点呼吸空间。`PROFILE_VERSION` 2026042505→2026042601。
 - **2026-04-26** — V4AF 模块前端面板补完（templates/index.html 加 "💥 V4AF 闪崩" tab + /api/flash/start|stop 热启停）。
