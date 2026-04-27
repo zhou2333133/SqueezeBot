@@ -225,6 +225,7 @@ def score(c: Candidate) -> Candidate:
 
     # ── 汇总 ─────────────────────────────────────────────────────────────────
     raw = sum(v for v in bd.values())
+    c.score_raw = raw                              # 未截断原始分（看含金量）
     c.score = max(0, min(100, raw))
     c.score_breakdown = bd
     c.signals = sigs
@@ -252,4 +253,92 @@ def score(c: Candidate) -> Candidate:
         ):
             c.category = "蓄势观察"
 
+    # ── 三层决策面板分类（v2.8 风格）──────────────────────────────────────────
+    classify_decision_tier(c)
+
     return c
+
+
+def classify_decision_tier(c: Candidate) -> None:
+    """
+    三层分类（写到 c.decision_tier + c.decision_subtype）：
+      L1_MAIN     主战场（已确认启动，建议追第一仓）
+      L2_AMBUSH   埋伏型（还没启动，等触发加仓）
+      RISK_AVOID  风险（避险，不开新多）
+      ""           中性（不归任何一档）
+
+    判定优先级: RISK_AVOID > L1_MAIN > L2_AMBUSH > ""
+    """
+    # ── 1. 风险预警（最高优先级，覆盖任何 L1/L2 信号）──────────────────────
+    risk_subtype = ""
+    # 1a) 出货家族：OI 下降 + 价格上涨（庄家在派发）
+    if c.oi_change_24h_pct < -15 and c.price_change_24h > 10:
+        risk_subtype = "出货家族"
+    # 1b) FR 警告：极端正资金费（追多过热）或极端负但已涨多（轧空尾声）
+    elif c.funding_rate_pct >= 0.15:
+        risk_subtype = "FR警告"
+    elif c.funding_rate_pct <= -0.5 and c.price_change_24h > 50:
+        risk_subtype = "FR警告"
+    # 1c) Surf AI 高风险硬阻断
+    elif c.surf_ai_hard_block or c.surf_ai_risk_level == "HIGH":
+        risk_subtype = "AI高风险"
+    # 1d) 链上风险（OKX 风险等级 / 危险标签 / Top10 集中度）
+    elif (c.okx_risk_level >= 4
+          or c.okx_top10_hold_pct >= 80
+          or any(t in {"honeypot", "lowLiquidity", "devHoldingStatusSellAll"}
+                 for t in (c.okx_token_tags or []))):
+        risk_subtype = "链上风险"
+    # 1e) 已大幅下跌
+    elif c.price_change_24h < -25:
+        risk_subtype = "已破位"
+    # 1f) OI 趋势转弱
+    elif c.oi_trend_grade == "RISK":
+        risk_subtype = "OI转弱"
+
+    if risk_subtype:
+        c.decision_tier = "RISK_AVOID"
+        c.decision_subtype = risk_subtype
+        return
+
+    # ── 2. L1 主战场（已启动，建议追第一仓）─────────────────────────────────
+    # 共同前提: 综合评分高 + OI 趋势好（FR 极端在第 1 步已经被 RISK 抓走）
+    l1_passes = c.score >= 70 and c.oi_trend_grade in {"S", "A"}
+    if l1_passes:
+        # L1 子类（按强度排序）
+        if c.oi_change_24h_pct >= 100 and c.volume_ratio >= 10:
+            c.decision_subtype = "OI爆发"
+        elif c.oi_acceleration >= 30 or (c.price_change_1h >= 5 and c.volume_ratio >= 8):
+            c.decision_subtype = "加速中"
+        elif c.oi_flat_days >= 7 and c.volume_ratio >= 5:
+            c.decision_subtype = "妖币启动"
+        else:
+            c.decision_subtype = "L1常规"
+        c.decision_tier = "L1_MAIN"
+        return
+
+    # ── 3. L2 埋伏型（还没启动，等触发）─────────────────────────────────────
+    # 准入: OI 趋势在累积，有"还没爆"的迹象
+    l2_passes = (
+        c.score >= 50
+        and (
+            c.oi_trend_grade in {"S", "A", "B"}
+            or c.oi_acceleration >= 15
+            or (c.oi_flat_days >= 5 and c.volume_ratio >= 2)
+        )
+    )
+    if l2_passes:
+        # L2 子类
+        if c.oi_flat_days >= 7 and 1.5 <= c.volume_ratio < 5:
+            c.decision_subtype = "静默建仓"
+        elif c.oi_change_24h_pct >= 30 and c.price_change_24h < 15:
+            c.decision_subtype = "突破前夜"
+        elif c.oi_acceleration >= 15 or c.price_change_1h >= 2:
+            c.decision_subtype = "早期启动"
+        else:
+            c.decision_subtype = "L2常规"
+        c.decision_tier = "L2_AMBUSH"
+        return
+
+    # ── 4. 中性（不进任何一档）──────────────────────────────────────────────
+    c.decision_tier = ""
+    c.decision_subtype = ""

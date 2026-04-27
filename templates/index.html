@@ -1024,6 +1024,89 @@
     </div>
   </div>
 
+  <!-- 三层决策面板 v2.8（妖币雷达风格）─────────────────────────────── -->
+  <div class="card p-5" style="border-color:rgba(74,222,128,.25)">
+    <div class="flex items-center justify-between mb-3">
+      <div class="text-sm font-semibold text-emerald-300">🎯 入场决策面板 · 6 块子面板（L1 主战场 / L2 埋伏 / 风险预警）</div>
+      <button @click="loadYaobiTiers()" class="text-xs text-gray-500 hover:text-emerald-400">↻ 刷新</button>
+    </div>
+
+    <!-- L1 主战场 -->
+    <div class="rounded-lg p-3 mb-3" style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.25)">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-red-400 text-sm">🔴 L1 主战场（追涨型，建议第一仓）</span>
+        <span class="text-xs text-gray-500" x-text="'共 '+(yaobiTiers.l1_main?.count||0)+' 个'"></span>
+      </div>
+      <template x-for="(items, subtype) in (yaobiTiers.l1_main?.subtypes||{})" :key="'l1-'+subtype">
+        <div class="mb-2">
+          <div class="text-xs text-gray-400 mb-1" x-text="subtype"></div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="c in items" :key="'l1-'+subtype+'-'+c.symbol">
+              <div class="border border-red-700 rounded px-2 py-1 bg-[#1a0b0b] text-xs">
+                <span class="font-bold text-red-300" x-text="c.symbol"></span>
+                <span class="ml-1 text-gray-400" x-text="(c.price_change_24h>=0?'+':'')+(c.price_change_24h||0).toFixed(1)+'%'"></span>
+                <span class="ml-1 text-gray-500" x-text="'分'+(c.score||0)"></span>
+                <span x-show="c.score_raw && c.score_raw>c.score" class="ml-1 text-gray-600" x-text="'raw:'+c.score_raw"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div x-show="!(yaobiTiers.l1_main?.count)" class="text-xs text-gray-700 py-1">暂无 L1 信号</div>
+    </div>
+
+    <!-- L2 埋伏型 -->
+    <div class="rounded-lg p-3 mb-3" style="background:rgba(250,204,21,.06);border:1px solid rgba(250,204,21,.3)">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-yellow-400 text-sm">🟡 L2 埋伏型（低吸观察，等启动加仓）</span>
+        <span class="text-xs text-gray-500" x-text="'共 '+(yaobiTiers.l2_ambush?.count||0)+' 个'"></span>
+      </div>
+      <template x-for="(items, subtype) in (yaobiTiers.l2_ambush?.subtypes||{})" :key="'l2-'+subtype">
+        <div class="mb-2">
+          <div class="text-xs text-gray-400 mb-1" x-text="subtype"></div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="c in items" :key="'l2-'+subtype+'-'+c.symbol">
+              <div class="border border-yellow-700 rounded px-2 py-1 bg-[#1a1505] text-xs">
+                <span class="font-bold text-yellow-300" x-text="c.symbol"></span>
+                <span class="ml-1 text-gray-400" x-text="(c.price_change_24h>=0?'+':'')+(c.price_change_24h||0).toFixed(1)+'%'"></span>
+                <span class="ml-1 text-gray-500" x-text="'分'+(c.score||0)"></span>
+                <span x-show="c.score_raw && c.score_raw>c.score" class="ml-1 text-gray-600" x-text="'raw:'+c.score_raw"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div x-show="!(yaobiTiers.l2_ambush?.count)" class="text-xs text-gray-700 py-1">暂无 L2 信号</div>
+    </div>
+
+    <!-- 风险预警 -->
+    <div class="rounded-lg p-3" style="background:rgba(107,114,128,.08);border:1px solid rgba(107,114,128,.3)">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-gray-300 text-sm">⚠ 风险预警（避险，不开新多 / 考虑减仓）</span>
+        <span class="text-xs text-gray-500" x-text="'共 '+(yaobiTiers.risk_avoid?.count||0)+' 个'"></span>
+      </div>
+      <template x-for="(items, subtype) in (yaobiTiers.risk_avoid?.subtypes||{})" :key="'risk-'+subtype">
+        <div class="mb-2">
+          <div class="text-xs text-gray-400 mb-1" x-text="subtype"></div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="c in items" :key="'risk-'+subtype+'-'+c.symbol">
+              <div class="border border-gray-700 rounded px-2 py-1 bg-[#0e0e0e] text-xs">
+                <span class="font-bold text-gray-300" x-text="c.symbol"></span>
+                <span class="ml-1" :class="(c.price_change_24h||0)<0?'text-red-400':'text-gray-500'"
+                  x-text="(c.price_change_24h>=0?'+':'')+(c.price_change_24h||0).toFixed(1)+'%'"></span>
+                <span class="ml-1 text-gray-500" x-text="'分'+(c.score||0)"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div x-show="!(yaobiTiers.risk_avoid?.count)" class="text-xs text-gray-700 py-1">暂无风险预警</div>
+    </div>
+
+    <div class="text-[11px] text-gray-600 mt-2 text-right" x-show="(yaobiTiers.neutral_count||0)>0"
+      x-text="'另有 '+yaobiTiers.neutral_count+' 个候选未被分类（中性）'"></div>
+  </div>
+
   <div class="grid grid-cols-12 gap-5">
 
     <!-- Left: Settings + Source Status -->
@@ -2163,6 +2246,7 @@ function app() {
     flashCandidates: { eligible: [], banned: [], eligible_count: 0, banned_count: 0 },
 
     yaobiCandidates: [], yaobiOpportunities: [], yaobiKnowledge: { rows:0, symbols:0 }, yaobiRunning: false, yaobiOpen: true,
+    yaobiTiers: { l1_main:{count:0,items:[],subtypes:{}}, l2_ambush:{count:0,items:[],subtypes:{}}, risk_avoid:{count:0,items:[],subtypes:{}}, neutral_count:0 },
     yaobiStatus: { last_scan:null, scanning:false, total_scanned:0, scored:0, anomalies:0, min_anomaly:35, sources:{}, provider_metrics:{}, credentials:{}, errors:[] },
     obsidianStatus: { vault_path:'', exists:false, file_count:0 },
     yaobiFilter: { minScore:0, chain:'', source:'' },
@@ -2199,6 +2283,7 @@ function app() {
       this.pollYaobiStatus()
       this.loadYaobiCandidates()
       this.loadYaobiOpportunities()
+      this.loadYaobiTiers()
       this.loadObsidianStatus()
       setInterval(() => this.loadScalpPositions(), 2000)
       setInterval(() => this.loadScalpTrades(), 10000)
@@ -2207,6 +2292,7 @@ function app() {
       setInterval(() => this.pollScalpStatus(), 5000)
       setInterval(() => this.pollYaobiStatus(), 8000)
       setInterval(() => this.loadYaobiOpportunities(), 10000)
+      setInterval(() => this.loadYaobiTiers(), 12000)
       setInterval(() => this.loadScalpFilterStats(), 30000)
       setInterval(() => this.loadBalance(), 30000)
       this.loadScalpFilterStats()
@@ -2622,6 +2708,12 @@ function app() {
         this.yaobiOpportunities=(d.opportunities||[]).map(c=>({...c,_open:false}))
         this.yaobiKnowledge=d.knowledge||this.yaobiKnowledge
         if(d.ai_status) this.yaobiStatus.ai_status=d.ai_status
+      } catch{}
+    },
+    async loadYaobiTiers() {
+      try {
+        const d=await(await this.apiFetch('/api/yaobi/tiers?limit=20')).json()
+        this.yaobiTiers=d
       } catch{}
     },
     async clearYaobiCandidates() {

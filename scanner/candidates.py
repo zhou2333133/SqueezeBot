@@ -158,8 +158,15 @@ class Candidate:
 
     # ── 打分 ──────────────────────────────────────────────────────────────────
     score:           int  = 0
+    score_raw:       int  = 0     # 未截断的原始评分（可>100），看含金量
     score_breakdown: dict = field(default_factory=dict)
     signals:         list = field(default_factory=list)   # human-readable
+
+    # ── 三层决策面板（v2.8 风格）───────────────────────────────────────────────
+    # decision_tier: L1_MAIN（追涨第一仓） / L2_AMBUSH（埋伏等启动） / RISK_AVOID（避险）/ ""（中性）
+    # decision_subtype: L1 子类（OI爆发/加速中/妖币启动） / L2 子类（突破前夜/静默建仓/早期启动） / 风险子类（出货家族/FR警告/链上风险）
+    decision_tier:    str = ""
+    decision_subtype: str = ""
 
     # ── 元数据 ────────────────────────────────────────────────────────────────
     found_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -288,8 +295,11 @@ class Candidate:
             "alpha_status":           self.alpha_status,
             "category":           self.category,
             "score":              self.score,
+            "score_raw":          self.score_raw,
             "score_breakdown":    self.score_breakdown,
             "signals":            self.signals,
+            "decision_tier":      self.decision_tier,
+            "decision_subtype":   self.decision_subtype,
             "found_at":           self.found_at,
             "updated_at":         self.updated_at,
             "links":              self.links,

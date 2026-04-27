@@ -487,6 +487,13 @@ class YaobiScanner:
             len(candidates), len(scored), min_score, min_anomaly, anomaly_count, elapsed,
         )
 
+        # ── 16b. 妖币雷达 Telegram/Discord 推送（best-effort, 不阻塞）─────────
+        try:
+            from .notifier import push_yaobi_scan_summary
+            await push_yaobi_scan_summary([c.to_dict() for c in scored])
+        except Exception as e:
+            logger.debug("📡 妖币雷达推送异常（已忽略）: %r", e)
+
         # ── 17. Obsidian 日报 (每天一次) ────────────────────────────────────
         today = date.today()
         if self._last_obsidian_date != today and scored:

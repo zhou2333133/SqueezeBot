@@ -325,8 +325,11 @@ class BinanceScalpBot:
             "yaobi_symbol": c.get("symbol", ""),
             "yaobi_name": c.get("name", ""),
             "yaobi_score": int(c.get("score", 0) or 0),
+            "yaobi_score_raw": int(c.get("score_raw", 0) or 0),
             "yaobi_anomaly_score": int(c.get("anomaly_score", 0) or 0),
             "yaobi_category": c.get("category", ""),
+            "yaobi_decision_tier": c.get("decision_tier", ""),
+            "yaobi_decision_subtype": c.get("decision_subtype", ""),
             "yaobi_sources": list(c.get("sources", []) or []),
             "yaobi_signals": list(c.get("signals", []) or [])[:8],
             "yaobi_decision_action": c.get("decision_action", ""),
@@ -620,6 +623,12 @@ class BinanceScalpBot:
         action = str(meta.get("yaobi_decision_action") or "")
         op_permission = str(meta.get("yaobi_opportunity_permission") or "")
         op_setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
+        # 三层决策面板: RISK_AVOID 强制 hard ban，跟 yaobi_decision_action="禁止交易" 同等优先级
+        tier = str(meta.get("yaobi_decision_tier") or "")
+        if tier == "RISK_AVOID":
+            subtype = meta.get("yaobi_decision_subtype") or "未知"
+            return False, f"妖币三层决策=RISK_AVOID/{subtype}，禁止开新单", 1.0
+
         if self.cfg.get("SCALP_YAOBI_BLOCK_DECISION_BAN", True) and action == "禁止交易":
             return False, f"妖币扫描决策=禁止交易: {meta.get('yaobi_decision_note') or meta.get('yaobi_decision_risks')}", 1.0
         if (

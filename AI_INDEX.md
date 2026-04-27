@@ -236,6 +236,7 @@ python -m unittest tests.test_token_supply tests.test_flash_signals -v
 
 按时间倒序，新条目在最上面。每条一行：日期 — 改了什么 — 为什么。删除超过 1 个月或被覆盖的条目。
 
+- **2026-04-27** — 妖币雷达 v2.8 风格三层决策面板。`Candidate` 加 `decision_tier`(L1_MAIN/L2_AMBUSH/RISK_AVOID/"") + `decision_subtype`(OI爆发/加速中/妖币启动/突破前夜/静默建仓/早期启动/出货家族/FR警告/AI高风险/链上风险/OI转弱/已破位) + `score_raw`(未截断原始分)。scorer.py 新增 `classify_decision_tier()` 在打分末尾调用。bot_scalp `_yaobi_entry_guard` 加 RISK_AVOID 强制 hard ban。Web 加 `/api/yaobi/tiers` 端点 + 妖币 tab 顶部 3 层分组面板。新增 scanner/notifier.py：扫描完按 tier 推 Telegram + Discord（去重指纹防重复）。17 个新测试。`PROFILE_VERSION` 2026042701→2026042702。
 - **2026-04-27** — 16 笔成交后第二轮调参 (entry_bad 占亏损 99.9% → 收紧入场质量): SCALP_YAOBI_MIN_SCORE 30→60 (D/MASK/AGT 这种边缘候选全亏)、SCALP_YAOBI_MIN_ANOMALY_SCORE 45→50、SCALP_TP1_SOFT_BREAKEVEN_PCT 0.30→0.60 (止损贴脸防洗盘)。`PROFILE_VERSION` 2026042601→2026042701。
 - **2026-04-27** — scanner/ai_gateway.py:546 移除 `gemini-3.1-pro-preview` + `gemini-3-flash-preview` from fallback。Why: 实测 89% 失败率 (58 calls / 52 fail, 全是 finish=MAX_TOKENS, JSON 截断)。只保留 2.5 系列稳定模型。
 - **2026-04-26** — bot_scalp.py:974 `_ws_connect` 加 AsyncResolver 公共 DNS（1.1.1.1+8.8.8.8）。Why: 直连后系统 DNS 解析 fstream.binance.com 失败（"Temporary failure in name resolution"），因为系统 resolv.conf 指向 127.0.0.1（Clash DNS 端口）但 Clash 在直连模式下不解析 binance。aiodns 加入 requirements.txt。

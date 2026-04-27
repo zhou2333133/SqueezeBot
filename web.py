@@ -961,10 +961,11 @@ _SLIM_ENTRY_CONTEXT_KEYS = {
 }
 
 _SLIM_CANDIDATE_KEYS = {
-    "symbol", "score", "anomaly_score", "category", "decision_action",
-    "decision_confidence", "oi_trend_grade", "oi_change_24h_pct",
+    "symbol", "score", "score_raw", "anomaly_score", "category",
+    "decision_action", "decision_confidence", "decision_tier", "decision_subtype",
+    "oi_trend_grade", "oi_change_24h_pct",
     "funding_rate_pct", "volume_ratio", "opportunity_action",
-    "opportunity_permission", "opportunity_setup_state",
+    "opportunity_permission", "opportunity_setup_state", "price_change_24h",
 }
 
 
@@ -1565,6 +1566,49 @@ async def yaobi_opportunities(limit: int = 20):
         "total": len(items),
         "ai_status": scan_status.get("ai_status") or ai_provider_status(),
         "knowledge": knowledge_status(),
+    })
+
+
+@app.get("/api/yaobi/tiers")
+async def yaobi_tiers(limit: int = 20):
+    """三层决策面板：把候选按 decision_tier 分组返回（v2.8 风格）。"""
+    all_candidates = get_sorted_candidates(min_score=0)
+    by_tier = {"L1_MAIN": [], "L2_AMBUSH": [], "RISK_AVOID": []}
+    for c in all_candidates:
+        tier = c.get("decision_tier") or ""
+        if tier in by_tier:
+            by_tier[tier].append(c)
+    # 按 score 排序，截断
+    for tier in by_tier:
+        by_tier[tier].sort(key=lambda x: int(x.get("score") or 0), reverse=True)
+        by_tier[tier] = by_tier[tier][:limit]
+
+    # 子家族分组（在每个 tier 内按 subtype 二级聚合）
+    def group_by_subtype(items: list[dict]) -> dict:
+        out: dict[str, list[dict]] = {}
+        for c in items:
+            key = c.get("decision_subtype") or "其他"
+            out.setdefault(key, []).append(c)
+        return out
+
+    return JSONResponse({
+        "l1_main": {
+            "count": len(by_tier["L1_MAIN"]),
+            "items": by_tier["L1_MAIN"],
+            "subtypes": group_by_subtype(by_tier["L1_MAIN"]),
+        },
+        "l2_ambush": {
+            "count": len(by_tier["L2_AMBUSH"]),
+            "items": by_tier["L2_AMBUSH"],
+            "subtypes": group_by_subtype(by_tier["L2_AMBUSH"]),
+        },
+        "risk_avoid": {
+            "count": len(by_tier["RISK_AVOID"]),
+            "items": by_tier["RISK_AVOID"],
+            "subtypes": group_by_subtype(by_tier["RISK_AVOID"]),
+        },
+        "neutral_count": len(all_candidates)
+            - len(by_tier["L1_MAIN"]) - len(by_tier["L2_AMBUSH"]) - len(by_tier["RISK_AVOID"]),
     })
 
 

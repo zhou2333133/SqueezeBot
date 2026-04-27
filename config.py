@@ -14,6 +14,10 @@ BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "YOUR_BINANCE_API_SECRET")
 # Flash (V4AF) 独立币安账户：留空则与 SCALP 共用主账户。
 BINANCE_FLASH_API_KEY    = os.getenv("BINANCE_FLASH_API_KEY",    "")
 BINANCE_FLASH_API_SECRET = os.getenv("BINANCE_FLASH_API_SECRET", "")
+# 妖币雷达推送通知 (Telegram / Discord)，留空即不推。
+TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN",  "")
+TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID",    "")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 SURF_API_KEY       = os.getenv("SURF_API_KEY",       "YOUR_SURF_API_KEY")
 OKX_API_KEY        = os.getenv("OKX_API_KEY",        "YOUR_OKX_API_KEY")
 OKX_SECRET_KEY     = os.getenv("OKX_SECRET_KEY",     "YOUR_OKX_SECRET_KEY")
@@ -171,7 +175,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042701
+    PROFILE_VERSION = 2026042702
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -272,6 +276,10 @@ class ConfigManager:
         "SCALP_REQUIRE_OPPORTUNITY_PERMISSION": True,
         "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
         "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
+        # 妖币雷达推送通知（Telegram / Discord webhook）
+        "YAOBI_NOTIFIER_ENABLED": False,
+        "YAOBI_NOTIFIER_MIN_TIER": "L2_AMBUSH",  # L1_MAIN（只推 L1）/ L2_AMBUSH（L1+L2）/ ALL（含 RISK）
+        "YAOBI_NOTIFIER_MAX_PER_BATCH": 8,       # 单条消息最多列几个币
         "YAOBI_SURF_NEWS_ENABLED": False,
         "YAOBI_SURF_NEWS_TOP_N": 20,
         "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
@@ -570,6 +578,10 @@ class ConfigManager:
             "YAOBI_CHAINS":              "eth,bsc,solana,base,arbitrum",
             "OBSIDIAN_VAULT_PATH":       r"C:\BOT\yaobi",
             "COINGLASS_API_KEY":         "",
+            # 妖币雷达推送通知（Telegram / Discord webhook）
+            "YAOBI_NOTIFIER_ENABLED":    False,
+            "YAOBI_NOTIFIER_MIN_TIER":   "L2_AMBUSH",
+            "YAOBI_NOTIFIER_MAX_PER_BATCH": 8,
             "YAOBI_SURF_ENABLED":        True,
             "YAOBI_SURF_NEWS_ENABLED":   False,
             "YAOBI_SURF_NEWS_TOP_N":     20,
