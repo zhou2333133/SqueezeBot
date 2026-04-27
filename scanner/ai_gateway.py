@@ -544,14 +544,14 @@ async def _call_openai(session: aiohttp.ClientSession, system_prompt: str, paylo
 
 
 def _gemini_model_candidates() -> list[str]:
+    # gemini-3.1-pro-preview 实测 89% 失败 (finish=MAX_TOKENS, 截断 JSON)，移除。
+    # 3-flash-preview 也类似不稳定。只保留 2.5 系列稳定模型。
     primary = str(config_manager.settings.get("YAOBI_AI_MODEL_GEMINI", "gemini-2.5-flash") or "").strip()
     fallbacks = [
         primary,
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.5-pro",
-        "gemini-3-flash-preview",
-        "gemini-3.1-pro-preview",
     ]
     result: list[str] = []
     seen: set[str] = set()

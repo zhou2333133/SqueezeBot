@@ -171,7 +171,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042601
+    PROFILE_VERSION = 2026042701
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -191,7 +191,7 @@ class ConfigManager:
         "SCALP_TP3_AGGRESSIVE_RUNNER": True,
         "SCALP_SKIP_TP1_IN_STRONG_TREND": False,
         "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
-        "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
+        "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.60,
         "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
         # L5: TP wick 双 tick 确认
         "SCALP_TP_CONFIRM_TICKS": 2,
@@ -251,8 +251,8 @@ class ConfigManager:
         "SCALP_USE_YAOBI_CONTEXT": True,
         "SCALP_REQUIRE_YAOBI_CONTEXT": True,
         "SCALP_YAOBI_CONTEXT_TOP_N": 30,
-        "SCALP_YAOBI_MIN_SCORE": 30,
-        "SCALP_YAOBI_MIN_ANOMALY_SCORE": 45,
+        "SCALP_YAOBI_MIN_SCORE": 60,
+        "SCALP_YAOBI_MIN_ANOMALY_SCORE": 50,
         "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
         "SCALP_YAOBI_BLOCK_WAIT_CONFIRM": True,
         "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
@@ -485,7 +485,7 @@ class ConfigManager:
             "SCALP_TP3_AGGRESSIVE_RUNNER": True,
             "SCALP_SKIP_TP1_IN_STRONG_TREND": False,
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
-            "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.30,
+            "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.60,
             "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
             # L5/L3/L7 新增可调项
             "SCALP_TP_CONFIRM_TICKS":    2,
@@ -544,8 +544,8 @@ class ConfigManager:
             "SCALP_USE_YAOBI_CONTEXT":    True,
             "SCALP_REQUIRE_YAOBI_CONTEXT": True,
             "SCALP_YAOBI_CONTEXT_TOP_N":  30,
-            "SCALP_YAOBI_MIN_SCORE":      30,
-            "SCALP_YAOBI_MIN_ANOMALY_SCORE": 45,
+            "SCALP_YAOBI_MIN_SCORE":      60,
+            "SCALP_YAOBI_MIN_ANOMALY_SCORE": 50,
             "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
             "SCALP_YAOBI_BLOCK_WAIT_CONFIRM": True,
             "SCALP_YAOBI_BLOCK_HIGH_RISK": True,

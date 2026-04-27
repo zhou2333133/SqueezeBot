@@ -223,6 +223,9 @@ python -m unittest tests.test_token_supply tests.test_flash_signals -v
 | `CONTINUATION_MIN_PULLBACK_PCT` | 0.20 | 0.12 | 要求更深回踩，过滤毛刺 | 2026-04-25 |
 | `CONTINUATION_MAX_EMA20_DEVIATION_PCT` | 4.00 | 3.00 | 4-25 收紧到 3.0 后实测开仓 0；4-26 部分回退（V4AF 接管已涨完候选） | 2026-04-26 |
 | `BREAKOUT_MAX_EMA20_DEVIATION_PCT` | 3.0 | 2.0 | 同上 — 突破侧给 1% 呼吸空间 | 2026-04-26 |
+| `SCALP_YAOBI_MIN_SCORE` | 60 | 30 | 16 笔实测 entry_bad 占亏损 99.9%，赢家全是 yaobi≥90，输家全是 yaobi≤61。门槛抬到 60 直接砍 D/MASK/AGT 这类"勉强达标" | 2026-04-27 |
+| `SCALP_YAOBI_MIN_ANOMALY_SCORE` | 50 | 45 | 微调 + 5，配合上一项 | 2026-04-27 |
+| `SCALP_TP1_SOFT_BREAKEVEN_PCT` | 0.60 | 0.30 | 6 笔 stop_too_tight: 止损贴脸 0.6% 被妖币常规波动洗。TP1 后软保本距离扩到 0.6% | 2026-04-27 |
 | `SCALP_YAOBI_MIN_ANOMALY_SCORE` | 45 | 35 | 提高妖币背书门槛 | 2026-04-25 |
 
 > 调参规则：每次改 defaults，**必须**(1) 同步改 `PROFILE_MIGRATION_DEFAULTS` 和 `default_settings`，(2) bump `PROFILE_VERSION`（用 `YYYYMMDDNN`），(3) 在本表追加/更新一行，(4) 看 `tests/test_config_migration.py` 是否有 assert 需要同步。
@@ -233,6 +236,8 @@ python -m unittest tests.test_token_supply tests.test_flash_signals -v
 
 按时间倒序，新条目在最上面。每条一行：日期 — 改了什么 — 为什么。删除超过 1 个月或被覆盖的条目。
 
+- **2026-04-27** — 16 笔成交后第二轮调参 (entry_bad 占亏损 99.9% → 收紧入场质量): SCALP_YAOBI_MIN_SCORE 30→60 (D/MASK/AGT 这种边缘候选全亏)、SCALP_YAOBI_MIN_ANOMALY_SCORE 45→50、SCALP_TP1_SOFT_BREAKEVEN_PCT 0.30→0.60 (止损贴脸防洗盘)。`PROFILE_VERSION` 2026042601→2026042701。
+- **2026-04-27** — scanner/ai_gateway.py:546 移除 `gemini-3.1-pro-preview` + `gemini-3-flash-preview` from fallback。Why: 实测 89% 失败率 (58 calls / 52 fail, 全是 finish=MAX_TOKENS, JSON 截断)。只保留 2.5 系列稳定模型。
 - **2026-04-26** — bot_scalp.py:974 `_ws_connect` 加 AsyncResolver 公共 DNS（1.1.1.1+8.8.8.8）。Why: 直连后系统 DNS 解析 fstream.binance.com 失败（"Temporary failure in name resolution"），因为系统 resolv.conf 指向 127.0.0.1（Clash DNS 端口）但 Clash 在直连模式下不解析 binance。aiodns 加入 requirements.txt。
 - **2026-04-26** — bot_scalp.py:974 `_ws_connect` 改用独立 session 不走代理。Why: 用户 Linux 测试机的代理（Clash Verge / mihomo 新内核）对 fstream 多 stream + SUBSCRIBE 模式不稳，会吞 server push frame 导致 K 线 8 小时收不到 1 条，bot 永远暖不机。fapi/fstream 本地能直连（curl 200），WS 切直连后立刻恢复。REST 仍走代理（OKX/Surf/Gemini 仍可能需要代理）。
 - **2026-04-26** — 部分回退 EMA20 偏离守卫（BREAKOUT 2.0→3.0, CONTINUATION 3.0→4.0）。理由：4-25 收紧后实测 21h 开仓 0，候选都是已涨 18-60% 的高偏离币；现在让 V4AF 接管这类（做空），scalp 同时给一点呼吸空间。`PROFILE_VERSION` 2026042505→2026042601。
