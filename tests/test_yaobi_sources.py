@@ -110,6 +110,79 @@ class TestYaobiSources(unittest.TestCase):
         self.assertIn("SOL", mentions)
         self.assertEqual(mentions["PEPE"]["count"], 1)
 
+    def test_binance_square_extracts_embedded_trading_pairs(self) -> None:
+        payload = {
+            "data": {
+                "feedList": [
+                    {
+                        "contentId": "p1",
+                        "title": "Momentum update",
+                        "content": "No cashtag in this text",
+                        "authorName": "real_user",
+                        "likeCount": 5,
+                        "tradingPairs": [{"code": "WIFUSDT"}],
+                        "tradingPairsV2": [{"baseAsset": "ENA"}],
+                        "coinPairList": ["TIAUSDT"],
+                    },
+                    {
+                        "contentId": "p1",
+                        "title": "Duplicate",
+                        "content": "Should be ignored",
+                        "authorName": "real_user",
+                    },
+                ],
+            },
+        }
+
+        posts = binance_square._extract_posts(payload)
+        mentions = binance_square.extract_ticker_mentions(posts)
+
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["tokens"], ["ENA", "TIA", "WIF"])
+        self.assertIn("WIF", mentions)
+        self.assertIn("ENA", mentions)
+        self.assertIn("TIA", mentions)
+
+    def test_binance_square_fetch_uses_browser_collector(self) -> None:
+        async def fake_fetch(rows=50, duration_seconds=None):
+            return ([{"id": "x", "text": "$PEPE", "heat": 7, "url": "", "tokens": []}], {
+                "browser_ok": True,
+                "browser_posts": 1,
+                "last_success_method": "browser",
+                "last_error": None,
+            })
+
+        with patch.object(binance_square, "_fetch_browser_posts", fake_fetch):
+            posts = asyncio.run(binance_square.fetch_hot_posts(object(), rows=5))
+
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(binance_square.last_diagnostics()["last_success_method"], "browser")
+
+    def test_binance_square_playwright_missing_is_safe(self) -> None:
+        with patch.object(binance_square, "_playwright_installed", return_value=False):
+            posts, meta = asyncio.run(binance_square._fetch_browser_posts(rows=5))
+
+        self.assertEqual(posts, [])
+        self.assertFalse(meta["browser_ok"])
+        self.assertEqual(meta["last_error"], "playwright_not_installed")
+        self.assertIn("playwright", meta["install_hint"])
+
+    def test_binance_square_diagnostics_do_not_expose_secret_values(self) -> None:
+        with patch.object(binance_square, "BINANCE_SQUARE_COOKIE", "secret-cookie"), \
+             patch.object(binance_square, "BINANCE_SQUARE_CSRF_TOKEN", "secret-csrf"), \
+             patch.object(binance_square, "BINANCE_SQUARE_BNC_UUID", "secret-uuid"), \
+             patch.object(binance_square, "BINANCE_SQUARE_OPENAPI_KEY", "secret-key"), \
+             patch.object(binance_square, "_playwright_installed", return_value=False):
+            meta = asyncio.run(binance_square.diagnose(object(), rows=5))
+
+        rendered = json.dumps(meta, ensure_ascii=False)
+        self.assertTrue(meta["cookie_set"])
+        self.assertTrue(meta["csrf_set"])
+        self.assertNotIn("secret-cookie", rendered)
+        self.assertNotIn("secret-csrf", rendered)
+        self.assertNotIn("secret-uuid", rendered)
+        self.assertNotIn("secret-key", rendered)
+
     def test_anomaly_radar_combines_okx_futures_and_sentiment(self) -> None:
         c = Candidate(
             symbol="RAVE",

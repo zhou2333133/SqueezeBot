@@ -35,7 +35,7 @@ from scanner.sources.okx_market import (
     get_token_trades,
     search_tokens,
 )
-from scanner.sources.binance_square import fetch_hot_posts, extract_ticker_mentions
+from scanner.sources.binance_square import fetch_hot_posts, extract_ticker_mentions, last_diagnostics as square_last_diagnostics
 from scanner.sources.binance_futures import scan_futures_oi, scan_short_term_intel
 from scanner.sources.binance_liquidations import collect_liquidations, liquidation_stats
 from scanner.ai_gateway import analyze_opportunities, provider_status as ai_provider_status
@@ -203,15 +203,25 @@ class YaobiScanner:
                     square_posts = await fetch_hot_posts(session, rows=square_rows)
                     ticker_map = extract_ticker_mentions(square_posts)
                     self._apply_square_mentions(candidates, ticker_map)
+                    square_diag = square_last_diagnostics()
                     scan_status["sources"]["binance_square"] = {
-                        "count": len(square_posts), "last_run": start.strftime("%H:%M"),
+                        "count": len(square_posts),
+                        "last_run": start.strftime("%H:%M"),
+                        "method": square_diag.get("last_success_method") or "none",
+                        "error": square_diag.get("last_error"),
                     }
                     logger.info("🔍 广场: %d 条热帖, 提及 %d 个币种", len(square_posts), len(ticker_map))
                 except Exception as e:
                     logger.warning("广场抓取失败: %s", e)
+                    scan_status["sources"]["binance_square"] = {
+                        "count": 0,
+                        "last_run": start.strftime("%H:%M"),
+                        "method": "browser",
+                        "error": str(e)[:160],
+                    }
             else:
                 scan_status["sources"]["binance_square"] = {
-                    "count": 0, "last_run": start.strftime("%H:%M"), "disabled": True,
+                    "count": 0, "last_run": start.strftime("%H:%M"), "disabled": True, "method": "none",
                 }
 
             # ── 6. Surf 新闻预过滤 ───────────────────────────────────────────
