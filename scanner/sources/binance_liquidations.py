@@ -18,7 +18,7 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-_WS_URL = "wss://fstream.binance.com/ws/!forceOrder@arr"
+_WS_URL = "wss://fstream.binance.com/market/ws/!forceOrder@arr"
 _EVENTS: deque[dict] = deque(maxlen=5000)
 
 

@@ -258,6 +258,11 @@ class TestYaobiSources(unittest.TestCase):
 
         self.assertEqual(stats["TESTUSDT"]["liquidation_5m_usd"], 2000.0)
 
+    def test_binance_liquidation_stream_uses_market_endpoint(self) -> None:
+        from scanner.sources import binance_liquidations
+
+        self.assertIn("fstream.binance.com/market/ws/", binance_liquidations._WS_URL)
+
     def test_opportunity_queue_prefers_short_term_confirmed_direction(self) -> None:
         clear_candidates()
         from config import config_manager
