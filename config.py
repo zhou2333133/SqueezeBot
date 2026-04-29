@@ -508,6 +508,8 @@ class ConfigManager:
             "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.60,
             "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
             "SCALP_WS_STALE_SECONDS":   90,
+            "SCALP_WS_DIRECT":          False,
+            "SCALP_WS_COMBINED_STREAM": True,
             "SCALP_POSITION_CHECK_INTERVAL_SECONDS": 10,
             "SCALP_POSITION_STALE_SECONDS": 60,
             "SCALP_SKIP_UNKNOWN_STATE": True,

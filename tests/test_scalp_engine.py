@@ -479,6 +479,19 @@ class TestScalpEngine(unittest.TestCase):
         self.assertTrue(closed)
         self.assertTrue(bot._ws.closed)
 
+    def test_ws_defaults_to_combined_stream_and_env_network(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_symbols = ["ETHUSDT"]
+
+        url = bot._ws_url_for_streams(sorted(bot._desired_ws_streams()))
+        kwargs, mode = bot._ws_session_kwargs()
+
+        self.assertIn("/stream?streams=", url)
+        self.assertIn("btcusdt@kline_1m", url)
+        self.assertIn("ethusdt@kline_1m", url)
+        self.assertTrue(kwargs["trust_env"])
+        self.assertEqual(mode, "系统代理/环境")
+
     def test_unknown_state_blocks_unless_hot_high_confidence(self) -> None:
         bot = BinanceScalpBot()
         bot.candidate_meta["UNKUSDT"] = {

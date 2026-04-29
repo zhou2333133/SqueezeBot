@@ -36,6 +36,7 @@ logger = logging.getLogger("bot_scalp")
 
 _REST_BASE = "https://fapi.binance.com"
 _WS_URL    = "wss://fstream.binance.com/ws"
+_WS_COMBINED_BASE = "wss://fstream.binance.com/stream?streams="
 
 # 大币静态白名单（不随日成交量漂移，OI阈值最低）
 _MAJOR_SYMBOLS = frozenset({
@@ -1052,6 +1053,26 @@ class BinanceScalpBot:
         symbols = self._desired_ws_symbols()
         return {f"{s.lower()}@kline_1m" for s in symbols if s}
 
+    def _ws_url_for_streams(self, streams: list[str]) -> str:
+        if streams and self.cfg.get("SCALP_WS_COMBINED_STREAM", True):
+            return _WS_COMBINED_BASE + "/".join(streams)
+        return _WS_URL
+
+    def _ws_session_kwargs(self) -> tuple[dict, str]:
+        if not self.cfg.get("SCALP_WS_DIRECT", False):
+            return {"trust_env": True}, "系统代理/环境"
+        connector = None
+        try:
+            from aiohttp.resolver import AsyncResolver
+            connector = aiohttp.TCPConnector(
+                resolver=AsyncResolver(nameservers=["1.1.1.1", "8.8.8.8"]),
+            )
+        except ImportError:
+            logger.warning(
+                "⚡ aiodns 未安装，WS 直连走系统 DNS（若解析 fstream.binance.com 失败请: pip install aiodns）"
+            )
+        return {"connector": connector, "trust_env": False}, "直连"
+
     async def _sync_ws_subscriptions(self) -> None:
         if not self._ws or self._ws.closed:
             return
@@ -1114,39 +1135,27 @@ class BinanceScalpBot:
             await self._ws_watchdog_once()
 
     async def _ws_connect(self) -> None:
-        # WS 走独立 session 不读代理环境变量。
-        # Why: 某些代理软件 (Clash Verge / mihomo 新内核 / 透明代理) 对 fstream
-        # 多 stream + SUBSCRIBE 模式处理不稳，会随机吞掉 server push frame，
-        # 导致 K 线消息收不到、kline_buffer 永远暖不机。
-        # REST 仍由 self.session 走代理（trust_env=True），只把 WS 切到直连。
-        # 前提: fstream.binance.com / fapi.binance.com 在本机能直连（curl 200）。
-        #
-        # DNS 用公共 DNS (1.1.1.1 + 8.8.8.8)：某些代理环境下系统 DNS
-        # (/etc/resolv.conf 指向 127.0.0.1/127.0.0.53) 不能解析 binance.com，
-        # 表现为 "Temporary failure in name resolution"。绕开系统 DNS 直接
-        # 用公共 DNS 解析。需要 aiodns: pip install aiodns
-        connector = None
-        try:
-            from aiohttp.resolver import AsyncResolver
-            connector = aiohttp.TCPConnector(
-                resolver=AsyncResolver(nameservers=["1.1.1.1", "8.8.8.8"]),
-            )
-        except ImportError:
-            logger.warning(
-                "⚡ aiodns 未安装，WS 走系统 DNS（若解析 fstream.binance.com 失败请: pip install aiodns）"
-            )
-        async with aiohttp.ClientSession(connector=connector) as ws_session:
-            async with ws_session.ws_connect(_WS_URL, heartbeat=20) as ws:
+        # 默认沿用系统网络环境（含代理），避免测试机出现“握手成功但无推送”的半通状态。
+        # 如某台机器确实需要直连，可在配置里打开 SCALP_WS_DIRECT。
+        params = sorted(self._desired_ws_streams())
+        url = self._ws_url_for_streams(params)
+        session_kwargs, network_mode = self._ws_session_kwargs()
+        async with aiohttp.ClientSession(**session_kwargs) as ws_session:
+            async with ws_session.ws_connect(url, heartbeat=20, timeout=15) as ws:
                 self._ws = ws
                 self._last_ws_connect_at = time.monotonic()
                 self._last_ws_connect_wall = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self._subscribed_streams = set()
-                params = sorted(self._desired_ws_streams())
-                for i, chunk in enumerate([params[j:j + 200] for j in range(0, len(params), 200)]):
-                    await ws.send_str(json.dumps({"method": "SUBSCRIBE", "params": chunk, "id": i + 1}))
-                    await asyncio.sleep(0.3)
                 self._subscribed_streams = set(params)
-                logger.info("⚡ WS 已连接 (直连不走代理)，订阅 %d 个候选/持仓币种", len(self._subscribed_streams))
+                if url == _WS_URL:
+                    for i, chunk in enumerate([params[j:j + 200] for j in range(0, len(params), 200)]):
+                        await ws.send_str(json.dumps({"method": "SUBSCRIBE", "params": chunk, "id": i + 1}))
+                        await asyncio.sleep(0.3)
+                logger.info(
+                    "⚡ WS 已连接 (%s, %s)，订阅 %d 个候选/持仓币种",
+                    network_mode,
+                    "combined" if url != _WS_URL else "subscribe",
+                    len(self._subscribed_streams),
+                )
                 async for msg in ws:
                     if not self.running:
                         break
