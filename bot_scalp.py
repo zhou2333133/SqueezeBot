@@ -1102,7 +1102,7 @@ class BinanceScalpBot:
                 await self._ws_connect()
                 backoff = 1
             except asyncio.CancelledError:
-                break
+                raise
             except Exception as e:
                 if self.running:
                     logger.warning("⚡ WS 断线: %r，%ds 后重连...", e, backoff)
