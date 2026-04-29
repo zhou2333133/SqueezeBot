@@ -35,8 +35,8 @@ from watchlist import get_watch_item, is_symbol_blocked
 logger = logging.getLogger("bot_scalp")
 
 _REST_BASE = "https://fapi.binance.com"
-_WS_URL    = "wss://fstream.binance.com/ws"
-_WS_COMBINED_BASE = "wss://fstream.binance.com/stream?streams="
+_WS_URL    = "wss://fstream.binance.com/market/ws"
+_WS_COMBINED_BASE = "wss://fstream.binance.com/market/stream?streams="
 
 # 大币静态白名单（不随日成交量漂移，OI阈值最低）
 _MAJOR_SYMBOLS = frozenset({
@@ -164,6 +164,7 @@ class BinanceScalpBot:
         self._last_symbol_kline_at: dict[str, float] = {}
         self._ws_current_transport: str = ""
         self._ws_disable_combined_until: float = 0.0
+        self._last_ws_control_log_at: float = 0.0
         # OI 缓存：{sym: deque[(monotonic_ts, oi_value), ...]}，保留最近3分钟（约 18 条）
         self._oi_cache:         dict[str, deque]         = {}
         # 实时当前未闭合K线（随每个WS Tick更新）
@@ -1189,6 +1190,11 @@ class BinanceScalpBot:
 
         stream_data = data.get("data", data)
         if stream_data.get("e") != "kline":
+            if isinstance(stream_data, dict) and "code" in stream_data:
+                now = time.monotonic()
+                if now - self._last_ws_control_log_at > 30:
+                    self._last_ws_control_log_at = now
+                    logger.warning("⚡ WS 非K线响应: %s", str(stream_data)[:240])
             return
 
         k         = stream_data["k"]

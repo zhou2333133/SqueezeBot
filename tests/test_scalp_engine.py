@@ -486,7 +486,7 @@ class TestScalpEngine(unittest.TestCase):
         url = bot._ws_url_for_streams(sorted(bot._desired_ws_streams()))
         kwargs, mode = bot._ws_session_kwargs()
 
-        self.assertIn("/stream?streams=", url)
+        self.assertIn("/market/stream?streams=", url)
         self.assertIn("btcusdt@kline_1m", url)
         self.assertIn("ethusdt@kline_1m", url)
         self.assertTrue(kwargs["trust_env"])
@@ -528,7 +528,7 @@ class TestScalpEngine(unittest.TestCase):
         url = bot._ws_url_for_streams(["btcusdt@kline_1m"])
 
         self.assertTrue(closed)
-        self.assertEqual(url, "wss://fstream.binance.com/ws")
+        self.assertEqual(url, "wss://fstream.binance.com/market/ws")
 
     def test_unknown_state_blocks_unless_hot_high_confidence(self) -> None:
         bot = BinanceScalpBot()
