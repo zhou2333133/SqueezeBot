@@ -76,6 +76,8 @@ class ScalpPosition:
     slippage_usdt:      float      = 0.0
     closed_quantity:    float      = 0.0
     current_price:      float      = 0.0
+    last_price_ts:      float      = field(default_factory=time.monotonic)
+    stale_position_check_used: bool = False
     max_favorable_pct:  float      = 0.0
     max_adverse_pct:    float      = 0.0
     max_favorable_time: str        = ""
@@ -126,6 +128,11 @@ class ScalpPosition:
             "mae_pct":            round(self.max_adverse_pct, 3),
             "unrealized_pct":     round(unreal, 2),
             "current_price":      round(self.current_price, 8),
+            "time_stop_minutes":  round(self.time_stop_minutes, 2),
+            "tp2_timeout_minutes": round(self.tp2_timeout_minutes, 2),
+            "position_age_minutes": round((time.monotonic() - self.entry_ts) / 60, 2),
+            "position_last_price_age_seconds": round(max(0.0, time.monotonic() - self.last_price_ts), 2),
+            "stale_position_check_used": self.stale_position_check_used,
         }
 
 
@@ -149,6 +156,11 @@ class BinanceScalpBot:
         self._ws = None
         self._ws_lock = asyncio.Lock()
         self._subscribed_streams: set[str] = set()
+        self._last_ws_msg_at: float = 0.0
+        self._last_ws_connect_at: float = 0.0
+        self._last_ws_msg_wall: str = ""
+        self._last_ws_connect_wall: str = ""
+        self._last_symbol_kline_at: dict[str, float] = {}
         # OI 缓存：{sym: deque[(monotonic_ts, oi_value), ...]}，保留最近3分钟（约 18 条）
         self._oi_cache:         dict[str, deque]         = {}
         # 实时当前未闭合K线（随每个WS Tick更新）
@@ -222,6 +234,84 @@ class BinanceScalpBot:
             if price > 0:
                 return price
         return pos.entry_price
+
+    def runtime_health_snapshot(self) -> dict:
+        now = time.monotonic()
+        ws_anchor = self._last_ws_msg_at or self._last_ws_connect_at
+        stale_after = float(self.cfg.get("SCALP_WS_STALE_SECONDS", 90) or 90)
+        symbol_stale = 0
+        for sym in self._desired_ws_symbols():
+            seen = self._last_symbol_kline_at.get(sym, 0.0)
+            if not seen or now - seen > stale_after:
+                symbol_stale += 1
+        return {
+            "ws_last_message_at": round(self._last_ws_msg_at, 3),
+            "ws_last_message_time": self._last_ws_msg_wall,
+            "ws_last_connect_at": round(self._last_ws_connect_at, 3),
+            "ws_last_connect_time": self._last_ws_connect_wall,
+            "ws_stale_seconds": round(now - ws_anchor, 2) if ws_anchor else None,
+            "ws_stale_symbol_count": symbol_stale,
+            "ws_subscribed_streams": len(self._subscribed_streams),
+            "position_count": len(self.open_positions),
+        }
+
+    async def _supervise_loop(self, name: str, coro_factory) -> None:
+        backoff = 1
+        while self.running:
+            try:
+                await coro_factory()
+                if self.running:
+                    logger.warning("⚡ 子任务 %s 意外结束，%ds 后重启", name, backoff)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if self.running:
+                    logger.error("⚡ 子任务 %s 异常退出: %s，%ds 后重启", name, e, backoff, exc_info=True)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60)
+
+    async def _fetch_rest_price(self, symbol: str, timeout_sec: float = 5.0) -> float | None:
+        if not self.session:
+            return None
+        try:
+            async with self.session.get(
+                f"{_REST_BASE}/fapi/v1/ticker/price",
+                params={"symbol": symbol},
+                timeout=aiohttp.ClientTimeout(total=timeout_sec),
+            ) as resp:
+                status = getattr(resp, "status", 200)
+                if status != 200:
+                    logger.debug("⚡ [%s] REST价格状态异常: %s", symbol, status)
+                    return None
+                data = await resp.json()
+                price = self._as_float(data.get("price"))
+                return price if price > 0 else None
+        except Exception as e:
+            logger.debug("⚡ [%s] REST价格获取失败: %s", symbol, e)
+            return None
+
+    def _candidate_age_minutes(self, symbol: str) -> float | None:
+        meta = self.candidate_meta.get(symbol, {})
+        seen_ts = self._as_float(meta.get("scalp_candidate_seen_ts"))
+        if seen_ts <= 0:
+            return None
+        return max(0.0, (time.monotonic() - seen_ts) / 60)
+
+    def _state_entry_allowed(self, symbol: str, state: str, direction: str, signal_label: str) -> bool:
+        if state != "UNKNOWN" or not self.cfg.get("SCALP_SKIP_UNKNOWN_STATE", True):
+            return True
+        meta = self.candidate_meta.get(symbol, {})
+        setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
+        confidence = int(meta.get("yaobi_opportunity_confidence", 0) or 0)
+        if setup == "HOT" and confidence >= 70:
+            return True
+        reason = f"UNKNOWN状态默认降级，需HOT且confidence≥70 (当前{setup or '-'} / {confidence})"
+        self._fstat["state_block"] += 1
+        self._record_entry_block(symbol, "state", reason, direction=direction, signal_label=signal_label)
+        logger.info("⚡ [%s] %s 被状态机过滤: %s", symbol, signal_label, reason)
+        return False
 
     def _record_entry_block(
         self,
@@ -623,6 +713,19 @@ class BinanceScalpBot:
         action = str(meta.get("yaobi_decision_action") or "")
         op_permission = str(meta.get("yaobi_opportunity_permission") or "")
         op_setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
+        max_candidate_age = float(self.cfg.get("SCALP_MAX_CANDIDATE_AGE_MINUTES", 180) or 0)
+        candidate_age = self._candidate_age_minutes(symbol)
+        if (
+            max_candidate_age > 0
+            and candidate_age is not None
+            and candidate_age > max_candidate_age
+            and op_setup not in {"ARMED", "HOT"}
+        ):
+            return (
+                False,
+                f"候选已存在{candidate_age:.0f}分钟，超过{max_candidate_age:.0f}分钟且未重新确认ARMED/HOT",
+                1.0,
+            )
         # 三层决策面板: RISK_AVOID 强制 hard ban，跟 yaobi_decision_action="禁止交易" 同等优先级
         tier = str(meta.get("yaobi_decision_tier") or "")
         if tier == "RISK_AVOID":
@@ -727,11 +830,12 @@ class BinanceScalpBot:
                 await self.refresh_symbols()
                 await self._do_refresh_candidates()
                 await asyncio.gather(
-                    self._ws_loop(),
-                    self._poll_oi_loop(),
-                    self._position_monitor_loop(),
-                    self._heartbeat_loop(),
-                    self._refresh_candidates_loop(),
+                    self._supervise_loop("ws", self._ws_loop),
+                    self._supervise_loop("ws_watchdog", self._ws_watchdog_loop),
+                    self._supervise_loop("oi", self._poll_oi_loop),
+                    self._supervise_loop("position_monitor", self._position_monitor_loop),
+                    self._supervise_loop("heartbeat", self._heartbeat_loop),
+                    self._supervise_loop("refresh_candidates", self._refresh_candidates_loop),
                 )
         except asyncio.CancelledError:
             pass
@@ -937,11 +1041,15 @@ class BinanceScalpBot:
 
     # ─── WebSocket ─────────────────────────────────────────────────────────────
 
-    def _desired_ws_streams(self) -> set[str]:
+    def _desired_ws_symbols(self) -> set[str]:
         symbols = set(self.candidate_symbols)
         symbols.update(self.open_positions.keys())
         symbols.update(self._post_exit_watch.keys())
         symbols.add("BTCUSDT")
+        return {s for s in symbols if s}
+
+    def _desired_ws_streams(self) -> set[str]:
+        symbols = self._desired_ws_symbols()
         return {f"{s.lower()}@kline_1m" for s in symbols if s}
 
     async def _sync_ws_subscriptions(self) -> None:
@@ -980,6 +1088,31 @@ class BinanceScalpBot:
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60)
 
+    async def _ws_watchdog_once(self) -> bool:
+        ws = self._ws
+        if not ws or ws.closed:
+            return False
+        stale_after = float(self.cfg.get("SCALP_WS_STALE_SECONDS", 90) or 90)
+        now = time.monotonic()
+        anchor = self._last_ws_msg_at or self._last_ws_connect_at
+        if not anchor or now - anchor <= stale_after:
+            return False
+        logger.warning("⚡ WS %.0fs 未收到K线消息，主动关闭连接触发重连", now - anchor)
+        try:
+            async with self._ws_lock:
+                if self._ws and not self._ws.closed:
+                    await self._ws.close(code=1001, message=b"stale ws")
+                    return True
+        except Exception as e:
+            logger.debug("⚡ WS watchdog 关闭连接失败: %s", e)
+        return False
+
+    async def _ws_watchdog_loop(self) -> None:
+        while self.running:
+            stale_after = float(self.cfg.get("SCALP_WS_STALE_SECONDS", 90) or 90)
+            await asyncio.sleep(max(5.0, min(30.0, stale_after / 3)))
+            await self._ws_watchdog_once()
+
     async def _ws_connect(self) -> None:
         # WS 走独立 session 不读代理环境变量。
         # Why: 某些代理软件 (Clash Verge / mihomo 新内核 / 透明代理) 对 fstream
@@ -1005,6 +1138,8 @@ class BinanceScalpBot:
         async with aiohttp.ClientSession(connector=connector) as ws_session:
             async with ws_session.ws_connect(_WS_URL, heartbeat=20) as ws:
                 self._ws = ws
+                self._last_ws_connect_at = time.monotonic()
+                self._last_ws_connect_wall = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 self._subscribed_streams = set()
                 params = sorted(self._desired_ws_streams())
                 for i, chunk in enumerate([params[j:j + 200] for j in range(0, len(params), 200)]):
@@ -1016,6 +1151,8 @@ class BinanceScalpBot:
                     if not self.running:
                         break
                     if msg.type == aiohttp.WSMsgType.TEXT:
+                        self._last_ws_msg_at = time.monotonic()
+                        self._last_ws_msg_wall = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         await self._on_message(msg.data)
                     elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                         break
@@ -1038,6 +1175,8 @@ class BinanceScalpBot:
         symbol    = k["s"]
         is_closed = k["x"]
         price     = float(k["c"])
+        now_mono  = time.monotonic()
+        self._last_symbol_kline_at[symbol] = now_mono
 
         # 实时更新当前未闭合K线（h/l/taker随每个Tick更新）
         self._live_candle[symbol] = {
@@ -1076,6 +1215,8 @@ class BinanceScalpBot:
         # 更新持仓实时价格 + 检查TP/SL
         if symbol in self.open_positions:
             self.open_positions[symbol].current_price = price
+            self.open_positions[symbol].last_price_ts = now_mono
+            self.open_positions[symbol].stale_position_check_used = False
             set_scalp_position(symbol, self.open_positions[symbol].to_dict())
             await self._check_tp_sl(symbol, price)
             return
@@ -1770,6 +1911,15 @@ class BinanceScalpBot:
                 return False, f"Taker卖{directional_taker:.0%}低于接力阈值{taker_min:.0%}", 0.0
             trigger_pct = (reclaim - price) / reclaim * 100 if reclaim > 0 else 0.0
 
+        premove_ok, premove_reason = self._breakout_premove_allowed(
+            symbol,
+            direction,
+            price,
+            allow_after_pullback=False,
+        )
+        if not premove_ok:
+            return False, premove_reason, 0.0
+
         reason = f"回踩{pullback:.2f}%后接力 | Taker={directional_taker:.0%} | EMA20偏离{ema_dev:.2f}%"
         return True, reason, max(trigger_pct, 0.0)
 
@@ -1867,9 +2017,16 @@ class BinanceScalpBot:
                 return "TREND_MID"
         return "UNKNOWN"
 
-    def _exit_profile_for_state(self, state: str) -> dict:
+    def _exit_profile_for_state(self, state: str, symbol: str = "") -> dict:
         cfg = self.cfg
         if state == "TREND_EARLY":
+            setup = str(self.candidate_meta.get(symbol, {}).get("yaobi_opportunity_setup_state") or "").upper()
+            if setup == "HOT":
+                return {
+                    "tp1_ratio": min(cfg.get("SCALP_TP1_RATIO", 0.30), 0.20),
+                    "tp2_ratio": min(cfg.get("SCALP_TP2_RATIO", 0.30), 0.20),
+                    "size_multiplier": 1.0,
+                }
             return {
                 "tp1_ratio": cfg.get("SCALP_TP1_RATIO", 0.40),
                 "tp2_ratio": cfg.get("SCALP_TP2_RATIO", 0.30),
@@ -2089,6 +2246,8 @@ class BinanceScalpBot:
                                 logger.info("⚡ [%s] ⏸ 轧空猎杀多 跳过：%s", symbol, stab_msg)
                                 return
                         state = self._check_market_state(symbol, "LONG")
+                        if not self._state_entry_allowed(symbol, state, "LONG", "轧空猎杀多"):
+                            return
                         await self._execute_entry(symbol, "LONG", abs(oi_change_pct), "轧空猎杀多", state)
                         return
                     else:
@@ -2106,6 +2265,8 @@ class BinanceScalpBot:
                     )
                     if self._btc_guard("SHORT"):
                         state = self._check_market_state(symbol, "SHORT")
+                        if not self._state_entry_allowed(symbol, state, "SHORT", "轧多猎杀空"):
+                            return
                         await self._execute_entry(symbol, "SHORT", abs(oi_change_pct), "轧多猎杀空", state)
                         return
                     else:
@@ -2135,6 +2296,8 @@ class BinanceScalpBot:
                         self._record_entry_block(symbol, "state", "RANGE_CHOP", direction="LONG", signal_label="顺势回踩多")
                         logger.info("⚡ [%s] 🟡 顺势回踩多被状态机过滤: RANGE_CHOP", symbol)
                         return
+                    if not self._state_entry_allowed(symbol, state, "LONG", "顺势回踩多"):
+                        return
                     self._fstat["continuation"] += 1
                     self._breakout_fired[(symbol, "LONG")] = True
                     logger.info("⚡ [%s] 🟡 顺势回踩多: %s | 状态=%s", symbol, cont_reason, state)
@@ -2153,6 +2316,8 @@ class BinanceScalpBot:
                         self._fstat["state_block"] += 1
                         self._record_entry_block(symbol, "state", "RANGE_CHOP", direction="SHORT", signal_label="顺势回踩空")
                         logger.info("⚡ [%s] 🟠 顺势回踩空被状态机过滤: RANGE_CHOP", symbol)
+                        return
+                    if not self._state_entry_allowed(symbol, state, "SHORT", "顺势回踩空"):
                         return
                     self._fstat["continuation"] += 1
                     self._breakout_fired[(symbol, "SHORT")] = True
@@ -2186,6 +2351,8 @@ class BinanceScalpBot:
                     self._record_entry_block(symbol, "state", "RANGE_CHOP", direction="LONG", signal_label="动能突破多")
                     logger.info("⚡ [%s] 🟡 动能突破多被状态机过滤: RANGE_CHOP", symbol)
                     return
+                if not self._state_entry_allowed(symbol, state, "LONG", "动能突破多"):
+                    return
                 premove_ok, premove_reason = self._breakout_premove_allowed(
                     symbol,
                     "LONG",
@@ -2218,6 +2385,8 @@ class BinanceScalpBot:
                     self._fstat["state_block"] += 1
                     self._record_entry_block(symbol, "state", "RANGE_CHOP", direction="SHORT", signal_label="动能突破空")
                     logger.info("⚡ [%s] 🟠 动能突破空被状态机过滤: RANGE_CHOP", symbol)
+                    return
+                if not self._state_entry_allowed(symbol, state, "SHORT", "动能突破空"):
                     return
                 premove_ok, premove_reason = self._breakout_premove_allowed(
                     symbol,
@@ -2280,15 +2449,9 @@ class BinanceScalpBot:
         self._signal_cooldown[symbol] = time.monotonic()
 
         # 获取入场价（REST实时价）
-        try:
-            async with self.session.get(
-                f"{_REST_BASE}/fapi/v1/ticker/price",
-                params={"symbol": symbol},
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                entry_price = float((await resp.json())["price"])
-        except Exception as e:
-            logger.error("⚡ [%s] 获取入场价失败: %s", symbol, e)
+        entry_price = await self._fetch_rest_price(symbol, timeout_sec=5)
+        if not entry_price:
+            logger.error("⚡ [%s] 获取入场价失败", symbol)
             return
 
         leverage      = cfg.get("SCALP_LEVERAGE",     10)
@@ -2318,6 +2481,19 @@ class BinanceScalpBot:
                         else entry_price * (1 + max_sl_price_pct / 100))
 
         sl_distance_pct = abs(entry_price - sl_price) / entry_price * 100
+        atr_entry_pct = self._calc_atr_pct(buf_entry) if len(buf_entry) >= 15 else 0.0
+        min_sl_distance_pct = max(0.15, atr_entry_pct * 0.80) if atr_entry_pct > 0 else 0.0
+        if min_sl_distance_pct and sl_distance_pct < min_sl_distance_pct:
+            sl_price = (
+                entry_price * (1 - min_sl_distance_pct / 100)
+                if direction == "LONG"
+                else entry_price * (1 + min_sl_distance_pct / 100)
+            )
+            sl_distance_pct = min_sl_distance_pct
+            logger.info(
+                "⚡ [%s] 初始SL按ATR下限放宽: ATR=%.2f%% SL距离=%.2f%%",
+                symbol, atr_entry_pct, sl_distance_pct,
+            )
 
         # ── RR倍数TP ─────────────────────────────────────────────────────
         tp1_dist = sl_distance_pct * cfg.get("SCALP_TP1_RR", 1.2)
@@ -2347,7 +2523,7 @@ class BinanceScalpBot:
             entry_price * quantity * sl_distance_pct / 100
             if sl_distance_pct > 0 else intended_risk_usdt
         )
-        exit_profile = self._exit_profile_for_state(market_state)
+        exit_profile = self._exit_profile_for_state(market_state, symbol)
         tp1_ratio = exit_profile.get("tp1_ratio", cfg.get("SCALP_TP1_RATIO", 0.40))
         tp2_ratio = exit_profile.get("tp2_ratio", cfg.get("SCALP_TP2_RATIO", 0.30))
         time_stop_minutes = exit_profile.get("time_stop_minutes", cfg.get("SCALP_TIME_STOP_MINUTES", 30))
@@ -3293,13 +3469,49 @@ class BinanceScalpBot:
             set_scalp_position(symbol, None)
             self._clear_live_trading_suspension_if_safe()
 
+    async def _position_monitor_once(self) -> None:
+        if not self.open_positions:
+            return
+        for symbol in list(self.open_positions.keys()):
+            try:
+                pos = self.open_positions.get(symbol)
+                if not pos:
+                    continue
+                if not pos.paper and self.trader:
+                    await self._sync_live_position_once(symbol)
+                    pos = self.open_positions.get(symbol)
+                    if not pos:
+                        continue
+
+                price: float | None
+                stale_used = False
+                if pos.paper:
+                    price = self._latest_known_price(pos)
+                    stale_after = float(self.cfg.get("SCALP_POSITION_STALE_SECONDS", 60) or 60)
+                    stale_used = (time.monotonic() - pos.last_price_ts) > stale_after
+                else:
+                    if not (self.trader and self.cfg.get("SCALP_AUTO_TRADE", False)):
+                        continue
+                    price = await self._fetch_rest_price(symbol, timeout_sec=5)
+                    if price is None:
+                        logger.warning("⚡ [%s] 仓位周期检查跳过：无法获取REST最新价，避免用陈旧价处理真实仓", symbol)
+                        continue
+
+                if price and price > 0:
+                    pos.current_price = price
+                    if not pos.paper:
+                        pos.last_price_ts = time.monotonic()
+                    pos.stale_position_check_used = stale_used
+                    await self._check_tp_sl(symbol, price)
+                    current = self.open_positions.get(symbol)
+                    if current:
+                        current.stale_position_check_used = stale_used
+                        set_scalp_position(symbol, current.to_dict())
+            except Exception as e:
+                logger.debug("⚡ 仓位同步异常 [%s]: %s", symbol, e)
+
     async def _position_monitor_loop(self) -> None:
         while self.running:
-            await asyncio.sleep(30)
-            if not self.open_positions or not self.trader:
-                continue
-            for symbol in list(self.open_positions.keys()):
-                try:
-                    await self._sync_live_position_once(symbol)
-                except Exception as e:
-                    logger.debug("⚡ 仓位同步异常 [%s]: %s", symbol, e)
+            interval = float(self.cfg.get("SCALP_POSITION_CHECK_INTERVAL_SECONDS", 10) or 10)
+            await asyncio.sleep(max(3.0, interval))
+            await self._position_monitor_once()

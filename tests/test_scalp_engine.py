@@ -1,4 +1,5 @@
 import asyncio
+import time
 import unittest
 
 from bot_scalp import BinanceScalpBot, ScalpPosition
@@ -45,6 +46,11 @@ class TestScalpEngine(unittest.TestCase):
             "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
             "SCALP_REQUIRE_OPPORTUNITY_PERMISSION": True,
             "SCALP_OI_PREFETCH_TOP_N": 30,
+            "SCALP_WS_STALE_SECONDS": 90,
+            "SCALP_POSITION_CHECK_INTERVAL_SECONDS": 10,
+            "SCALP_POSITION_STALE_SECONDS": 60,
+            "SCALP_SKIP_UNKNOWN_STATE": True,
+            "SCALP_MAX_CANDIDATE_AGE_MINUTES": 180,
         })
 
     def tearDown(self) -> None:
@@ -211,6 +217,7 @@ class TestScalpEngine(unittest.TestCase):
 
     def test_playbook_continuation_pullback_ready_allows_reclaim_entry(self) -> None:
         bot = BinanceScalpBot()
+        config_manager.settings["BREAKOUT_MAX_PREMOVE_15M_PCT"] = 3.0
         bot.candidate_meta["SKRUSDT"] = {
             "yaobi_context": True,
             "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
@@ -430,6 +437,92 @@ class TestScalpEngine(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIn("未给自动执行许可", reason)
+
+    def test_stale_paper_position_time_stop_closes_without_ws_tick(self) -> None:
+        bot = BinanceScalpBot()
+        pos = ScalpPosition(
+            symbol="STALEUSDT",
+            direction="LONG",
+            entry_price=100.0,
+            quantity=1.0,
+            quantity_remaining=1.0,
+            sl_price=95.0,
+            tp1_price=105.0,
+            tp2_price=110.0,
+            time_stop_minutes=1.0,
+            paper=True,
+            risk_usdt=5.0,
+        )
+        pos.entry_ts = pos.entry_ts - 120
+        pos.last_price_ts = pos.last_price_ts - 120
+        pos.current_price = 100.5
+        bot.open_positions["STALEUSDT"] = pos
+
+        asyncio.run(bot._position_monitor_once())
+
+        self.assertNotIn("STALEUSDT", bot.open_positions)
+
+    def test_ws_watchdog_closes_stale_connection(self) -> None:
+        class FakeWs:
+            closed = False
+
+            async def close(self, **kwargs):
+                self.closed = True
+
+        bot = BinanceScalpBot()
+        bot._ws = FakeWs()
+        bot._last_ws_connect_at = time.monotonic() - 120
+        config_manager.settings["SCALP_WS_STALE_SECONDS"] = 30
+
+        closed = asyncio.run(bot._ws_watchdog_once())
+
+        self.assertTrue(closed)
+        self.assertTrue(bot._ws.closed)
+
+    def test_unknown_state_blocks_unless_hot_high_confidence(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["UNKUSDT"] = {
+            "yaobi_opportunity_setup_state": "ARMED",
+            "yaobi_opportunity_confidence": 69,
+        }
+
+        self.assertFalse(bot._state_entry_allowed("UNKUSDT", "UNKNOWN", "LONG", "顺势回踩多"))
+
+        bot.candidate_meta["UNKUSDT"]["yaobi_opportunity_setup_state"] = "HOT"
+        bot.candidate_meta["UNKUSDT"]["yaobi_opportunity_confidence"] = 70
+        self.assertTrue(bot._state_entry_allowed("UNKUSDT", "UNKNOWN", "LONG", "顺势回踩多"))
+
+    def test_stale_candidate_requires_armed_or_hot_setup(self) -> None:
+        bot = BinanceScalpBot()
+        old_seen = time.monotonic() - 240 * 60
+        base_meta = {
+            "yaobi_context": True,
+            "yaobi_decision_action": "允许交易",
+            "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+            "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
+            "yaobi_opportunity_rank": 1,
+            "yaobi_opportunity_trigger_family": "BREAKOUT",
+            "scalp_candidate_seen_ts": old_seen,
+        }
+        bot.candidate_meta["OLDUSDT"] = {**base_meta, "yaobi_opportunity_setup_state": "WAIT"}
+
+        ok, reason, _ = bot._yaobi_entry_guard("OLDUSDT", "LONG", "顺势回踩多")
+
+        self.assertFalse(ok)
+        self.assertIn("超过180分钟", reason)
+
+        bot.candidate_meta["OLDUSDT"]["yaobi_opportunity_setup_state"] = "ARMED"
+        ok, _, _ = bot._yaobi_entry_guard("OLDUSDT", "LONG", "顺势回踩多")
+        self.assertTrue(ok)
+
+    def test_trend_early_hot_keeps_larger_runner(self) -> None:
+        bot = BinanceScalpBot()
+        bot.candidate_meta["HOTUSDT"] = {"yaobi_opportunity_setup_state": "HOT"}
+
+        profile = bot._exit_profile_for_state("TREND_EARLY", "HOTUSDT")
+
+        self.assertEqual(profile["tp1_ratio"], 0.20)
+        self.assertEqual(profile["tp2_ratio"], 0.20)
 
     def test_tp3_aggressive_runner_uses_looser_trailing_candidate(self) -> None:
         bot = BinanceScalpBot()

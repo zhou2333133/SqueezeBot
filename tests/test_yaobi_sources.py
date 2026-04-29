@@ -6,13 +6,25 @@ import unittest
 from unittest.mock import patch
 
 from scanner import ai_gateway
-from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, get_opportunity_queue, upsert_candidate
+from scanner.candidates import Candidate, clear_candidates, get_anomaly_candidates, get_opportunity_queue, scan_status, upsert_candidate
 from scanner.sources import binance_futures, binance_square, okx_market, surf_api
 from scanner.sources.binance_liquidations import liquidation_stats, record_liquidation_event
 from scanner.yaobi_scanner import YaobiScanner
 
 
 class TestYaobiSources(unittest.TestCase):
+    def test_run_once_resets_scanning_when_impl_raises(self) -> None:
+        scanner = YaobiScanner()
+
+        async def fail_once():
+            raise RuntimeError("boom")
+
+        scanner._run_once_impl = fail_once
+        with self.assertRaises(RuntimeError):
+            asyncio.run(scanner.run_once())
+
+        self.assertFalse(scan_status.get("scanning"))
+
     def test_okx_price_info_array_payload_parsing(self) -> None:
         data = {
             "code": "0",

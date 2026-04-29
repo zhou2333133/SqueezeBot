@@ -175,7 +175,7 @@ def ai_credentials_status() -> dict:
 
 
 class ConfigManager:
-    PROFILE_VERSION = 2026042702
+    PROFILE_VERSION = 2026042901
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
         # 交易模式、开关、仓位金额、杠杆和 API 密钥不在这里覆盖。
@@ -197,6 +197,11 @@ class ConfigManager:
         "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
         "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.60,
         "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
+        "SCALP_WS_STALE_SECONDS": 90,
+        "SCALP_POSITION_CHECK_INTERVAL_SECONDS": 10,
+        "SCALP_POSITION_STALE_SECONDS": 60,
+        "SCALP_SKIP_UNKNOWN_STATE": True,
+        "SCALP_MAX_CANDIDATE_AGE_MINUTES": 180,
         # L5: TP wick 双 tick 确认
         "SCALP_TP_CONFIRM_TICKS": 2,
         # L3: TREND_LATE 状态自动半仓
@@ -361,6 +366,10 @@ class ConfigManager:
         "SCALP_NET_BREAKEVEN_LOCK_PCT": (0.0,   2.0),
         "SCALP_TP1_SOFT_BREAKEVEN_PCT": (0.0,   2.0),
         "SCALP_REVERSAL_STOP_SL_FRACTION": (0.1, 1.0),
+        "SCALP_WS_STALE_SECONDS":     (15,     600),
+        "SCALP_POSITION_CHECK_INTERVAL_SECONDS": (3, 120),
+        "SCALP_POSITION_STALE_SECONDS": (15,    600),
+        "SCALP_MAX_CANDIDATE_AGE_MINUTES": (5, 1440),
         "SCALP_TP_CONFIRM_TICKS":      (1,      5),
         "SCALP_TREND_LATE_SIZE_MULT":  (0.1,    1.0),
         "SCALP_SYMBOL_BAN_WINDOW_MINUTES": (10, 1440),
@@ -495,6 +504,11 @@ class ConfigManager:
             "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
             "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.60,
             "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
+            "SCALP_WS_STALE_SECONDS":   90,
+            "SCALP_POSITION_CHECK_INTERVAL_SECONDS": 10,
+            "SCALP_POSITION_STALE_SECONDS": 60,
+            "SCALP_SKIP_UNKNOWN_STATE": True,
+            "SCALP_MAX_CANDIDATE_AGE_MINUTES": 180,
             # L5/L3/L7 新增可调项
             "SCALP_TP_CONFIRM_TICKS":    2,
             "SCALP_TREND_LATE_SIZE_MULT": 0.5,

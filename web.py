@@ -351,6 +351,7 @@ async def scalp_status():
         sym_count = len(bot_state.scalp_bot.monitored_symbols)
     live_suspended = bool(getattr(bot_state.scalp_bot, "_live_trading_suspended", False))
     live_suspended_reason = getattr(bot_state.scalp_bot, "_live_trading_suspended_reason", "")
+    health = bot_state.scalp_bot.runtime_health_snapshot() if bot_state.scalp_bot else {}
     return JSONResponse({
         "running":         is_running,
         "positions_count": len(scalp_positions),
@@ -358,6 +359,10 @@ async def scalp_status():
         "symbols_count":   sym_count,
         "live_trading_suspended": live_suspended,
         "live_trading_suspended_reason": live_suspended_reason,
+        "ws_last_message_at": health.get("ws_last_message_at"),
+        "ws_last_message_time": health.get("ws_last_message_time"),
+        "ws_stale_seconds": health.get("ws_stale_seconds"),
+        "ws_stale_symbol_count": health.get("ws_stale_symbol_count"),
     })
 
 
@@ -1010,6 +1015,8 @@ async def _build_scalp_analysis_pack(detail: str = "slim") -> dict:
         "scalp_trades": len(raw_trades),
         "detail_mode": detail,
     }
+    if bot:
+        runtime.update(bot.runtime_health_snapshot())
     provider_diag = {
         "provider_metrics": provider_metrics_snapshot(),
         "scan_sources": scan_status.get("sources", {}),

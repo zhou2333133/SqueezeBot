@@ -116,6 +116,13 @@ class YaobiScanner:
 
     async def run_once(self) -> None:
         scan_status["scanning"] = True
+        try:
+            await self._run_once_impl()
+        finally:
+            scan_status["scanning"] = False
+
+    async def _run_once_impl(self) -> None:
+        scan_status["scanning"] = True
         start = datetime.now()
         logger.info("🔍 妖币扫描开始 (%s)", start.strftime("%H:%M:%S"))
 
