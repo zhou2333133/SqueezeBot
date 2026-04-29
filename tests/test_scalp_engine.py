@@ -492,6 +492,44 @@ class TestScalpEngine(unittest.TestCase):
         self.assertTrue(kwargs["trust_env"])
         self.assertEqual(mode, "系统代理/环境")
 
+    def test_ws_watchdog_uses_latest_connect_anchor_after_reconnect(self) -> None:
+        class FakeWs:
+            closed = False
+
+            async def close(self, **kwargs):
+                self.closed = True
+
+        bot = BinanceScalpBot()
+        now = time.monotonic()
+        bot._ws = FakeWs()
+        bot._last_ws_msg_at = now - 300
+        bot._last_ws_connect_at = now
+        config_manager.settings["SCALP_WS_STALE_SECONDS"] = 30
+
+        closed = asyncio.run(bot._ws_watchdog_once())
+
+        self.assertFalse(closed)
+        self.assertFalse(bot._ws.closed)
+
+    def test_ws_stale_combined_falls_back_to_subscribe(self) -> None:
+        class FakeWs:
+            closed = False
+
+            async def close(self, **kwargs):
+                self.closed = True
+
+        bot = BinanceScalpBot()
+        bot._ws = FakeWs()
+        bot._ws_current_transport = "combined"
+        bot._last_ws_connect_at = time.monotonic() - 120
+        config_manager.settings["SCALP_WS_STALE_SECONDS"] = 30
+
+        closed = asyncio.run(bot._ws_watchdog_once())
+        url = bot._ws_url_for_streams(["btcusdt@kline_1m"])
+
+        self.assertTrue(closed)
+        self.assertEqual(url, "wss://fstream.binance.com/ws")
+
     def test_unknown_state_blocks_unless_hot_high_confidence(self) -> None:
         bot = BinanceScalpBot()
         bot.candidate_meta["UNKUSDT"] = {

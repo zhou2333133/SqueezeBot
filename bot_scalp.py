@@ -162,6 +162,8 @@ class BinanceScalpBot:
         self._last_ws_msg_wall: str = ""
         self._last_ws_connect_wall: str = ""
         self._last_symbol_kline_at: dict[str, float] = {}
+        self._ws_current_transport: str = ""
+        self._ws_disable_combined_until: float = 0.0
         # OI 缓存：{sym: deque[(monotonic_ts, oi_value), ...]}，保留最近3分钟（约 18 条）
         self._oi_cache:         dict[str, deque]         = {}
         # 实时当前未闭合K线（随每个WS Tick更新）
@@ -238,7 +240,7 @@ class BinanceScalpBot:
 
     def runtime_health_snapshot(self) -> dict:
         now = time.monotonic()
-        ws_anchor = self._last_ws_msg_at or self._last_ws_connect_at
+        ws_anchor = max(self._last_ws_msg_at, self._last_ws_connect_at)
         stale_after = float(self.cfg.get("SCALP_WS_STALE_SECONDS", 90) or 90)
         symbol_stale = 0
         for sym in self._desired_ws_symbols():
@@ -253,6 +255,7 @@ class BinanceScalpBot:
             "ws_stale_seconds": round(now - ws_anchor, 2) if ws_anchor else None,
             "ws_stale_symbol_count": symbol_stale,
             "ws_subscribed_streams": len(self._subscribed_streams),
+            "ws_transport": self._ws_current_transport,
             "position_count": len(self.open_positions),
         }
 
@@ -1054,7 +1057,9 @@ class BinanceScalpBot:
         return {f"{s.lower()}@kline_1m" for s in symbols if s}
 
     def _ws_url_for_streams(self, streams: list[str]) -> str:
-        if streams and self.cfg.get("SCALP_WS_COMBINED_STREAM", True):
+        combined_enabled = self.cfg.get("SCALP_WS_COMBINED_STREAM", True)
+        combined_temporarily_disabled = time.monotonic() < self._ws_disable_combined_until
+        if streams and combined_enabled and not combined_temporarily_disabled:
             return _WS_COMBINED_BASE + "/".join(streams)
         return _WS_URL
 
@@ -1115,10 +1120,13 @@ class BinanceScalpBot:
             return False
         stale_after = float(self.cfg.get("SCALP_WS_STALE_SECONDS", 90) or 90)
         now = time.monotonic()
-        anchor = self._last_ws_msg_at or self._last_ws_connect_at
+        anchor = max(self._last_ws_msg_at, self._last_ws_connect_at)
         if not anchor or now - anchor <= stale_after:
             return False
         logger.warning("⚡ WS %.0fs 未收到K线消息，主动关闭连接触发重连", now - anchor)
+        if self._ws_current_transport == "combined":
+            self._ws_disable_combined_until = now + 30 * 60
+            logger.warning("⚡ WS combined 模式无推送，临时降级为 subscribe 模式 30 分钟")
         try:
             async with self._ws_lock:
                 if self._ws and not self._ws.closed:
@@ -1139,12 +1147,14 @@ class BinanceScalpBot:
         # 如某台机器确实需要直连，可在配置里打开 SCALP_WS_DIRECT。
         params = sorted(self._desired_ws_streams())
         url = self._ws_url_for_streams(params)
+        transport = "combined" if url != _WS_URL else "subscribe"
         session_kwargs, network_mode = self._ws_session_kwargs()
         async with aiohttp.ClientSession(**session_kwargs) as ws_session:
             async with ws_session.ws_connect(url, heartbeat=20, timeout=15) as ws:
                 self._ws = ws
                 self._last_ws_connect_at = time.monotonic()
                 self._last_ws_connect_wall = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self._ws_current_transport = transport
                 self._subscribed_streams = set(params)
                 if url == _WS_URL:
                     for i, chunk in enumerate([params[j:j + 200] for j in range(0, len(params), 200)]):
@@ -1153,7 +1163,7 @@ class BinanceScalpBot:
                 logger.info(
                     "⚡ WS 已连接 (%s, %s)，订阅 %d 个候选/持仓币种",
                     network_mode,
-                    "combined" if url != _WS_URL else "subscribe",
+                    transport,
                     len(self._subscribed_streams),
                 )
                 async for msg in ws:
@@ -1168,6 +1178,7 @@ class BinanceScalpBot:
                 if self.running:
                     logger.warning("⚡ WS 连接关闭，即将重连...")
                 self._ws = None
+                self._ws_current_transport = ""
                 self._subscribed_streams = set()
 
     async def _on_message(self, raw: str) -> None:
