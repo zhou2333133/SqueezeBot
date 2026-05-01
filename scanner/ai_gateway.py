@@ -115,6 +115,11 @@ _GEMINI_OPPORTUNITY_JSON_SCHEMA = {
                     "action": {"type": "string"},
                     "permission": {"type": "string"},
                     "confidence": {"type": "integer"},
+                    "market_stage": {"type": "string"},
+                    "playbook_type": {"type": "string"},
+                    "trade_permission": {"type": "string"},
+                    "opportunity_score": {"type": "integer"},
+                    "risk_score": {"type": "integer"},
                     "summary": {"type": "string"},
                     "reasons": {"type": "array", "items": {"type": "string"}},
                     "risks": {"type": "array", "items": {"type": "string"}},
@@ -274,6 +279,15 @@ def _compact_candidate(c: Any) -> dict:
         "liq_5m_usd": round(float(getattr(c, "liquidation_5m_usd", 0) or 0), 2),
         "liq_15m_usd": round(float(getattr(c, "liquidation_15m_usd", 0) or 0), 2),
         "contract_activity": getattr(c, "contract_activity_score", 0),
+        "market_stage": getattr(c, "market_stage", ""),
+        "playbook_type": getattr(c, "playbook_type", ""),
+        "trade_permission": getattr(c, "trade_permission", ""),
+        "risk_score": getattr(c, "risk_score", 0),
+        "chip_score": getattr(c, "chip_score", 0),
+        "control_score": getattr(c, "control_score", 0),
+        "distribution_score": getattr(c, "distribution_score", 0),
+        "early_wallet_layout": bool(getattr(c, "early_wallet_layout", False)),
+        "case_similarity": getattr(c, "case_similarity", {}) or {},
         "okx_buy_ratio": round(float(getattr(c, "okx_buy_ratio", 0) or 0), 3),
         "okx_large_trade_pct": round(float(getattr(c, "okx_large_trade_pct", 0) or 0), 3),
         "okx_risk_level": getattr(c, "okx_risk_level", 0),
@@ -282,6 +296,8 @@ def _compact_candidate(c: Any) -> dict:
         "surf_news_titles": list(getattr(c, "surf_news_titles", []) or [])[:2],
         "tags": list(getattr(c, "anomaly_tags", []) or [])[:6],
         "signals": list(getattr(c, "signals", []) or [])[:8],
+        "intelligence_reasons": list(getattr(c, "intelligence_reasons", []) or [])[:4],
+        "intelligence_risks": list(getattr(c, "intelligence_risks", []) or [])[:4],
         "lesson_stats": relevant_lesson_stats(symbol, limit=24),
         "lessons": relevant_lessons(symbol, limit=3),
     }
@@ -335,6 +351,13 @@ def _normalize_action(action: str) -> str:
     return aliases.get(raw, raw)
 
 
+def _bounded_int(value: Any, default: int = 0) -> int:
+    try:
+        return max(0, min(100, int(float(value if value is not None else default))))
+    except (TypeError, ValueError):
+        return default
+
+
 def _normalize_ai_items(payload) -> list[dict]:
     if isinstance(payload, dict):
         rows = payload.get("opportunities") or payload.get("items") or payload.get("data") or []
@@ -351,6 +374,7 @@ def _normalize_ai_items(payload) -> list[dict]:
             continue
         action = _normalize_action(str(row.get("action", "OBSERVE")).upper())
         permission = str(row.get("permission", "OBSERVE")).upper()
+        trade_permission = str(row.get("trade_permission", row.get("permission", "OBSERVE")) or "OBSERVE").upper()
         result.append({
             "symbol": symbol,
             "action": action if action in {
@@ -362,7 +386,12 @@ def _normalize_ai_items(payload) -> list[dict]:
                 "BLOCK",
             } else "OBSERVE",
             "permission": permission if permission in {"ALLOW_IF_1M_SIGNAL", "OBSERVE", "BLOCK"} else "OBSERVE",
-            "confidence": max(0, min(100, int(row.get("confidence", 0) or 0))),
+            "confidence": _bounded_int(row.get("confidence", 0)),
+            "market_stage": str(row.get("market_stage", "") or "")[:80],
+            "playbook_type": str(row.get("playbook_type", "") or "")[:80],
+            "trade_permission": trade_permission if trade_permission in {"AMBUSH_WATCH", "WATCH_CONFIRMATION", "OBSERVE", "BLOCK"} else "OBSERVE",
+            "opportunity_score": _bounded_int(row.get("opportunity_score", 0)),
+            "risk_score": _bounded_int(row.get("risk_score", 0)),
             "summary": str(row.get("summary", ""))[:240],
             "reasons": list(row.get("reasons", []) or [])[:5],
             "risks": list(row.get("risks", []) or [])[:5],
@@ -415,12 +444,18 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
     payload = {
         "task": "short_term_crypto_opportunity_review",
         "rule": (
-            "Do not place orders. Decide the 15-60 minute playbook only. "
+            "Do not place orders or answer buy/sell. Decide the 15-60 minute market stage and playbook only. "
+            "OI/CVD/taker flow are confirmation signals, not standalone entry triggers. "
             "Do not wait for or ask for 1m candles; the local bot handles exact 1m entry timing."
         ),
         "output_schema": {
             "opportunities": [{
                 "symbol": "BASE",
+                "market_stage": "accumulation_before_oi|real_breakout|bull_trap|mm_control|distribution|dead|neutral",
+                "playbook_type": "ambush_watch|oi_confirmation|avoid_chasing_oi|thin_book_control|avoid_distribution|block_high_risk|observe",
+                "trade_permission": "AMBUSH_WATCH|WATCH_CONFIRMATION|OBSERVE|BLOCK",
+                "opportunity_score": 0,
+                "risk_score": 0,
                 "action": "WATCH_LONG_CONTINUATION|WATCH_SHORT_CONTINUATION|WATCH_LONG_FADE|WATCH_SHORT_FADE|OBSERVE|BLOCK",
                 "permission": "ALLOW_IF_1M_SIGNAL|OBSERVE|BLOCK",
                 "confidence": 0,
@@ -472,10 +507,13 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
         if p.strip()
     ]
     system_prompt = (
-        "You are a crypto market analyst for a short-term 1-minute scalp bot. "
-        "Use only the provided compact 5m/15m/24h flow, OI, funding, liquidation, sentiment, OKX and lesson data. "
+        "You are a crypto market-structure analyst for a short-term 1-minute scalp bot. "
+        "Use only the provided compact 5m/15m/24h flow, OI, funding, liquidation, sentiment, OKX holder-structure and lesson data. "
         "Return strict JSON only. "
-        "Your job is to choose the playbook for the next 15-60 minutes, not the exact entry tick. "
+        "Your job is to classify the market stage and choose the playbook for the next 15-60 minutes, not the exact entry tick. "
+        "Do not output buy/sell recommendations. "
+        "OI/CVD/taker flow are confirmation signals; do not treat OI expansion alone as a tradable entry. "
+        "Use AMBUSH_WATCH when on-chain accumulation appears early but OI has not confirmed; keep permission OBSERVE in that case. "
         "Do not downgrade a candidate to OBSERVE just because no 1m signal is supplied; 1m execution is handled locally after your permission. "
         "Use ALLOW_IF_1M_SIGNAL when the higher-timeframe playbook is tradable but still needs local 1m confirmation. "
         "WATCH_LONG_CONTINUATION and WATCH_SHORT_CONTINUATION mean trend-following continuation or pullback-entry playbooks. "

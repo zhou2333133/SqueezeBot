@@ -20,7 +20,8 @@ from scanner.candidates import (
     Candidate, upsert_candidate, scan_status, candidates_map, clear_candidates,
     set_opportunity_queue,
 )
-from scanner.scorer import score as score_candidate
+from scanner.scorer import classify_decision_tier, score as score_candidate
+from scanner.intelligence import apply_market_intelligence
 from scanner.sources.geckoterminal import fetch_trending_pools, fetch_new_pools
 from scanner.sources.dexscreener import (
     fetch_token_boosts, fetch_latest_profiles, fetch_token_detail,
@@ -466,6 +467,7 @@ class YaobiScanner:
 
         # ── 15. 异常币/情绪雷达 (OKX market-filter/sentiment-tracker 风格) ───
         self._apply_anomaly_radar(all_candidates)
+        self._apply_market_intelligence(all_candidates)
         self._apply_decision_cards(all_candidates)
         await self._apply_opportunity_queue(all_candidates)
         min_anomaly = int(config_manager.settings.get("YAOBI_MIN_ANOMALY_SCORE", 35))
@@ -479,6 +481,7 @@ class YaobiScanner:
             if self._is_watch_action(c.opportunity_action)
             or c.opportunity_permission in {"ALLOW_IF_1M_SIGNAL", "BLOCK"}
             or c.opportunity_setup_state in {"ARMED", "HOT", "BLOCK"}
+            or c.trade_permission in {"AMBUSH_WATCH", "WATCH_CONFIRMATION", "BLOCK"}
         ]
         merged_scored = {c.key(): c for c in scored}
         for c in sticky:
@@ -605,11 +608,40 @@ class YaobiScanner:
         risks: list[str] = []
         required = ["本地1m动能突破或轧空/轧多信号仍需触发", "入场瞬间Taker与OI方向不反转"]
 
+        if c.trade_permission == "BLOCK":
+            note = c.intelligence_summary or c.decision_note or c.market_stage or "市场结构剧本阻断"
+            return (
+                max(0, min(100, int(c.risk_score or c.distribution_score or 60))),
+                "BLOCK",
+                "BLOCK",
+                max(0, min(100, int(c.risk_score or 70))),
+                list(c.intelligence_reasons or [])[:6],
+                ([note] + list(c.intelligence_risks or []))[:6],
+                [],
+            )
+
+        if c.trade_permission == "AMBUSH_WATCH":
+            reasons.extend(c.intelligence_reasons[:4] or ["OI未启动前的埋伏观察"])
+            risks.extend(c.intelligence_risks[:3])
+            required.insert(0, "只加入埋伏观察；OI启动确认前不允许自动执行")
+            score = max(
+                int(config_manager.settings.get("YAOBI_OPPORTUNITY_MIN_SCORE", 45) or 45),
+                int(round(c.chip_score * 0.45 + c.anomaly_score * 0.25 + max(0, 100 - c.risk_score) * 0.20)),
+            )
+            confidence = max(35, min(80, score + int(c.chip_score * 0.2) - len(risks) * 6))
+            return max(0, min(100, score)), "OBSERVE", "OBSERVE", confidence, reasons[:6], risks[:6], required[:6]
+
         score = int(round(
             c.score * 0.24 +
             c.anomaly_score * 0.26 +
             c.contract_activity_score * 0.36
         ))
+        if c.trade_permission == "WATCH_CONFIRMATION":
+            score += 8
+            reasons.extend(c.intelligence_reasons[:2] or ["市场结构剧本允许等待确认"])
+        if c.risk_score >= 65:
+            score -= 12
+            risks.append(f"结构风险{c.risk_score}")
         if abs(c.oi_change_15m_pct) >= 4:
             score += 10
             reasons.append(f"15m OI {c.oi_change_15m_pct:+.2f}%")
@@ -709,6 +741,13 @@ class YaobiScanner:
         return max(0, min(100, score)), action, permission, confidence, reasons[:6], risks[:6], required[:6]
 
     @staticmethod
+    def _bounded_int(value, default: int = 0) -> int:
+        try:
+            return max(0, min(100, int(float(value if value is not None else default))))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
     def _action_direction(action: str) -> str:
         raw = str(action or "").upper()
         if raw in {"WATCH_LONG", "WATCH_LONG_CONTINUATION", "WATCH_LONG_FADE"}:
@@ -758,6 +797,7 @@ class YaobiScanner:
             c.surf_news_sentiment == "negative"
             or c.okx_risk_level >= 4
             or bool(c.surf_ai_hard_block)
+            or c.trade_permission == "BLOCK"
         )
 
     def _prev_candidate_state(self, c: Candidate) -> dict:
@@ -803,6 +843,8 @@ class YaobiScanner:
         if action == "BLOCK" or self._is_hard_block_candidate(c):
             note = c.surf_ai_reason or c.decision_note or "硬风险拦截"
             return "BLOCK", "", note
+        if c.trade_permission == "AMBUSH_WATCH":
+            return "WAIT", "", "提前埋伏观察；OI/剧本确认前不开放自动执行"
         if not self._is_watch_action(action):
             return "WAIT", "", "等待AI/规则生成明确剧本"
 
@@ -936,6 +978,17 @@ class YaobiScanner:
             prev_active = self._prev_playbook_active(prev)
             prev_action = str(prev.get("opportunity_action", "") or "")
             state, family, note = self._evaluate_playbook_setup(c)
+            if c.trade_permission == "AMBUSH_WATCH":
+                c.opportunity_action = "OBSERVE"
+                c.opportunity_permission = "OBSERVE"
+                c.opportunity_trigger_family = ""
+                c.opportunity_setup_state = "WAIT"
+                c.opportunity_setup_note = note[:160]
+                c.opportunity_expires_at = ""
+                required = list(c.opportunity_required_confirmation or [])
+                required.insert(0, "AMBUSH_WATCH只允许观察，不开放1m自动执行")
+                c.opportunity_required_confirmation = list(dict.fromkeys(required))[:5]
+                continue
             if (
                 state == "WAIT"
                 and prev_active
@@ -1055,6 +1108,7 @@ class YaobiScanner:
             if (
                 c.opportunity_score >= int(config_manager.settings.get("YAOBI_OPPORTUNITY_MIN_SCORE", 45))
                 or action != "OBSERVE"
+                or c.trade_permission in {"AMBUSH_WATCH", "WATCH_CONFIRMATION", "BLOCK"}
                 or self._prev_playbook_active(self._prev_candidate_state(c))
             ):
                 queue_candidates.append(c)
@@ -1119,7 +1173,19 @@ class YaobiScanner:
                     c.opportunity_risks = (ai.get("risks") or [])[:5]
                 if ai.get("required_confirmation"):
                     c.opportunity_required_confirmation = (ai.get("required_confirmation") or [])[:5]
-                c.opportunity_confidence = max(c.opportunity_confidence, int(ai.get("confidence", 0) or 0))
+                if ai.get("market_stage"):
+                    c.market_stage = str(ai.get("market_stage", "") or c.market_stage)[:80]
+                if ai.get("playbook_type"):
+                    c.playbook_type = str(ai.get("playbook_type", "") or c.playbook_type)[:80]
+                if ai.get("trade_permission"):
+                    ai_trade_perm = str(ai.get("trade_permission", "") or "").upper()
+                    if ai_trade_perm in {"AMBUSH_WATCH", "WATCH_CONFIRMATION", "OBSERVE", "BLOCK"}:
+                        c.trade_permission = ai_trade_perm
+                if ai.get("risk_score") is not None:
+                    c.risk_score = max(c.risk_score, self._bounded_int(ai.get("risk_score"), 0))
+                if ai.get("opportunity_score") is not None:
+                    c.opportunity_score = max(c.opportunity_score, self._bounded_int(ai.get("opportunity_score"), 0))
+                c.opportunity_confidence = max(c.opportunity_confidence, self._bounded_int(ai.get("confidence", 0), 0))
                 ai_action = ai.get("action")
                 ai_permission = ai.get("permission")
                 if ai_action == "BLOCK" or ai_permission == "BLOCK":
@@ -1410,6 +1476,30 @@ class YaobiScanner:
 
     # ── 异常币/情绪雷达 ───────────────────────────────────────────────────────
 
+    def _apply_market_intelligence(self, candidates: list[Candidate]) -> None:
+        """Classify market stage/playbook after raw anomaly and sentiment fields exist."""
+        for c in candidates:
+            try:
+                result = apply_market_intelligence(c)
+                classify_decision_tier(c)
+                reasons = list(c.intelligence_reasons or [])
+                risks = list(c.intelligence_risks or [])
+                pieces = []
+                if c.market_stage:
+                    pieces.append(f"阶段:{c.market_stage}")
+                if c.playbook_type:
+                    pieces.append(f"剧本:{c.playbook_type}")
+                pieces.extend((reasons or risks)[:2])
+                if pieces:
+                    c.intelligence_summary = "；".join(pieces[:4])
+                if result.get("case_matches"):
+                    top = result["case_matches"][0]
+                    refs = list(c.knowledge_refs or [])
+                    refs.insert(0, f"{top.get('symbol')}:{top.get('similarity')}%")
+                    c.knowledge_refs = list(dict.fromkeys(refs))[:5]
+            except Exception as e:
+                logger.debug("市场结构剧本分类失败 %s: %s", c.symbol, e)
+
     def _apply_anomaly_radar(self, candidates: list[Candidate]) -> None:
         """把 OKX/Binance/Surf/广场数据聚合成一张“今天哪些币不寻常”的雷达表。"""
         for c in candidates:
@@ -1666,6 +1756,17 @@ class YaobiScanner:
             elif c.has_futures and not c.address:
                 missing.append("链上大单未确认")
 
+            if c.market_stage:
+                reasons.append(f"市场阶段:{c.market_stage}")
+                confidence += 8 if c.trade_permission == "WATCH_CONFIRMATION" else 4
+            if c.trade_permission == "AMBUSH_WATCH":
+                reasons.append("提前埋伏观察，不自动交易")
+                confidence += 6
+            if c.trade_permission == "BLOCK":
+                risks.append(f"剧本阻断:{c.market_stage or c.playbook_type or '风险'}")
+            if c.risk_score >= 70:
+                risks.append(f"结构风险{c.risk_score}")
+
             hard_risk = self._is_hard_block_candidate(c)
 
             if c.category == "风险":
@@ -1685,8 +1786,10 @@ class YaobiScanner:
             if c.price_change_24h <= -30:
                 risks.append("24h大跌")
 
-            if hard_risk:
+            if hard_risk or c.trade_permission == "BLOCK":
                 action = "禁止交易"
+            elif c.trade_permission == "AMBUSH_WATCH":
+                action = "等待确认"
             elif confidence >= 55 and not risks:
                 action = "允许交易"
             elif confidence >= 30:

@@ -338,6 +338,12 @@ class BinanceScalpBot:
         return max(0.0, (time.monotonic() - seen_ts) / 60)
 
     def _state_entry_allowed(self, symbol: str, state: str, direction: str, signal_label: str) -> bool:
+        if state == "TREND_LATE" and self.cfg.get("SCALP_BLOCK_TREND_LATE_ENTRY", True):
+            reason = "TREND_LATE趋势末端默认不再开新仓"
+            self._fstat["state_block"] += 1
+            self._record_entry_block(symbol, "state", reason, direction=direction, signal_label=signal_label)
+            logger.info("⚡ [%s] %s 被状态机过滤: %s", symbol, signal_label, reason)
+            return False
         if state != "UNKNOWN" or not self.cfg.get("SCALP_SKIP_UNKNOWN_STATE", True):
             return True
         meta = self.candidate_meta.get(symbol, {})
@@ -498,6 +504,16 @@ class BinanceScalpBot:
             "yaobi_surf_ai_reason": c.get("surf_ai_reason", ""),
             "yaobi_surf_ai_hard_block": bool(c.get("surf_ai_hard_block", False)),
             "yaobi_market_filter_note": c.get("market_filter_note", ""),
+            "yaobi_market_stage": c.get("market_stage", ""),
+            "yaobi_playbook_type": c.get("playbook_type", ""),
+            "yaobi_trade_permission": c.get("trade_permission", ""),
+            "yaobi_risk_score": int(c.get("risk_score", 0) or 0),
+            "yaobi_chip_score": int(c.get("chip_score", 0) or 0),
+            "yaobi_control_score": int(c.get("control_score", 0) or 0),
+            "yaobi_distribution_score": int(c.get("distribution_score", 0) or 0),
+            "yaobi_case_similarity": c.get("case_similarity", {}),
+            "yaobi_intelligence_reasons": list(c.get("intelligence_reasons", []) or [])[:5],
+            "yaobi_intelligence_risks": list(c.get("intelligence_risks", []) or [])[:5],
             "yaobi_holder_signal": c.get("holder_signal", ""),
             "yaobi_chain": c.get("chain", ""),
             "yaobi_chain_id": c.get("chain_id", ""),
@@ -784,6 +800,9 @@ class BinanceScalpBot:
                 return False, f"Surf AI高风险: {meta.get('yaobi_decision_note') or ''}", 1.0
             if int(meta.get("yaobi_okx_risk_level", 0) or 0) >= 4:
                 return False, f"OKX风险等级{meta.get('yaobi_okx_risk_level')}", 1.0
+            if str(meta.get("yaobi_trade_permission") or "").upper() == "BLOCK":
+                stage = meta.get("yaobi_market_stage") or meta.get("yaobi_playbook_type") or "market_structure"
+                return False, f"市场结构剧本BLOCK: {stage}", 1.0
 
         # B3: AI 剧本到期检查（仅当 opportunity_permission 是 ALLOW_IF_1M_SIGNAL 时有意义）
         if (self.cfg.get("SCALP_OPPORTUNITY_EXPIRY_GUARD", True)
@@ -1895,6 +1914,11 @@ class BinanceScalpBot:
             return False
         return self._yaobi_action_style(meta.get("yaobi_opportunity_action", "")) == "CONTINUATION"
 
+    def _directional_cfg(self, base_key: str, direction: str, default: float) -> float:
+        side_key = f"{base_key}_{direction.upper()}"
+        raw = self.cfg.get(side_key, self.cfg.get(base_key, default))
+        return self._as_float(raw, default)
+
     def _continuation_pullback_ready(
         self,
         symbol: str,
@@ -1911,8 +1935,12 @@ class BinanceScalpBot:
         buf = self.kline_buffer.get(symbol, [])
         if len(buf) < 20:
             return False, "1m K线不足20根", 0.0
-        atr_min = self.cfg.get("BREAKOUT_ATR_MIN_PCT", 0.0)
-        atr_max = self.cfg.get("CONTINUATION_ATR_MAX_PCT", 2.5)
+        atr_min = self._directional_cfg(
+            "CONTINUATION_ATR_MIN_PCT",
+            direction,
+            self.cfg.get("BREAKOUT_ATR_MIN_PCT", 0.0),
+        )
+        atr_max = self._directional_cfg("CONTINUATION_ATR_MAX_PCT", direction, 2.5)
         if atr_min and atr_pct < atr_min:
             return False, f"ATR {atr_pct:.2f}%低于顺势接力下限{atr_min:.2f}%", 0.0
         if atr_max and atr_pct > atr_max:
@@ -1934,7 +1962,7 @@ class BinanceScalpBot:
             return False, f"等待1m回踩，当前回踩{pullback:.2f}% < {min_pullback:.2f}%", 0.0
 
         ema_dev = self._as_float(profile.get("directional_ema20_deviation_pct"))
-        ema_limit = self.cfg.get("CONTINUATION_MAX_EMA20_DEVIATION_PCT", 4.5)
+        ema_limit = self._directional_cfg("CONTINUATION_MAX_EMA20_DEVIATION_PCT", direction, 4.5)
         if ema_limit and ema_dev > ema_limit:
             return False, f"回踩后仍偏离EMA20 {ema_dev:.2f}% > {ema_limit:.2f}%", 0.0
 
@@ -1943,8 +1971,10 @@ class BinanceScalpBot:
         ma10 = sum(closes[-10:]) / 10
         ma20 = sum(closes[-20:]) / 20
         setup = str(self.candidate_meta.get(symbol, {}).get("yaobi_opportunity_setup_state") or "").upper()
-        taker_min = self.cfg.get(
-            "CONTINUATION_HOT_TAKER_MIN" if setup == "HOT" else "CONTINUATION_TAKER_MIN",
+        taker_key = "CONTINUATION_HOT_TAKER_MIN" if setup == "HOT" else "CONTINUATION_TAKER_MIN"
+        taker_min = self._directional_cfg(
+            taker_key,
+            direction,
             0.52 if setup == "HOT" else 0.55,
         )
         lookback = int(self.cfg.get("CONTINUATION_RECLAIM_LOOKBACK", 3) or 3)
@@ -2954,6 +2984,13 @@ class BinanceScalpBot:
             "yaobi_address": meta.get("yaobi_address", ""),
             "yaobi_chain": meta.get("yaobi_chain", ""),
             "yaobi_market_filter_note": meta.get("yaobi_market_filter_note", ""),
+            "yaobi_market_stage": meta.get("yaobi_market_stage", ""),
+            "yaobi_playbook_type": meta.get("yaobi_playbook_type", ""),
+            "yaobi_trade_permission": meta.get("yaobi_trade_permission", ""),
+            "yaobi_risk_score": meta.get("yaobi_risk_score", 0),
+            "yaobi_chip_score": meta.get("yaobi_chip_score", 0),
+            "yaobi_control_score": meta.get("yaobi_control_score", 0),
+            "yaobi_distribution_score": meta.get("yaobi_distribution_score", 0),
             "yaobi_opportunity_rank": meta.get("yaobi_opportunity_rank", 0),
             "yaobi_opportunity_score": meta.get("yaobi_opportunity_score", 0),
             "yaobi_opportunity_action": meta.get("yaobi_opportunity_action", ""),

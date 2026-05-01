@@ -512,6 +512,47 @@
               </div>
             </div>
 
+            <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">Continuation Pullback 参数</p>
+            <div class="grid grid-cols-4 gap-3 mt-2">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">接力多 Taker</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">顺势回踩多的主动买盘阈值，复盘后默认0.62。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="CONTINUATION_TAKER_MIN_LONG" :value="cfg.CONTINUATION_TAKER_MIN_LONG??0.62"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">接力空 Taker</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">顺势回踩空的主动卖盘阈值，空头样本较稳，默认0.52。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="CONTINUATION_TAKER_MIN_SHORT" :value="cfg.CONTINUATION_TAKER_MIN_SHORT??0.52"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">HOT多 Taker</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">HOT剧本下的多头最低主动买盘，默认0.60。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="CONTINUATION_HOT_TAKER_MIN_LONG" :value="cfg.CONTINUATION_HOT_TAKER_MIN_LONG??0.60"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">HOT空 Taker</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">HOT剧本下的空头最低主动卖盘，默认0.52。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="CONTINUATION_HOT_TAKER_MIN_SHORT" :value="cfg.CONTINUATION_HOT_TAKER_MIN_SHORT??0.52"></div>
+            </div>
+            <div class="grid grid-cols-4 gap-3 mt-3">
+              <div>
+                <label class="text-xs text-gray-400 font-medium">接力多 ATR 下限%</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">低波动多头接力容易假启动，默认0.70。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="CONTINUATION_ATR_MIN_PCT_LONG" :value="cfg.CONTINUATION_ATR_MIN_PCT_LONG??0.70"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">接力多 ATR 上限%</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">过滤插针剧烈波动，默认2.00。</div>
+                <input class="inp inp-o" type="number" step="0.01" name="CONTINUATION_ATR_MAX_PCT_LONG" :value="cfg.CONTINUATION_ATR_MAX_PCT_LONG??2.00"></div>
+              <div>
+                <label class="text-xs text-gray-400 font-medium">接力多 EMA20偏离%</label>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">多头回踩后仍过度偏离时不追，默认2.50。</div>
+                <input class="inp inp-o" type="number" step="0.1" name="CONTINUATION_MAX_EMA20_DEVIATION_PCT_LONG" :value="cfg.CONTINUATION_MAX_EMA20_DEVIATION_PCT_LONG??2.50"></div>
+              <label class="flex items-center gap-2 cursor-pointer select-none pt-6">
+                <label class="toggle to-toggle">
+                  <input type="checkbox" name="SCALP_BLOCK_TREND_LATE_ENTRY" :checked="cfg.SCALP_BLOCK_TREND_LATE_ENTRY!==false" @change="cfg.SCALP_BLOCK_TREND_LATE_ENTRY=$event.target.checked">
+                  <span class="ttrack"></span>
+                </label>
+                <span class="text-sm text-gray-400">阻止 TREND_LATE 新仓</span>
+              </label>
+            </div>
+
             <p class="text-xs text-orange-800 uppercase tracking-widest mt-4 pt-1">止盈设置 (三档分批平仓)</p>
             <div class="text-xs text-gray-600 mb-2">V3 统一使用结构止损 / 硬帽止损反推 RR 止盈，不再保留旧的固定动量回调和 FLAT 反转参数。</div>
             <div class="grid grid-cols-4 gap-3 mt-2">
@@ -546,8 +587,8 @@
               </label>
               <div>
                 <label class="text-xs text-gray-400 font-medium">结构追踪K数</label>
-                <div class="text-xs text-gray-600 mt-0.5 mb-1">Runner 用最近N根已闭合K线结构低/高点做追踪。默认14。</div>
-                <input class="inp inp-o" type="number" step="1" name="SCALP_STRUCTURE_TRAIL_BARS" :value="cfg.SCALP_STRUCTURE_TRAIL_BARS??14"></div>
+                <div class="text-xs text-gray-600 mt-0.5 mb-1">Runner 用最近N根已闭合K线结构低/高点做追踪。默认20。</div>
+                <input class="inp inp-o" type="number" step="1" name="SCALP_STRUCTURE_TRAIL_BARS" :value="cfg.SCALP_STRUCTURE_TRAIL_BARS??20"></div>
               <div>
                 <label class="text-xs text-gray-400 font-medium">TP1时间止损分钟</label>
                 <div class="text-xs text-gray-600 mt-0.5 mb-1">入场后N分钟未触达TP1，判定突破失效并退出。</div>
@@ -562,8 +603,8 @@
                 <input type="checkbox" name="SCALP_TP3_AGGRESSIVE_RUNNER" :checked="cfg.SCALP_TP3_AGGRESSIVE_RUNNER!==false" @change="cfg.SCALP_TP3_AGGRESSIVE_RUNNER=$event.target.checked">
                 <span class="ttrack"></span>
               </label>
-              <span class="text-sm text-orange-300">TP3 Runner 激进持仓</span>
-              <span class="text-xs text-gray-600">开启后 TP3 三轨取更宽松止损，优先吃火热行情尾部。</span>
+              <span class="text-sm text-orange-300">TP3 Runner 激进止盈</span>
+              <span class="text-xs text-gray-600">开启后 TP3 三轨取更紧止损；默认关闭，让 runner 多留一点。</span>
             </label>
             <div class="grid grid-cols-4 gap-3 mt-3">
               <div>
@@ -2508,7 +2549,7 @@ function app() {
 
     async saveScalpConfig() {
       const fd = new FormData(document.getElementById('scalpForm'))
-      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_TP3_AGGRESSIVE_RUNNER','SCALP_SKIP_TP1_IN_STRONG_TREND','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_WAIT_CONFIRM','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD','SCALP_YAOBI_FUNDING_OI_GUARD','SCALP_OPPORTUNITY_GUARD_ENABLED','SCALP_REQUIRE_OPPORTUNITY_QUEUE','SCALP_REQUIRE_OPPORTUNITY_PERMISSION']
+      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_TP3_AGGRESSIVE_RUNNER','SCALP_SKIP_TP1_IN_STRONG_TREND','SCALP_BLOCK_TREND_LATE_ENTRY','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_WAIT_CONFIRM','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD','SCALP_YAOBI_FUNDING_OI_GUARD','SCALP_OPPORTUNITY_GUARD_ENABLED','SCALP_REQUIRE_OPPORTUNITY_QUEUE','SCALP_REQUIRE_OPPORTUNITY_PERMISSION']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()

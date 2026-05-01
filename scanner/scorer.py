@@ -271,8 +271,17 @@ def classify_decision_tier(c: Candidate) -> None:
     """
     # ── 1. 风险预警（最高优先级，覆盖任何 L1/L2 信号）──────────────────────
     risk_subtype = ""
+    if c.trade_permission == "BLOCK" or c.market_stage in {"bull_trap", "distribution", "dead"}:
+        if c.market_stage == "bull_trap":
+            risk_subtype = "诱多收割"
+        elif c.market_stage == "distribution":
+            risk_subtype = "出货家族"
+        elif c.market_stage == "dead":
+            risk_subtype = "高危死亡"
+        else:
+            risk_subtype = "剧本阻断"
     # 1a) 出货家族：OI 下降 + 价格上涨（庄家在派发）
-    if c.oi_change_24h_pct < -15 and c.price_change_24h > 10:
+    elif c.oi_change_24h_pct < -15 and c.price_change_24h > 10:
         risk_subtype = "出货家族"
     # 1b) FR 警告：极端正资金费（追多过热）或极端负但已涨多（轧空尾声）
     elif c.funding_rate_pct >= 0.15:
@@ -298,6 +307,11 @@ def classify_decision_tier(c: Candidate) -> None:
     if risk_subtype:
         c.decision_tier = "RISK_AVOID"
         c.decision_subtype = risk_subtype
+        return
+
+    if c.trade_permission == "AMBUSH_WATCH" or c.market_stage == "accumulation_before_oi":
+        c.decision_tier = "L2_AMBUSH"
+        c.decision_subtype = "提前埋伏"
         return
 
     # ── 2. L1 主战场（已启动，建议追第一仓）─────────────────────────────────

@@ -125,6 +125,20 @@ class Candidate:
     holder_signal:      str   = ""    # OKX top10/dev/smart-money 摘要
     market_filter_note: str   = ""    # 核心异动解释
 
+    # ── 市场结构剧本层（只作上游情报，不直接下单）──────────────────────────
+    market_stage:       str   = ""    # accumulation_before_oi / real_breakout / bull_trap / mm_control / distribution / dead
+    playbook_type:      str   = ""    # ambush_watch / oi_confirmation / avoid_chasing_oi ...
+    trade_permission:   str   = "OBSERVE"  # AMBUSH_WATCH / WATCH_CONFIRMATION / OBSERVE / BLOCK
+    risk_score:         int   = 0
+    chip_score:         int   = 0
+    control_score:      int   = 0
+    distribution_score: int   = 0
+    social_heat_score:  int   = 0
+    early_wallet_layout: bool = False
+    case_similarity:    dict  = field(default_factory=dict)
+    intelligence_reasons: list = field(default_factory=list)
+    intelligence_risks:   list = field(default_factory=list)
+
     # ── 决策解释卡（只作筛选/复盘，不直接生成交易）──────────────────────────
     decision_action:     str  = "观察"  # 允许交易 / 等待确认 / 禁止交易 / 观察
     decision_confidence: int  = 0
@@ -269,6 +283,18 @@ class Candidate:
             "long_short_text":     self.long_short_text,
             "holder_signal":       self.holder_signal,
             "market_filter_note":  self.market_filter_note,
+            "market_stage":        self.market_stage,
+            "playbook_type":       self.playbook_type,
+            "trade_permission":    self.trade_permission,
+            "risk_score":          self.risk_score,
+            "chip_score":          self.chip_score,
+            "control_score":       self.control_score,
+            "distribution_score":  self.distribution_score,
+            "social_heat_score":   self.social_heat_score,
+            "early_wallet_layout": self.early_wallet_layout,
+            "case_similarity":     self.case_similarity,
+            "intelligence_reasons": self.intelligence_reasons[:6],
+            "intelligence_risks":   self.intelligence_risks[:6],
             "decision_action":     self.decision_action,
             "decision_confidence": self.decision_confidence,
             "decision_reasons":    self.decision_reasons[:5],

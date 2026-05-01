@@ -262,6 +262,49 @@ class TestScalpEngine(unittest.TestCase):
         self.assertGreater(trigger_pct, 0)
         self.assertIn("回踩", reason)
 
+    def test_long_continuation_uses_directional_thresholds(self) -> None:
+        bot = BinanceScalpBot()
+        config_manager.settings["BREAKOUT_MAX_PREMOVE_15M_PCT"] = 3.0
+        bot.candidate_meta["SKRUSDT"] = {
+            "yaobi_context": True,
+            "yaobi_opportunity_action": "WATCH_LONG_CONTINUATION",
+            "yaobi_opportunity_permission": "ALLOW_IF_1M_SIGNAL",
+            "yaobi_opportunity_rank": 1,
+            "yaobi_opportunity_trigger_family": "BREAKOUT",
+            "yaobi_opportunity_setup_state": "ARMED",
+        }
+        bot.kline_buffer["SKRUSDT"] = [
+            {"o": 100 + i * 0.15, "h": 100.3 + i * 0.15, "l": 99.8 + i * 0.15, "c": 100 + i * 0.15, "q": 1000.0, "Q": 580.0}
+            for i in range(14)
+        ] + [
+            {"o": 102.2, "h": 102.6, "l": 102.0, "c": 102.4, "q": 1000.0, "Q": 580.0},
+            {"o": 102.4, "h": 103.2, "l": 102.2, "c": 103.0, "q": 1000.0, "Q": 610.0},
+            {"o": 103.0, "h": 103.6, "l": 102.9, "c": 103.4, "q": 1000.0, "Q": 620.0},
+            {"o": 103.4, "h": 103.5, "l": 102.1, "c": 102.6, "q": 1000.0, "Q": 430.0},
+            {"o": 102.6, "h": 103.0, "l": 102.4, "c": 102.9, "q": 1000.0, "Q": 510.0},
+            {"o": 102.9, "h": 103.2, "l": 102.7, "c": 103.1, "q": 1000.0, "Q": 560.0},
+            {"o": 103.1, "h": 103.4, "l": 102.9, "c": 103.3, "q": 1000.0, "Q": 580.0},
+            {"o": 103.3, "h": 103.55, "l": 103.1, "c": 103.45, "q": 1000.0, "Q": 590.0},
+        ]
+        bot._live_candle["SKRUSDT"] = {
+            "h": 103.9,
+            "l": 103.2,
+            "open": 103.45,
+            "close": 103.8,
+            "taker_buy": 620.0,
+            "total_vol": 1000.0,
+        }
+
+        low_atr_ok, low_atr_reason, _ = bot._continuation_pullback_ready("SKRUSDT", "LONG", 103.8, 0.62, 0.65)
+        weak_taker_ok, weak_taker_reason, _ = bot._continuation_pullback_ready("SKRUSDT", "LONG", 103.8, 0.61, 0.75)
+        ok, reason, _ = bot._continuation_pullback_ready("SKRUSDT", "LONG", 103.8, 0.62, 0.75)
+
+        self.assertFalse(low_atr_ok)
+        self.assertIn("低于顺势接力下限0.70", low_atr_reason)
+        self.assertFalse(weak_taker_ok)
+        self.assertIn("低于接力阈值62%", weak_taker_reason)
+        self.assertTrue(ok, reason)
+
     def test_breakout_premove_allows_ai_pullback_continuation(self) -> None:
         bot = BinanceScalpBot()
         bot.kline_buffer["SKRUSDT"] = [
@@ -545,6 +588,7 @@ class TestScalpEngine(unittest.TestCase):
             "yaobi_opportunity_confidence": 69,
         }
 
+        self.assertFalse(bot._state_entry_allowed("UNKUSDT", "TREND_LATE", "LONG", "动能突破多"))
         self.assertFalse(bot._state_entry_allowed("UNKUSDT", "UNKNOWN", "LONG", "顺势回踩多"))
 
         bot.candidate_meta["UNKUSDT"]["yaobi_opportunity_setup_state"] = "HOT"

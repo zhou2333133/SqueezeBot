@@ -16,7 +16,7 @@ bot_flash.py — V4AF 闪崩做空模块
 设计要点：
     - 完全独立于 bot_scalp，不共用 position / signal / time_stop 逻辑
     - 共享 candidates_map（妖币扫描器输出）+ klines_1h/4h（K 线缓存）
-    - 独立账户：trader 用 BINANCE_FLASH_API_KEY/SECRET，留空则回退主账户
+    - 独立账户：实盘必须使用 BINANCE_FLASH_API_KEY/SECRET，留空不回退主账户
     - 智能时间止损：到 FLASH_REVIEW_HOURS 时跑维持条件检查，通过就延 FLASH_REVIEW_EXTEND_HOURS
 """
 from __future__ import annotations
