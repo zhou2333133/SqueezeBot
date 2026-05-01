@@ -725,6 +725,16 @@
               <div class="flex justify-between text-xs text-gray-700 mt-0.5 px-0.5">
                 <span>入场</span><span>TP1</span><span>TP2</span>
               </div>
+              <div class="mt-3 flex items-center justify-end gap-2">
+                <select class="inp inp-o !w-24 !py-1 text-xs" x-model="closePctBySymbol['scalp:'+sym]">
+                  <option value="25">25%</option>
+                  <option value="50">50%</option>
+                  <option value="75">75%</option>
+                  <option value="100">100%</option>
+                </select>
+                <button @click="closeScalpPosition(sym, closePctBySymbol['scalp:'+sym]||25)"
+                  class="text-xs px-3 py-1 rounded-lg bg-red-900/50 hover:bg-red-800/60 text-red-200 transition-colors">平仓</button>
+              </div>
             </div>
           </template>
         </div>
@@ -774,6 +784,16 @@
               </div>
               <div class="flex justify-between text-xs text-gray-700 mt-0.5 px-0.5">
                 <span>入场</span><span>TP1</span><span>TP2</span>
+              </div>
+              <div class="mt-3 flex items-center justify-end gap-2">
+                <select class="inp inp-o !w-24 !py-1 text-xs" x-model="closePctBySymbol['scalp:'+sym]">
+                  <option value="25">25%</option>
+                  <option value="50">50%</option>
+                  <option value="75">75%</option>
+                  <option value="100">100%</option>
+                </select>
+                <button @click="closeScalpPosition(sym, closePctBySymbol['scalp:'+sym]||25)"
+                  class="text-xs px-3 py-1 rounded-lg bg-red-900/50 hover:bg-red-800/60 text-red-200 transition-colors">平仓</button>
               </div>
             </div>
           </template>
@@ -1199,8 +1219,16 @@
               </label>
               <div><label class="text-xs text-gray-500">AI Top N</label>
                 <input class="inp mt-1" type="number" name="YAOBI_AI_MAX_SYMBOLS_PER_RUN" :value="cfg.YAOBI_AI_MAX_SYMBOLS_PER_RUN??6" style="border-color:#1a3a2a"></div>
-              <div class="col-span-2"><label class="text-xs text-gray-500">Provider 优先级</label>
-                <input class="inp mt-1" type="text" name="YAOBI_AI_PROVIDER_PRIORITY" :value="cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini,openai,anthropic'" style="border-color:#1a3a2a"></div>
+              <div class="col-span-2"><label class="text-xs text-gray-500">AI Provider</label>
+                <select class="inp mt-1" name="YAOBI_AI_PROVIDER_PRIORITY"
+                  :value="(cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini').split(',')[0]||'gemini'"
+                  @change="cfg.YAOBI_AI_PROVIDER_PRIORITY=$event.target.value"
+                  style="border-color:#1a3a2a">
+                  <option value="gemini">Gemini</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                </select></div>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#a78bfa">
                   <input type="checkbox" name="YAOBI_AI_REQUIRED_FOR_PERMISSION" :checked="cfg.YAOBI_AI_REQUIRED_FOR_PERMISSION!==false" @change="cfg.YAOBI_AI_REQUIRED_FOR_PERMISSION=$event.target.checked">
@@ -1216,15 +1244,19 @@
                 <input class="inp mt-1" type="number" step="0.1" name="YAOBI_AI_DAILY_USD_CAP" :value="cfg.YAOBI_AI_DAILY_USD_CAP??1" style="border-color:#1a3a2a"></div>
               <div><label class="text-xs text-gray-500">输出 tokens</label>
                 <input class="inp mt-1" type="number" name="YAOBI_AI_MAX_OUTPUT_TOKENS" :value="cfg.YAOBI_AI_MAX_OUTPUT_TOKENS??1200" style="border-color:#1a3a2a"></div>
-              <div><label class="text-xs text-gray-500">Gemini 模型</label>
+              <div x-show="((cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini').split(',')[0]||'gemini')==='gemini'"><label class="text-xs text-gray-500">Gemini 模型</label>
                 <select class="inp mt-1" name="YAOBI_AI_MODEL_GEMINI" x-model="cfg.YAOBI_AI_MODEL_GEMINI" style="border-color:#1a3a2a">
                   <template x-for="m in modelOptions.gemini" :key="'gm-'+m"><option :value="m" x-text="m"></option></template>
                 </select></div>
-              <div><label class="text-xs text-gray-500">OpenAI 模型</label>
+              <div x-show="((cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini').split(',')[0]||'gemini')==='deepseek'"><label class="text-xs text-gray-500">DeepSeek 模型</label>
+                <select class="inp mt-1" name="YAOBI_AI_MODEL_DEEPSEEK" x-model="cfg.YAOBI_AI_MODEL_DEEPSEEK" style="border-color:#1a3a2a">
+                  <template x-for="m in modelOptions.deepseek" :key="'dm-'+m"><option :value="m" x-text="m"></option></template>
+                </select></div>
+              <div x-show="((cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini').split(',')[0]||'gemini')==='openai'"><label class="text-xs text-gray-500">OpenAI 模型</label>
                 <select class="inp mt-1" name="YAOBI_AI_MODEL_OPENAI" x-model="cfg.YAOBI_AI_MODEL_OPENAI" style="border-color:#1a3a2a">
                   <template x-for="m in modelOptions.openai" :key="'om-'+m"><option :value="m" x-text="m"></option></template>
                 </select></div>
-              <div><label class="text-xs text-gray-500">Anthropic 模型</label>
+              <div x-show="((cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini').split(',')[0]||'gemini')==='anthropic'"><label class="text-xs text-gray-500">Anthropic 模型</label>
                 <select class="inp mt-1" name="YAOBI_AI_MODEL_ANTHROPIC" x-model="cfg.YAOBI_AI_MODEL_ANTHROPIC" style="border-color:#1a3a2a">
                   <template x-for="m in modelOptions.anthropic" :key="'am-'+m"><option :value="m" x-text="m"></option></template>
                 </select></div>
@@ -1271,7 +1303,7 @@
                 <input class="inp mt-1" type="number" name="YAOBI_SURF_DIRECTION_MIN_CONFIDENCE" :value="cfg.YAOBI_SURF_DIRECTION_MIN_CONFIDENCE??55" style="border-color:#1a3a2a"></div>
             </div>
             <div class="mt-2 text-[11px] text-gray-600 leading-relaxed">
-              默认由 Gemini 主判方向，Surf 只做高风险 veto；打开这个开关后，才要求 Surf 方向也和 Gemini 同向。
+              默认由主 AI 判断方向，Surf 只做高风险 veto；打开这个开关后，才要求 Surf 方向也和主 AI 同向。
             </div>
             <div class="mt-3">
               <label class="text-xs text-gray-500">监控链 (逗号分隔)</label>
@@ -2006,6 +2038,14 @@
             <span class="ml-auto text-xs"
               :class="(p.max_favorable_pct||0)>0?'text-green-400':'text-gray-500'"
               x-text="'MFE '+((p.max_favorable_pct||0).toFixed(2))+'% / MAE '+((p.max_adverse_pct||0).toFixed(2))+'%'"></span>
+            <select class="inp !w-24 !py-1 text-xs" x-model="closePctBySymbol['flash:'+sym]">
+              <option value="25">25%</option>
+              <option value="50">50%</option>
+              <option value="75">75%</option>
+              <option value="100">100%</option>
+            </select>
+            <button @click="closeFlashPosition(sym, closePctBySymbol['flash:'+sym]||25)"
+              class="text-xs px-3 py-1 rounded-lg bg-red-900/50 hover:bg-red-800/60 text-red-200 transition-colors">平仓</button>
           </div>
         </div>
       </template>
@@ -2235,6 +2275,7 @@ function app() {
     scalpTrades: [], scalpTotalPnl: 0, scalpWinRate: 0, scalpTradeTotal: 0,
     scalpFilterStats: {},
     scalpEquity: { trades:0, points:[] },
+    closePctBySymbol: {},
     watchlist: [],
     watchForm: { symbol:'', status:'观察', reason:'' },
     modelOptions: MODEL_OPTIONS,
@@ -2572,6 +2613,20 @@ function app() {
         await this.loadScalpPositions()
       } catch(e){ this.showToast('❌ 清除失败: '+e,'error') }
     },
+    async closeScalpPosition(symbol, percent) {
+      const pct = Number(percent || 0)
+      if (!pct || pct <= 0) { this.showToast('❌ 请选择平仓比例','error'); return }
+      if (pct >= 100 && !confirm(`确认手动全平 ${symbol}?`)) return
+      try {
+        const d=await(await this.apiFetch(`/api/scalp/positions/${encodeURIComponent(symbol)}/close`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({percent:pct})
+        })).json()
+        this.showToast(d.message||'已提交', d.status==='success'?'success':'error')
+        await Promise.all([this.loadScalpPositions(), this.loadScalpTrades(), this.loadScalpEquity()])
+      } catch(e){ this.showToast('❌ 手动平仓失败: '+e,'error') }
+    },
     async toggleScalpEnabled() {
       this.cfg.SCALP_ENABLED = !this.cfg.SCALP_ENABLED
       const fd = new FormData()
@@ -2591,7 +2646,8 @@ function app() {
     async stopScalp() {
       try {
         const d=await(await this.apiFetch('/api/scalp/stop',{method:'POST'})).json()
-        this.showToast(d.message); this.scalpRunning=false; this.scalpPositions={}
+        this.showToast(d.message, d.status==='stopped'?'success':'error')
+        if (d.status==='stopped') { this.scalpRunning=false; this.scalpPositions={} }
       } catch(e){ this.showToast('❌ 停止失败: '+e,'error') }
     },
     async refreshScalpSymbols() {
@@ -2645,9 +2701,11 @@ function app() {
     async stopFlash() {
       try {
         const d=await(await this.apiFetch('/api/flash/stop',{method:'POST'})).json()
-        this.cfg.FLASH_ENABLED = false
-        this.flashRunning = false
-        this.flashPositions = {}
+        if (d.status==='stopped') {
+          this.cfg.FLASH_ENABLED = false
+          this.flashRunning = false
+          this.flashPositions = {}
+        }
         this.showToast(d.message, d.status==='stopped'?'success':'error')
       } catch(e){ this.showToast('❌ 停止失败: '+e,'error') }
     },
@@ -2675,6 +2733,20 @@ function app() {
         this.showToast('已清除 '+(d.cleared||0)+' 个 paper 持仓','success')
         await this.loadFlashPositions()
       } catch{}
+    },
+    async closeFlashPosition(symbol, percent) {
+      const pct = Number(percent || 0)
+      if (!pct || pct <= 0) { this.showToast('❌ 请选择平仓比例','error'); return }
+      if (pct >= 100 && !confirm(`确认手动全平 FLASH ${symbol}?`)) return
+      try {
+        const d=await(await this.apiFetch(`/api/flash/positions/${encodeURIComponent(symbol)}/close`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({percent:pct})
+        })).json()
+        this.showToast(d.message||'已提交', d.status==='success'?'success':'error')
+        await Promise.all([this.loadFlashPositions(), this.loadFlashTrades()])
+      } catch(e){ this.showToast('❌ FLASH 手动平仓失败: '+e,'error') }
     },
     flashWinRate() {
       const t = this.flashTrades

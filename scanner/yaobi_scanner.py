@@ -1022,7 +1022,7 @@ class YaobiScanner:
                 if not bias or bias == "NEUTRAL":
                     risks.insert(0, f"Surf方向未达成共识(置信度{confidence})")
                 else:
-                    risks.insert(0, f"Surf偏{bias}与Gemini偏{expected}不一致")
+                    risks.insert(0, f"Surf偏{bias}与AI偏{expected}不一致")
                 c.opportunity_risks = risks[:5]
                 continue
 
@@ -1076,7 +1076,7 @@ class YaobiScanner:
                 if self._is_watch_action(c.opportunity_action) and c.opportunity_permission != "BLOCK":
                     c.opportunity_permission = "OBSERVE"
                     required = list(c.opportunity_required_confirmation or [])
-                    required.insert(0, "等待Gemini方向终审通过后，才允许1m执行")
+                    required.insert(0, "等待AI方向终审通过后，才允许1m执行")
                     c.opportunity_required_confirmation = required[:5]
 
         if config_manager.settings.get("YAOBI_AI_ENABLED", False) and queue_candidates:
@@ -1085,7 +1085,7 @@ class YaobiScanner:
                 ai_result = await analyze_opportunities(session, queue_candidates[:ai_top])
             ai_status = ai_result.get("status", ai_status)
             logger.info(
-                "🔍 Gemini终审: top=%d | reason=%s | provider=%s | calls=%s | budget_left=%s",
+                "🔍 AI终审: top=%d | reason=%s | provider=%s | calls=%s | budget_left=%s",
                 ai_top,
                 ai_status.get("last_reason", ""),
                 ai_status.get("last_provider", ""),
@@ -1093,7 +1093,7 @@ class YaobiScanner:
                 ai_status.get("budget_left_usd", ""),
             )
             if ai_status.get("last_error"):
-                logger.warning("🔍 Gemini终审失败细节: %s", ai_status.get("last_error"))
+                logger.warning("🔍 AI终审失败细节: %s", ai_status.get("last_error"))
             ai_failed = ai_status.get("last_reason") == "all_failed"
             failure_fallback = (
                 ai_failed
@@ -1152,11 +1152,11 @@ class YaobiScanner:
                     c.opportunity_action = "OBSERVE"
                     c.opportunity_permission = "OBSERVE"
                     risks = list(c.opportunity_risks or [])
-                    risks.insert(0, "未进入Gemini终审TopN，先观察")
+                    risks.insert(0, "未进入AI终审TopN，先观察")
                     c.opportunity_risks = risks[:5]
                     summary = c.intelligence_summary or ""
-                    if "Gemini终审" not in summary:
-                        c.intelligence_summary = ("未进入Gemini终审TopN；" + summary).strip("；")
+                    if "AI终审" not in summary:
+                        c.intelligence_summary = ("未进入AI终审TopN；" + summary).strip("；")
 
         self._apply_dual_ai_consensus(queue_candidates)
         self._apply_playbook_state(queue_candidates)

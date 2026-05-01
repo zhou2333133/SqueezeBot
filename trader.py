@@ -381,6 +381,13 @@ class BinanceTrader:
         positions = [p for p in resp if float(p.get("positionAmt", 0)) != 0]
         return positions[0] if positions else None
 
+    async def get_open_positions(self) -> list[dict]:
+        """查询所有非零 U 本位合约持仓，用于启动对账。"""
+        resp = await self._request("GET", "/fapi/v2/positionRisk", {})
+        if resp is None:
+            raise RuntimeError("positionRisk request failed")
+        return [p for p in resp if float(p.get("positionAmt", 0) or 0) != 0]
+
     async def place_limit_ioc_order(self, symbol: str, side: str, quantity: float, price: float) -> dict | None:
         """IOC 限价单（Immediate Or Cancel）— 防飞单追高核心机制"""
         qty = await self._quantity_param(symbol, quantity, market=False, price=price, enforce_notional=True)

@@ -11,6 +11,7 @@ import queue as std_queue
 import time
 from datetime import datetime
 from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 import aiohttp
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -20,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 import bot_state
 from config import (
     config_manager, DATA_DIR, MASKED_SECRET, PANEL_LOCAL_ONLY, PANEL_TOKEN,
-    SENSITIVE_SETTING_KEYS,
+    SENSITIVE_SETTING_KEYS, flash_credentials_status,
 )
 from log_manager import log_queue, scalp_log_queue
 from scalp_diagnostics import apply_trade_diagnosis, build_learning_report
@@ -56,6 +57,7 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 PANEL_TOKEN_HEADER = "X-SqueezeBot-Token"
 _AUTH_PUBLIC_PATHS = {"/api/auth/status", "/api/auth/check"}
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _MODEL_OPTIONS = {
     "openai": [
         "gpt-5.4",
@@ -77,6 +79,12 @@ _MODEL_OPTIONS = {
         "claude-sonnet-4-5",
         "claude-haiku-4-5",
         "claude-3-5-haiku-latest",
+    ],
+    "deepseek": [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        "deepseek-chat",
+        "deepseek-reasoner",
     ],
     "surf": [
         "surf-ask",
@@ -106,21 +114,59 @@ def _client_is_local(host: str | None) -> bool:
         return False
 
 
-def _valid_panel_token(token: str | None) -> bool:
+def _host_without_port(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "://" in raw:
+        parsed = urlsplit(raw)
+        return (parsed.hostname or "").lower()
+    if raw.startswith("["):
+        end = raw.find("]")
+        return raw[1:end].lower() if end >= 0 else raw.lower()
+    return raw.split(":", 1)[0].lower()
+
+
+def _host_header_allowed(request: Request) -> bool:
+    host = _host_without_port(request.headers.get("host", ""))
+    return _client_is_local(host)
+
+
+def _same_origin_request(request: Request) -> bool:
+    host = _host_without_port(request.headers.get("host", ""))
+    if not host:
+        return False
+    for header in ("origin", "referer"):
+        value = request.headers.get(header)
+        if not value:
+            continue
+        other = _host_without_port(value)
+        return bool(other and hmac.compare_digest(other, host))
+    # No browser origin headers: allow only when the anti-CSRF token is supplied
+    # in a custom header (cross-site forms cannot attach this header).
+    return bool(request.headers.get(PANEL_TOKEN_HEADER))
+
+
+def _valid_panel_token(token: str | None, *, require_configured: bool = False) -> bool:
     if not PANEL_TOKEN:
-        return True
+        return not require_configured
     return bool(token) and hmac.compare_digest(str(token), PANEL_TOKEN)
 
 
 def _auth_meta() -> dict:
     return {
         "token_required": bool(PANEL_TOKEN),
+        "write_token_required": True,
+        "token_configured": bool(PANEL_TOKEN),
         "local_only": PANEL_LOCAL_ONLY,
     }
 
 
-def _token_from_request(request: Request) -> str:
-    return request.headers.get(PANEL_TOKEN_HEADER, "") or request.query_params.get("token", "")
+def _token_from_request(request: Request, *, allow_query: bool = True) -> str:
+    token = request.headers.get(PANEL_TOKEN_HEADER, "")
+    if token or not allow_query:
+        return token
+    return request.query_params.get("token", "")
 
 
 @app.middleware("http")
@@ -128,9 +174,20 @@ async def panel_security(request: Request, call_next):
     path = request.url.path
     if path.startswith("/api/") and path not in _AUTH_PUBLIC_PATHS:
         host = request.client.host if request.client else ""
-        if not _client_is_local(host):
+        if not _client_is_local(host) or not _host_header_allowed(request):
             return JSONResponse({"error": "local_only"}, status_code=403)
-        if not _valid_panel_token(_token_from_request(request)):
+        unsafe = request.method.upper() in _UNSAFE_METHODS
+        if unsafe and not _same_origin_request(request):
+            return JSONResponse({"error": "csrf_check_failed"}, status_code=403)
+        if unsafe and not PANEL_TOKEN:
+            return JSONResponse(
+                {"error": "panel_token_required", "message": "PANEL_TOKEN must be configured before write operations"},
+                status_code=503,
+            )
+        if not _valid_panel_token(
+            _token_from_request(request, allow_query=not unsafe),
+            require_configured=unsafe,
+        ):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
     return await call_next(request)
 
@@ -160,9 +217,13 @@ async def auth_status():
 @app.post("/api/auth/check")
 async def auth_check(request: Request):
     host = request.client.host if request.client else ""
-    if not _client_is_local(host):
+    if not _client_is_local(host) or not _host_header_allowed(request):
         return JSONResponse({"status": "error", "message": "local_only"}, status_code=403)
-    if not _valid_panel_token(_token_from_request(request)):
+    if not PANEL_TOKEN:
+        return JSONResponse({"status": "error", "message": "panel_token_required"}, status_code=503)
+    if not _same_origin_request(request):
+        return JSONResponse({"status": "error", "message": "csrf_check_failed"}, status_code=403)
+    if not _valid_panel_token(_token_from_request(request, allow_query=False), require_configured=True):
         return JSONResponse({"status": "error", "message": "unauthorized"}, status_code=401)
     return JSONResponse({"status": "success"})
 
@@ -379,6 +440,17 @@ async def scalp_start():
 
 @app.post("/api/scalp/stop")
 async def scalp_stop():
+    real_positions = [
+        p for p in getattr(bot_state.scalp_bot, "open_positions", {}).values()
+        if not getattr(p, "paper", True)
+    ]
+    real_positions += [p for p in scalp_positions.values() if isinstance(p, dict) and not p.get("paper")]
+    if real_positions:
+        return JSONResponse({
+            "status": "error",
+            "message": "❌ 仍有真实仓位，停止前请先手动平仓或确认交易所已无仓位",
+            "real_positions": len(real_positions),
+        }, status_code=409)
     if bot_state.scalp_bot:
         bot_state.scalp_bot.running = False
     if bot_state.scalp_task and not bot_state.scalp_task.done():
@@ -389,7 +461,9 @@ async def scalp_stop():
             pass
     bot_state.scalp_task = None
     bot_state.scalp_bot  = None
-    scalp_positions.clear()
+    for sym, pos in list(scalp_positions.items()):
+        if isinstance(pos, dict) and pos.get("paper"):
+            _signals_mod.set_scalp_position(sym, None)
     logger.info("⚡ 超短线机器人通过 Web 面板停止")
     return JSONResponse({"status": "stopped", "message": "⚡ 超短线机器人已停止"})
 
@@ -408,6 +482,20 @@ async def scalp_refresh_symbols():
 @app.get("/api/scalp/positions")
 async def get_scalp_positions():
     return JSONResponse({"positions": dict(scalp_positions)})
+
+
+@app.post("/api/scalp/positions/{symbol}/close")
+async def manual_close_scalp_position(symbol: str, request: Request):
+    if not bot_state.scalp_bot:
+        return JSONResponse({"status": "error", "message": "❌ 超短线机器人未运行，无法安全执行手动平仓"}, status_code=400)
+    payload = await _payload_from_request(request)
+    try:
+        percent = float(payload.get("percent", payload.get("pct", 0)) or 0)
+    except (TypeError, ValueError):
+        percent = 0
+    result = await bot_state.scalp_bot.manual_close_position(symbol, percent)
+    status = 200 if result.get("status") == "success" else 400
+    return JSONResponse(result, status_code=status)
 
 
 @app.get("/api/scalp/signals")
@@ -551,14 +639,14 @@ async def reset_scalp_review_data():
         for symbol, pos in list(getattr(bot, "open_positions", {}).items()):
             if getattr(pos, "paper", False):
                 bot.open_positions.pop(symbol, None)
-                scalp_positions.pop(symbol, None)
+                _signals_mod.set_scalp_position(symbol, None)
                 paper_cleared += 1
             else:
                 real_symbols.add(symbol)
 
     for symbol, pos in list(scalp_positions.items()):
         if pos.get("paper"):
-            scalp_positions.pop(symbol, None)
+            _signals_mod.set_scalp_position(symbol, None)
             paper_cleared += 1
         else:
             real_symbols.add(symbol)
@@ -1118,7 +1206,7 @@ async def _build_scalp_analysis_pack(detail: str = "slim") -> dict:
             "未开仓诊断": "记录AI通过后卡在执行层的原因，包括机会队列、1m暖机、Taker、ATR、追涨过滤、状态机等。",
             "关注池": "人工关注/禁入/等待确认列表；用于复盘选币，不会自动生成新策略。",
             "decision_cards": "妖币扫描生成的人工决策解释卡：允许/等待/禁止/观察，只作筛选参考。",
-            "opportunity_queue": "妖币扫描先做15分钟级选币，再由 Gemini/Surf 对 Top 候选做方向与风险终审；获得机会许可的币，才交给1m策略等待开仓点。",
+            "opportunity_queue": "妖币扫描先做15分钟级选币，再由主 AI/Surf 对 Top 候选做方向与风险终审；获得机会许可的币，才交给1m策略等待开仓点。",
         }
     return pack
 
@@ -1305,6 +1393,21 @@ async def get_flash_positions():
     return JSONResponse({"positions": dict(flash_positions), "count": len(flash_positions)})
 
 
+@app.post("/api/flash/positions/{symbol}/close")
+async def manual_close_flash_position(symbol: str, request: Request):
+    if not bot_state.flash_bot:
+        return JSONResponse({"status": "error", "message": "❌ FLASH 机器人未运行，无法安全执行手动平仓"}, status_code=400)
+    payload = await _payload_from_request(request)
+    try:
+        percent = float(payload.get("percent", payload.get("pct", 0)) or 0)
+    except (TypeError, ValueError):
+        percent = 0
+    async with aiohttp.ClientSession(trust_env=True) as session:
+        result = await bot_state.flash_bot.manual_close_position(symbol, percent, session)
+    status = 200 if result.get("status") == "success" else 400
+    return JSONResponse(result, status_code=status)
+
+
 @app.get("/api/flash/trades")
 async def get_flash_trades(limit: int = 50, full: bool = False):
     trades = list(flash_trade_history)[-max(1, limit):]
@@ -1354,6 +1457,15 @@ async def get_flash_candidates():
 async def flash_start():
     if bot_state.flash_task and not bot_state.flash_task.done():
         return JSONResponse({"status": "already_running", "message": "💥 V4AF 已在运行中"})
+    if (
+        config_manager.settings.get("FLASH_AUTO_TRADE", False)
+        and not config_manager.settings.get("FLASH_PAPER_TRADE", True)
+        and not flash_credentials_status().get("live_ready")
+    ):
+        return JSONResponse({
+            "status": "error",
+            "message": "❌ FLASH 实盘要求 BINANCE_FLASH_API_KEY/BINANCE_FLASH_API_SECRET，禁止回退主账户",
+        }, status_code=400)
     from bot_flash import FlashCrashBot
     bot_state.flash_bot  = FlashCrashBot()
     bot_state.flash_task = asyncio.create_task(bot_state.flash_bot.run())
@@ -1364,6 +1476,17 @@ async def flash_start():
 
 @app.post("/api/flash/stop")
 async def flash_stop():
+    real_positions = [
+        p for p in getattr(bot_state.flash_bot, "open_positions", {}).values()
+        if not getattr(p, "paper", True)
+    ]
+    real_positions += [p for p in flash_positions.values() if isinstance(p, dict) and not p.get("paper")]
+    if real_positions:
+        return JSONResponse({
+            "status": "error",
+            "message": "❌ FLASH 仍有真实仓位，停止前请先手动平仓或确认交易所已无仓位",
+            "real_positions": len(real_positions),
+        }, status_code=409)
     if bot_state.flash_bot:
         bot_state.flash_bot.stop()
     if bot_state.flash_task and not bot_state.flash_task.done():
@@ -1374,7 +1497,9 @@ async def flash_stop():
             pass
     bot_state.flash_task = None
     bot_state.flash_bot  = None
-    flash_positions.clear()
+    for sym, pos in list(flash_positions.items()):
+        if isinstance(pos, dict) and pos.get("paper"):
+            _signals_mod.set_flash_position(sym, None)
     config_manager.save({"FLASH_ENABLED": "false"})
     logger.info("💥 V4AF 闪崩模块通过 Web 面板停止")
     return JSONResponse({"status": "stopped", "message": "💥 V4AF 闪崩模块已停止"})
@@ -1384,7 +1509,7 @@ async def flash_stop():
 async def clear_flash_paper_positions():
     paper_keys = [k for k, v in flash_positions.items() if v.get("paper")]
     for k in paper_keys:
-        flash_positions.pop(k, None)
+        _signals_mod.set_flash_position(k, None)
         if bot_state.flash_bot:
             bot_state.flash_bot.open_positions.pop(k, None)
     return JSONResponse({"status": "success", "cleared": len(paper_keys)})
@@ -1401,7 +1526,7 @@ async def get_scalp_paper_positions():
 async def clear_scalp_paper_positions():
     paper_keys = [k for k, v in scalp_positions.items() if v.get("paper")]
     for k in paper_keys:
-        scalp_positions.pop(k, None)
+        _signals_mod.set_scalp_position(k, None)
         if bot_state.scalp_bot:
             bot_state.scalp_bot.open_positions.pop(k, None)
     logger.info("📋 模拟仓位已全部清除 (%d 个)", len(paper_keys))

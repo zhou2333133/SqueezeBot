@@ -33,7 +33,7 @@ import aiohttp
 import bot_state
 from config import (
     BINANCE_FLASH_API_KEY, BINANCE_FLASH_API_SECRET,
-    config_manager,
+    config_manager, flash_credentials_status,
 )
 from scanner.candidates import candidates_map
 from scanner.sources.binance_klines import klines_1h, klines_4h
@@ -58,6 +58,7 @@ class FlashPosition:
     sl_price:         float              # 宽硬止损
     trail_pct:        float              # 浮盈达 activation 后的回调出场距离
     trail_activation_pct: float
+    quantity_remaining: float = 0.0
     peak_price:       float = 0.0        # 入场前发现的 24h 高点（用于维持条件判定）
     paper:            bool  = True
     entry_time:       str   = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -70,9 +71,14 @@ class FlashPosition:
     trail_active:     bool  = False
     best_price:       float = 0.0        # 做空时是迄今最低价
     realized_pnl:     float = 0.0
+    closed_quantity:  float = 0.0
     sl_order_id:      int | None = None
     risk_usdt:        float = 0.0
     setup_meta:       dict = field(default_factory=dict)   # 入场时三条件的具体值，用于复盘
+
+    def __post_init__(self) -> None:
+        if not self.quantity_remaining:
+            self.quantity_remaining = self.quantity
 
     def to_dict(self) -> dict:
         return {
@@ -80,6 +86,7 @@ class FlashPosition:
             "direction": self.direction,
             "entry_price": self.entry_price,
             "quantity": self.quantity,
+            "quantity_remaining": self.quantity_remaining,
             "sl_price": self.sl_price,
             "trail_pct": self.trail_pct,
             "trail_activation_pct": self.trail_activation_pct,
@@ -99,6 +106,7 @@ class FlashPosition:
             "trail_active": self.trail_active,
             "best_price": self.best_price,
             "realized_pnl": self.realized_pnl,
+            "closed_quantity": self.closed_quantity,
             "setup_meta": self.setup_meta,
         }
 
@@ -208,7 +216,7 @@ class FlashCrashBot:
         self._stop_event.set()
 
     def _make_trader(self, session: aiohttp.ClientSession) -> BinanceTrader:
-        """返回 V4AF 专用 trader：优先 FLASH key，留空回退主账户。"""
+        """返回 V4AF 专用 trader；实盘禁止回退主账户。"""
         if BINANCE_FLASH_API_KEY and BINANCE_FLASH_API_SECRET:
             return BinanceTrader(
                 session,
@@ -216,7 +224,7 @@ class FlashCrashBot:
                 api_secret=BINANCE_FLASH_API_SECRET,
                 label="flash",
             )
-        return BinanceTrader(session, label="flash_fallback_main")
+        raise RuntimeError("FLASH live trading requires BINANCE_FLASH_API_KEY/BINANCE_FLASH_API_SECRET")
 
     async def run(self) -> None:
         logger.info("⚡ V4AF FlashCrashBot 启动")
@@ -393,6 +401,17 @@ class FlashCrashBot:
         auto_trade = bool(cfg.get("FLASH_AUTO_TRADE", False))
         if not paper and not auto_trade:
             return
+        if auto_trade and not paper and not flash_credentials_status().get("live_ready"):
+            add_flash_signal({
+                "symbol": symbol,
+                "direction": "SHORT",
+                "kind": "V4AF_FLASH_SHORT",
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "rejected_reason": "missing_flash_dedicated_api_key",
+                "paper": False,
+            })
+            logger.critical("⚡ FLASH 实盘拒绝启动仓位 %s：缺少专用 FLASH API key", symbol)
+            return
         # 当前价
         latest_1h = klines_1h.peek(symbol)
         if not latest_1h:
@@ -416,6 +435,7 @@ class FlashCrashBot:
             direction="SHORT",
             entry_price=entry_price,
             quantity=quantity,
+            quantity_remaining=quantity,
             sl_price=sl_price,
             trail_pct=float(cfg.get("FLASH_TRAIL_PCT", 1.5)),
             trail_activation_pct=float(cfg.get("FLASH_TRAIL_ACTIVATION_PCT", 1.0)),
@@ -618,12 +638,13 @@ class FlashCrashBot:
         latest = klines_1h.peek(symbol)
         exit_price = float(latest["c"]) if latest else pos.entry_price
 
+        close_qty = pos.quantity_remaining or pos.quantity
         if not pos.paper:
             try:
                 trader = self._make_trader(session)
                 if pos.sl_order_id:
                     await trader.cancel_order(symbol, pos.sl_order_id)
-                await trader.place_reduce_only_market_order(symbol, "BUY", pos.quantity)
+                await trader.place_reduce_only_market_order(symbol, "BUY", close_qty)
             except Exception as e:
                 logger.error("⚡ FLASH 实盘平仓异常 %s: %s", symbol, e)
 
@@ -632,7 +653,8 @@ class FlashCrashBot:
         cfg = self.cfg
         leverage = int(cfg.get("FLASH_LEVERAGE", 5) or 5)
         position_usdt = float(cfg.get("FLASH_POSITION_USDT", 100.0))
-        pnl_usdt = position_usdt * leverage * pnl_pct / 100.0
+        qty_ratio = close_qty / max(pos.quantity, 1e-12)
+        pnl_usdt = position_usdt * leverage * qty_ratio * pnl_pct / 100.0
 
         trade = {
             "symbol": symbol,
@@ -640,7 +662,7 @@ class FlashCrashBot:
             "kind": "V4AF_FLASH_SHORT",
             "entry_price": pos.entry_price,
             "exit_price": exit_price,
-            "quantity": pos.quantity,
+            "quantity": close_qty,
             "pnl_pct": round(pnl_pct, 4),
             "pnl_usdt": round(pnl_usdt, 4),
             "entry_time": pos.entry_time,
@@ -662,6 +684,83 @@ class FlashCrashBot:
             "⚡ FLASH 平仓 %s reason=%s pnl=%.2fU (%.2f%%) dur=%.0fmin",
             symbol, close_reason, pnl_usdt, pnl_pct, trade["duration_minutes"],
         )
+
+    async def manual_close_position(
+        self,
+        symbol: str,
+        percent: float,
+        session: aiohttp.ClientSession,
+        reason: str = "MANUAL_CLOSE",
+    ) -> dict:
+        symbol = str(symbol or "").upper().strip()
+        pos = self.open_positions.get(symbol)
+        if not pos:
+            return {"status": "error", "message": f"{symbol} 没有 FLASH 活跃仓位"}
+        pct = max(0.0, min(100.0, float(percent or 0.0)))
+        if pct <= 0:
+            return {"status": "error", "message": "平仓比例必须大于 0"}
+        qty = (pos.quantity_remaining or pos.quantity) * pct / 100.0
+        if qty <= 0:
+            return {"status": "error", "message": "剩余数量为 0，无法平仓"}
+
+        latest = klines_1h.peek(symbol)
+        exit_price = float(latest["c"]) if latest else pos.entry_price
+        if not pos.paper:
+            try:
+                trader = self._make_trader(session)
+                resp = await trader.place_reduce_only_market_order(symbol, "BUY", qty)
+                if not resp:
+                    return {"status": "error", "message": f"{symbol} FLASH reduceOnly 平仓失败"}
+            except Exception as e:
+                return {"status": "error", "message": f"{symbol} FLASH 实盘平仓异常: {e}"}
+
+        pnl_pct = (pos.entry_price - exit_price) / pos.entry_price * 100.0 if pos.entry_price else 0.0
+        leverage = int(self.cfg.get("FLASH_LEVERAGE", 5) or 5)
+        position_usdt = float(self.cfg.get("FLASH_POSITION_USDT", 100.0))
+        qty_ratio = qty / max(pos.quantity, 1e-12)
+        pnl_usdt = position_usdt * leverage * qty_ratio * pnl_pct / 100.0
+        pos.realized_pnl += pnl_usdt
+        pos.closed_quantity += qty
+        pos.quantity_remaining = max(0.0, (pos.quantity_remaining or pos.quantity) - qty)
+
+        if pos.quantity_remaining <= max(pos.quantity * 1e-8, 1e-12):
+            self.open_positions.pop(symbol, None)
+            if not pos.paper:
+                try:
+                    await self._make_trader(session).cancel_all_orders(symbol)
+                except Exception:
+                    pass
+            set_flash_position(symbol, None)
+            add_flash_trade({
+                "symbol": symbol,
+                "direction": "SHORT",
+                "kind": "V4AF_FLASH_SHORT",
+                "entry_price": pos.entry_price,
+                "exit_price": exit_price,
+                "quantity": qty,
+                "pnl_pct": round(pnl_pct, 4),
+                "pnl_usdt": round(pos.realized_pnl, 4),
+                "entry_time": pos.entry_time,
+                "exit_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_minutes": round((time.time() - pos.entry_ts) / 60.0, 1),
+                "close_reason": reason,
+                "close_detail": f"manual {pct:.1f}%",
+                "paper": pos.paper,
+                "setup_meta": pos.setup_meta,
+            })
+        else:
+            set_flash_position(symbol, pos.to_dict())
+
+        return {
+            "status": "success",
+            "message": f"✅ FLASH {symbol} 已手动平仓 {qty_ratio * 100:.1f}%",
+            "symbol": symbol,
+            "closed_percent": round(qty_ratio * 100, 4),
+            "closed_qty": round(qty, 8),
+            "remaining_qty": round(pos.quantity_remaining, 8),
+            "realized_segment_pnl": round(pnl_usdt, 4),
+            "paper": pos.paper,
+        }
 
     # ── 状态快照（给 web 复盘用）──────────────────────────────────────────
 

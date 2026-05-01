@@ -25,6 +25,7 @@ OKX_PASSPHRASE     = os.getenv("OKX_PASSPHRASE",     "")
 OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY",     "")
 GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY",     "")
 ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY",  "")
+DEEPSEEK_API_KEY   = os.getenv("DEEPSEEK_API_KEY",   "")
 BINANCE_SQUARE_COOKIE      = os.getenv("BINANCE_SQUARE_COOKIE",      "")
 BINANCE_SQUARE_CSRF_TOKEN  = os.getenv("BINANCE_SQUARE_CSRF_TOKEN",  "")
 BINANCE_SQUARE_BNC_UUID    = os.getenv("BINANCE_SQUARE_BNC_UUID",    "")
@@ -153,19 +154,21 @@ def okx_credentials_status() -> dict:
 
 
 def flash_credentials_status() -> dict:
-    """V4AF 模块币安账户状态。空 key 表示回退到主账户。"""
+    """V4AF 模块币安账户状态。实盘要求专用账户，不再允许回退主账户。"""
     has_dedicated = _valid_secret(BINANCE_FLASH_API_KEY) and _valid_secret(BINANCE_FLASH_API_SECRET)
     return {
         "dedicated_account": has_dedicated,
-        "fallback_to_main": not has_dedicated,
+        "fallback_to_main": False,
+        "live_ready": has_dedicated,
     }
 
 
 def ai_credentials_status() -> dict:
     providers = {
-        "openai": _valid_secret(OPENAI_API_KEY),
-        "gemini": _valid_secret(GEMINI_API_KEY),
-        "anthropic": _valid_secret(ANTHROPIC_API_KEY),
+        "openai": _valid_secret(os.getenv("OPENAI_API_KEY", OPENAI_API_KEY)),
+        "gemini": _valid_secret(os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)),
+        "anthropic": _valid_secret(os.getenv("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)),
+        "deepseek": _valid_secret(os.getenv("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY)),
     }
     return {
         "enabled": any(providers.values()),
@@ -294,6 +297,7 @@ class ConfigManager:
         "YAOBI_OKX_HOT_LIMIT": 50,
         "YAOBI_OKX_HEAVY_TOP_N": 40,
         "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
+        "YAOBI_OKX_SEARCH_CACHE_MINUTES": 60,
         "YAOBI_FUTURES_TOP_N": 120,
         "YAOBI_BINANCE_SHORT_INTEL_ENABLED": True,
         "YAOBI_BINANCE_LIQUIDATION_WS_ENABLED": True,
@@ -303,10 +307,11 @@ class ConfigManager:
         "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
         "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": False,
         "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": 55,
-        "YAOBI_AI_PROVIDER_PRIORITY": "gemini,openai,anthropic",
+        "YAOBI_AI_PROVIDER_PRIORITY": "gemini",
         "YAOBI_AI_MODEL_OPENAI": "gpt-4o-mini",
         "YAOBI_AI_MODEL_GEMINI": "gemini-2.5-flash",
         "YAOBI_AI_MODEL_ANTHROPIC": "claude-3-5-haiku-latest",
+        "YAOBI_AI_MODEL_DEEPSEEK": "deepseek-v4-flash",
         "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
         "YAOBI_AI_TOP_OUTPUT": 6,
         "YAOBI_AI_FAILURE_FALLBACK_ENABLED": True,
@@ -437,6 +442,7 @@ class ConfigManager:
         "YAOBI_OKX_HOT_LIMIT":         (1,      100),
         "YAOBI_OKX_HEAVY_TOP_N":       (1,      120),
         "YAOBI_OKX_PRICE_BATCH_SIZE":  (1,      100),
+        "YAOBI_OKX_SEARCH_CACHE_MINUTES": (1,   1440),
         "YAOBI_FUTURES_TOP_N":         (20,     300),
         "YAOBI_OPPORTUNITY_TOP_N":      (1,      30),
         "YAOBI_OPPORTUNITY_MIN_SCORE":  (0,      100),
@@ -620,6 +626,7 @@ class ConfigManager:
             "YAOBI_OKX_HOT_LIMIT":       50,
             "YAOBI_OKX_HEAVY_TOP_N":     40,
             "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
+            "YAOBI_OKX_SEARCH_CACHE_MINUTES": 60,
             "YAOBI_FUTURES_TOP_N":       120,
             "YAOBI_BINANCE_SHORT_INTEL_ENABLED": True,
             "YAOBI_BINANCE_LIQUIDATION_WS_ENABLED": True,
@@ -629,10 +636,11 @@ class ConfigManager:
             "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
             "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": False,
             "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": 55,
-            "YAOBI_AI_PROVIDER_PRIORITY": "gemini,openai,anthropic",
+            "YAOBI_AI_PROVIDER_PRIORITY": "gemini",
             "YAOBI_AI_MODEL_OPENAI":      "gpt-4o-mini",
             "YAOBI_AI_MODEL_GEMINI":      "gemini-2.5-flash",
             "YAOBI_AI_MODEL_ANTHROPIC":   "claude-3-5-haiku-latest",
+            "YAOBI_AI_MODEL_DEEPSEEK":    "deepseek-v4-flash",
             "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
             "YAOBI_AI_TOP_OUTPUT":        6,
             "YAOBI_AI_FAILURE_FALLBACK_ENABLED": True,

@@ -5,6 +5,7 @@ history, raw logs, or secrets, and it never returns a direct order instruction.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -19,6 +20,7 @@ import aiohttp
 from config import (
     ANTHROPIC_API_KEY,
     DATA_DIR,
+    DEEPSEEK_API_KEY,
     GEMINI_API_KEY,
     OPENAI_API_KEY,
     ai_credentials_status,
@@ -230,6 +232,7 @@ def provider_status() -> dict:
             "openai": cfg.get("YAOBI_AI_MODEL_OPENAI", "gpt-4o-mini"),
             "gemini": cfg.get("YAOBI_AI_MODEL_GEMINI", "gemini-2.5-flash"),
             "anthropic": cfg.get("YAOBI_AI_MODEL_ANTHROPIC", "claude-3-5-haiku-latest"),
+            "deepseek": cfg.get("YAOBI_AI_MODEL_DEEPSEEK", "deepseek-v4-flash"),
         },
         "cache_ttl_min": cfg.get("YAOBI_AI_CACHE_TTL_MINUTES", 30),
         "min_interval_min": cfg.get("YAOBI_AI_MIN_INTERVAL_MINUTES", 15),
@@ -465,7 +468,7 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
 
     providers = [
         p.strip().lower()
-        for p in str(cfg.get("YAOBI_AI_PROVIDER_PRIORITY", "gemini,openai,anthropic")).split(",")
+        for p in str(cfg.get("YAOBI_AI_PROVIDER_PRIORITY", "gemini")).split(",")
         if p.strip()
     ]
     system_prompt = (
@@ -493,6 +496,8 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
                 text, token_count = await _call_gemini(system_prompt, raw_payload, max_output)
             elif provider == "anthropic" and ANTHROPIC_API_KEY:
                 text, token_count = await _call_anthropic(session, system_prompt, raw_payload, max_output)
+            elif provider == "deepseek" and (os.getenv("DEEPSEEK_API_KEY") or DEEPSEEK_API_KEY):
+                text, token_count = await _call_deepseek(session, system_prompt, raw_payload, max_output)
             else:
                 record_provider_skip(provider or "ai", _ENDPOINT, "provider_key_missing", items=len(rows))
                 continue
@@ -583,6 +588,9 @@ async def _call_gemini(system_prompt: str, payload: str, max_output: int) -> tup
     显式指定 certifi CA + 启用 trust_env (HTTPS_PROXY 等代理) 可显著降低发生率。
     """
     api_key = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
+    # 低于 2k 时 Gemini 很容易 finish=MAX_TOKENS 并截断 JSON；调用层保守抬高
+    # AI 终审输出上限，不改变 helper 的语义，也避免截断型失败继续堆高。
+    max_output = max(int(max_output or 0), 2048)
     last_error = ""
     connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT) if _SSL_CONTEXT is not None else None
     async with aiohttp.ClientSession(
@@ -594,28 +602,33 @@ async def _call_gemini(system_prompt: str, payload: str, max_output: int) -> tup
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             body = _gemini_request_body(system_prompt, payload, max_output)
             try:
-                async with gem_session.post(
-                    url,
-                    headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-                    json=body,
-                ) as resp:
-                    data = await resp.json(content_type=None)
-                    if resp.status == 404:
-                        last_error = f"gemini_http_404[{model}]: {str(data)[:160]}"
-                        continue
-                    if resp.status >= 300:
-                        raise RuntimeError(f"gemini_http_{resp.status}[{model}]: {str(data)[:160]}")
-                    text, finish_info = _parse_gemini_response(data, model)
-                    if text is None:
-                        last_error = finish_info  # 已经是可读字符串
-                        continue
-                    if not _is_valid_json_text(text):
-                        excerpt = str(text or "").replace("\n", " ")[:180]
-                        last_error = f"gemini_non_json[{model}]: {finish_info} | {excerpt or 'empty_response'}"
-                        continue
-                    usage = data.get("usageMetadata") or {}
-                    tokens = int(usage.get("totalTokenCount") or (_estimate_tokens(payload) + _estimate_tokens(text)))
-                    return text, tokens
+                for attempt in range(2):
+                    async with gem_session.post(
+                        url,
+                        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                        json=body,
+                    ) as resp:
+                        data = await resp.json(content_type=None)
+                        if resp.status == 404:
+                            last_error = f"gemini_http_404[{model}]: {str(data)[:160]}"
+                            break
+                        if resp.status in {429, 500, 502, 503, 504} and attempt == 0:
+                            last_error = f"gemini_http_{resp.status}[{model}]: transient_retry"
+                            await asyncio.sleep(1.0)
+                            continue
+                        if resp.status >= 300:
+                            raise RuntimeError(f"gemini_http_{resp.status}[{model}]: {str(data)[:160]}")
+                        text, finish_info = _parse_gemini_response(data, model)
+                        if text is None:
+                            last_error = finish_info  # 已经是可读字符串
+                            break
+                        if not _is_valid_json_text(text):
+                            excerpt = str(text or "").replace("\n", " ")[:180]
+                            last_error = f"gemini_non_json[{model}]: {finish_info} | {excerpt or 'empty_response'}"
+                            break
+                        usage = data.get("usageMetadata") or {}
+                        tokens = int(usage.get("totalTokenCount") or (_estimate_tokens(payload) + _estimate_tokens(text)))
+                        return text, tokens
             except (aiohttp.ClientConnectorSSLError, aiohttp.ClientConnectorError, ssl.SSLError) as exc:
                 # 网络 / SSL 类失败：往上抛由 analyze_opportunities 触发 backoff
                 raise RuntimeError(f"gemini_network[{model}]: {type(exc).__name__}: {exc}")
@@ -680,3 +693,115 @@ async def _call_anthropic(session: aiohttp.ClientSession, system_prompt: str, pa
         usage = data.get("usage") or {}
         tokens = int((usage.get("input_tokens") or _estimate_tokens(payload)) + (usage.get("output_tokens") or _estimate_tokens(text)))
         return text, tokens
+
+
+async def _call_deepseek(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:
+    api_key = os.getenv("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY)
+    last_error = ""
+    for model, thinking_enabled in _deepseek_model_candidates():
+        body = _deepseek_request_body(system_prompt, payload, max_output, model=model, thinking_enabled=thinking_enabled)
+        for attempt in range(2):
+            async with session.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=body,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status in {429, 500, 502, 503, 504} and attempt == 0:
+                    last_error = f"deepseek_http_{resp.status}[{model}]: transient_retry"
+                    await asyncio.sleep(1.0)
+                    continue
+                if resp.status >= 300:
+                    raise RuntimeError(f"deepseek_http_{resp.status}[{model}]: {str(data)[:160]}")
+
+                text, finish_info = _parse_deepseek_response(data, model)
+                if text is None:
+                    last_error = finish_info
+                    if attempt == 0:
+                        await asyncio.sleep(0.5)
+                        continue
+                    break
+                if not _is_valid_json_text(text):
+                    excerpt = str(text or "").replace("\n", " ")[:180]
+                    last_error = f"deepseek_non_json[{model}]: {finish_info} | {excerpt or 'empty_response'}"
+                    if attempt == 0:
+                        await asyncio.sleep(0.5)
+                        continue
+                    break
+                usage = data.get("usage") or {}
+                tokens = int(usage.get("total_tokens") or (_estimate_tokens(payload) + _estimate_tokens(text)))
+                return text, tokens
+    raise RuntimeError(last_error or "deepseek_model_unavailable")
+
+
+def _deepseek_model_candidates() -> list[tuple[str, bool]]:
+    primary_raw = str(config_manager.settings.get("YAOBI_AI_MODEL_DEEPSEEK", "deepseek-v4-flash") or "").strip()
+    aliases = {
+        # Official docs keep these aliases temporarily, but the API now advertises
+        # deepseek-v4-flash/pro. Normalize so new configs avoid deprecated IDs.
+        "deepseek-chat": ("deepseek-v4-flash", False),
+        "deepseek-reasoner": ("deepseek-v4-flash", True),
+    }
+    primary = aliases.get(primary_raw, (primary_raw or "deepseek-v4-flash", False))
+    fallbacks = [
+        primary,
+        ("deepseek-v4-flash", False),
+        ("deepseek-v4-pro", False),
+    ]
+    result: list[tuple[str, bool]] = []
+    seen: set[tuple[str, bool]] = set()
+    for model, thinking_enabled in fallbacks:
+        key = (model, bool(thinking_enabled))
+        if model and key not in seen:
+            result.append(key)
+            seen.add(key)
+    return result
+
+
+def _deepseek_request_body(
+    system_prompt: str,
+    payload: str,
+    max_output: int,
+    *,
+    model: str,
+    thinking_enabled: bool = False,
+) -> dict:
+    body = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    system_prompt
+                    + " Return a single valid JSON object only, with key \"opportunities\". "
+                    + "Do not use markdown."
+                ),
+            },
+            {"role": "user", "content": payload},
+        ],
+        "max_tokens": max(max_output, 2048),
+        "response_format": {"type": "json_object"},
+        "stream": False,
+        "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
+    }
+    if thinking_enabled:
+        body["reasoning_effort"] = "high"
+    else:
+        body["temperature"] = 0.1
+    return body
+
+
+def _parse_deepseek_response(data: dict, model: str) -> tuple[str | None, str]:
+    choices = data.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return None, f"deepseek_no_choices[{model}]"
+    choice = choices[0]
+    finish = str(choice.get("finish_reason", "") or "")
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    text = str(message.get("content", "") or "")
+    if not text.strip():
+        return None, f"deepseek_blank_content[{model}]: finish={finish or '-'}"
+    if finish in {"content_filter", "insufficient_system_resource"}:
+        return None, f"deepseek_finish_{finish}[{model}]"
+    return text, f"finish={finish or 'stop'}"

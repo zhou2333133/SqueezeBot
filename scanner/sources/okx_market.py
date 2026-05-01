@@ -57,6 +57,7 @@ _last_request_at: dict[str, float] = {}
 _endpoint_failures: dict[str, int] = {}
 _endpoint_backoff_until: dict[str, float] = {}
 _unsupported_chain_backoff_until: dict[str, float] = {}
+_token_search_cache: dict[str, tuple[float, list[dict]]] = {}
 _ENDPOINT_BACKOFF_SECONDS = 600
 _UNSUPPORTED_CHAIN_BACKOFF_SECONDS = 3600
 _ENDPOINT_FAILURE_LIMIT = 3
@@ -129,6 +130,34 @@ def credentials_status() -> dict:
 
 def _json_body(data) -> str:
     return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+
+
+def _search_cache_key(keyword: str, chains: str, limit: int) -> str:
+    return f"{keyword.strip().lower()}|{chains.strip()}|{int(limit)}"
+
+
+def _search_cache_get(keyword: str, chains: str, limit: int) -> list[dict] | None:
+    ttl_min = float(config_manager.settings.get("YAOBI_OKX_SEARCH_CACHE_MINUTES", 60) or 60)
+    if ttl_min <= 0:
+        return None
+    key = _search_cache_key(keyword, chains, limit)
+    row = _token_search_cache.get(key)
+    if not row:
+        return None
+    expires, items = row
+    if time.time() >= expires:
+        _token_search_cache.pop(key, None)
+        return None
+    record_provider_skip("okx", "token/search", "cache_hit", items=len(items))
+    return [dict(x) for x in items]
+
+
+def _search_cache_put(keyword: str, chains: str, limit: int, items: list[dict]) -> None:
+    ttl_min = float(config_manager.settings.get("YAOBI_OKX_SEARCH_CACHE_MINUTES", 60) or 60)
+    if ttl_min <= 0:
+        return
+    key = _search_cache_key(keyword, chains, limit)
+    _token_search_cache[key] = (time.time() + ttl_min * 60, [dict(x) for x in items])
 
 
 def _query_first(path: str, key: str) -> str:
@@ -330,10 +359,45 @@ async def search_tokens(
     if not keyword:
         record_provider_skip("okx", "token/search", "empty_keyword")
         return []
-    params = {"chains": chains, "search": keyword, "limit": max(1, min(int(limit), 100))}
-    path = f"/api/v6/dex/market/token/search?{urlencode(params)}"
-    data = await _request_json(session, "GET", path, endpoint="token/search")
-    return _parse_token_list(_data_list(data), source="okx_search")
+    limit = max(1, min(int(limit), 100))
+    cached = _search_cache_get(keyword, chains, limit)
+    if cached is not None:
+        return cached
+
+    def _path(chain_value: str) -> str:
+        params = {"chains": chain_value, "search": keyword, "limit": limit}
+        return f"/api/v6/dex/market/token/search?{urlencode(params)}"
+
+    data = await _request_json(
+        session,
+        "GET",
+        _path(chains),
+        endpoint="token/search",
+        expected_items=limit,
+    )
+    success_seen = data is not None
+    rows = _parse_token_list(_data_list(data), source="okx_search") if data is not None else []
+    if data is None and "," in str(chains):
+        # OKX occasionally rejects a whole multi-chain search when one chain is not
+        # accepted for this endpoint. Split the query so one bad chain does not
+        # make token/search look 100% broken.
+        merged: dict[str, dict] = {}
+        for chain in [x.strip() for x in str(chains).split(",") if x.strip()]:
+            chain_data = await _request_json(
+                session,
+                "GET",
+                _path(chain),
+                endpoint="token/search",
+                expected_items=limit,
+            )
+            success_seen = success_seen or chain_data is not None
+            for item in _parse_token_list(_data_list(chain_data), source="okx_search"):
+                key = f"{item.get('chain_id')}:{item.get('address') or item.get('symbol')}"
+                merged[key] = item
+        rows = list(merged.values())
+    if success_seen or rows:
+        _search_cache_put(keyword, chains, limit, rows)
+    return rows
 
 
 async def get_hot_tokens(

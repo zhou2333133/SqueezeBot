@@ -1,5 +1,9 @@
 import json
+import os
 import queue as std_queue
+import time
+
+from config import DATA_DIR
 
 # ── 超短线信号 ────────────────────────────────────────────────────────────────
 scalp_signal_queue:    std_queue.Queue = std_queue.Queue(maxsize=200)
@@ -28,6 +32,39 @@ flash_review_log: list[dict]         = []   # 智能时间止损每次重评估�
 MAX_FLASH_SIGNALS = 200
 MAX_FLASH_TRADES  = 500
 MAX_FLASH_REVIEWS = 500
+LEDGER_FILE = os.path.join(DATA_DIR, "runtime_ledger.json")
+
+
+def _load_ledger() -> None:
+    if not os.path.exists(LEDGER_FILE):
+        return
+    try:
+        with open(LEDGER_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return
+    scalp_positions.update(data.get("scalp_positions") or {})
+    scalp_trade_history.extend((data.get("scalp_trade_history") or [])[-MAX_TRADES:])
+    flash_positions.update(data.get("flash_positions") or {})
+    flash_trade_history.extend((data.get("flash_trade_history") or [])[-MAX_FLASH_TRADES:])
+
+
+def _persist_ledger() -> None:
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        payload = {
+            "updated_at": time.time(),
+            "scalp_positions": scalp_positions,
+            "scalp_trade_history": scalp_trade_history[-MAX_TRADES:],
+            "flash_positions": flash_positions,
+            "flash_trade_history": flash_trade_history[-MAX_FLASH_TRADES:],
+        }
+        tmp = LEDGER_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+        os.replace(tmp, LEDGER_FILE)
+    except Exception:
+        pass
 
 
 def _push(q: std_queue.Queue, msg: str) -> None:
@@ -57,12 +94,14 @@ def set_scalp_position(symbol: str, pos: dict | None) -> None:
         scalp_positions.pop(symbol, None)
     else:
         scalp_positions[symbol] = pos
+    _persist_ledger()
 
 
 def add_scalp_trade(trade: dict) -> None:
     scalp_trade_history.append(trade)
     if len(scalp_trade_history) > MAX_TRADES:
         scalp_trade_history.pop(0)
+    _persist_ledger()
 
 
 # ── V4AF 写入接口 ─────────────────────────────────────────────────────────────
@@ -81,15 +120,20 @@ def set_flash_position(symbol: str, pos: dict | None) -> None:
         flash_positions.pop(symbol, None)
     else:
         flash_positions[symbol] = pos
+    _persist_ledger()
 
 
 def add_flash_trade(trade: dict) -> None:
     flash_trade_history.append(trade)
     if len(flash_trade_history) > MAX_FLASH_TRADES:
         flash_trade_history.pop(0)
+    _persist_ledger()
 
 
 def add_flash_review(review: dict) -> None:
     flash_review_log.append(review)
     if len(flash_review_log) > MAX_FLASH_REVIEWS:
         flash_review_log.pop(0)
+
+
+_load_ledger()

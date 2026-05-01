@@ -3,6 +3,7 @@ test_flash_signals.py — V4AF 入场条件 + 智能时间止损单测
 """
 import time
 import unittest
+from unittest.mock import patch
 
 from bot_flash import (
     detect_4h_exhaustion, detect_1h_lower_high,
@@ -260,6 +261,15 @@ class TestDetectEntry(unittest.TestCase):
         self.assertEqual(result["gain_24h_pct"], 25.0)
         self.assertEqual(result["peak_price"], 110)
         self.assertGreater(result["lower_high_drop_pct"], 0)
+
+
+class TestFlashLiveSafety(unittest.TestCase):
+    def test_live_trader_requires_dedicated_flash_keys(self) -> None:
+        bot = FlashCrashBot()
+        with patch("bot_flash.BINANCE_FLASH_API_KEY", ""), \
+             patch("bot_flash.BINANCE_FLASH_API_SECRET", ""):
+            with self.assertRaises(RuntimeError):
+                bot._make_trader(object())
 
 
 if __name__ == "__main__":

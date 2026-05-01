@@ -1,9 +1,11 @@
 import asyncio
 import unittest
+from unittest.mock import patch
 
 from bot_scalp import BinanceScalpBot, ScalpPosition
 from config import config_manager
-from signals import scalp_signals_history, scalp_trade_history
+import signals as signals_mod
+from signals import scalp_positions, scalp_signals_history, scalp_trade_history
 
 
 class FakeTickerResponse:
@@ -78,6 +80,12 @@ class TestScalpLiveSafety(unittest.TestCase):
         self._orig_settings = config_manager.settings.copy()
         self._orig_signals = list(scalp_signals_history)
         self._orig_trades = list(scalp_trade_history)
+        self._orig_positions = dict(scalp_positions)
+        self._orig_persist_ledger = signals_mod._persist_ledger
+        signals_mod._persist_ledger = lambda: None
+        self._feedback_patcher = patch("scanner.knowledge_base.record_trade_feedback")
+        self._feedback_patcher.start()
+        scalp_positions.clear()
         scalp_signals_history.clear()
         scalp_trade_history.clear()
         config_manager.settings.update({
@@ -109,6 +117,10 @@ class TestScalpLiveSafety(unittest.TestCase):
         scalp_signals_history.extend(self._orig_signals)
         scalp_trade_history.clear()
         scalp_trade_history.extend(self._orig_trades)
+        scalp_positions.clear()
+        scalp_positions.update(self._orig_positions)
+        self._feedback_patcher.stop()
+        signals_mod._persist_ledger = self._orig_persist_ledger
 
     def test_real_entry_emergency_closes_when_exchange_stop_order_fails(self) -> None:
         bot = BinanceScalpBot()
@@ -210,6 +222,47 @@ class TestScalpLiveSafety(unittest.TestCase):
         self.assertEqual(bot.trader.reduce_calls, [("TESTUSDT", "SELL", 0.5)])
         self.assertFalse(bot._live_trading_suspended)
         self.assertEqual(scalp_trade_history[-1]["close_reason"], "PROTECTION_FAILED_FORCE_EXIT")
+
+    def test_manual_paper_close_supports_partial_then_full_close(self) -> None:
+        bot = BinanceScalpBot()
+        bot.open_positions["MANUALUSDT"] = ScalpPosition(
+            symbol="MANUALUSDT",
+            direction="LONG",
+            entry_price=100.0,
+            quantity=2.0,
+            quantity_remaining=2.0,
+            sl_price=95.0,
+            tp1_price=105.0,
+            tp2_price=110.0,
+            current_price=110.0,
+            risk_usdt=10.0,
+            paper=True,
+        )
+
+        first = asyncio.run(bot.manual_close_position("MANUALUSDT", 50))
+
+        self.assertEqual(first["status"], "success")
+        self.assertIn("MANUALUSDT", bot.open_positions)
+        self.assertAlmostEqual(bot.open_positions["MANUALUSDT"].quantity_remaining, 1.0)
+        self.assertEqual(len(scalp_trade_history), 0)
+
+        second = asyncio.run(bot.manual_close_position("MANUALUSDT", 100))
+
+        self.assertEqual(second["status"], "success")
+        self.assertNotIn("MANUALUSDT", bot.open_positions)
+        self.assertEqual(scalp_trade_history[-1]["close_reason"], "MANUAL_CLOSE")
+
+    def test_startup_reconcile_suspends_when_exchange_has_unknown_live_position(self) -> None:
+        class UnknownLiveTrader(PositionSyncTrader):
+            async def get_open_positions(self):
+                return [{"symbol": "UNKNOWNUSDT", "positionAmt": "1.5", "markPrice": "12.0"}]
+
+        bot = BinanceScalpBot()
+        bot.trader = UnknownLiveTrader()
+
+        asyncio.run(bot._startup_reconcile_positions())
+
+        self.assertTrue(bot._live_trading_suspended)
 
 
 if __name__ == "__main__":

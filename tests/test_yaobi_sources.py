@@ -81,6 +81,32 @@ class TestYaobiSources(unittest.TestCase):
 
         self.assertEqual([x["tokenSymbol"] for x in rows], ["WETH", "SOL"])
 
+    def test_okx_search_splits_multichain_query_when_combined_request_fails(self) -> None:
+        calls = []
+
+        async def fake_request(session, method, path, *, body="", endpoint="", expected_items=0):
+            calls.append(path)
+            if "chains=1%2C56" in path:
+                return None
+            if "chains=1" in path:
+                return {
+                    "code": "0",
+                    "data": [{
+                        "chainIndex": "1",
+                        "tokenSymbol": "WETH",
+                        "tokenContractAddress": "0xABCDEF",
+                    }],
+                }
+            return {"code": "0", "data": []}
+
+        with patch.object(okx_market, "_request_json", fake_request), \
+             patch.object(okx_market, "_token_search_cache", {}):
+            rows = asyncio.run(okx_market.search_tokens(object(), "weth", chains="1,56", limit=5))
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["symbol"], "WETH")
+        self.assertGreaterEqual(len(calls), 3)
+
     def test_okx_trade_side_and_usd_parsing_accepts_common_field_variants(self) -> None:
         buy = {"side": "BUY", "usdValue": "1200"}
         sell = {"transactionType": "swap_sell", "amountUsd": "800"}
@@ -457,7 +483,7 @@ class TestYaobiSources(unittest.TestCase):
             rows = get_opportunity_queue()
             self.assertEqual(rows[0]["opportunity_action"], "OBSERVE")
             self.assertEqual(rows[0]["opportunity_permission"], "OBSERVE")
-            self.assertIn("Surf偏SHORT与Gemini偏LONG不一致", rows[0]["opportunity_risks"][0])
+            self.assertIn("Surf偏SHORT与AI偏LONG不一致", rows[0]["opportunity_risks"][0])
         finally:
             config_manager.settings.clear()
             config_manager.settings.update(orig)
@@ -789,6 +815,113 @@ class TestYaobiSources(unittest.TestCase):
             self.assertGreaterEqual(len(seen), 2)
             self.assertTrue(any("gemini-2.5-flash-lite" in url or "gemini-2.5-pro" in url or "gemini-3-flash-preview" in url for url in seen[1:]))
         finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+
+    def test_deepseek_request_body_uses_official_json_chat_api_shape(self) -> None:
+        body = ai_gateway._deepseek_request_body(
+            "Return strict JSON only.",
+            '{"k":1}',
+            512,
+            model="deepseek-v4-flash",
+            thinking_enabled=False,
+        )
+
+        self.assertEqual(body["model"], "deepseek-v4-flash")
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertFalse(body["stream"])
+        self.assertEqual(body["max_tokens"], 2048)
+        self.assertEqual(body["temperature"], 0.1)
+        self.assertIn("JSON", body["messages"][0]["content"])
+
+    def test_deepseek_legacy_model_aliases_use_v4_models(self) -> None:
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_MODEL_DEEPSEEK"] = "deepseek-reasoner"
+            candidates = ai_gateway._deepseek_model_candidates()
+            self.assertEqual(candidates[0], ("deepseek-v4-flash", True))
+            self.assertIn(("deepseek-v4-flash", False), candidates)
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+
+    def test_deepseek_blank_json_response_is_retried(self) -> None:
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        try:
+            config_manager.settings["YAOBI_AI_MODEL_DEEPSEEK"] = "deepseek-v4-flash"
+            calls = []
+
+            class DummyResp:
+                def __init__(self, status, data):
+                    self.status = status
+                    self._data = data
+                async def json(self, content_type=None):
+                    return self._data
+                async def __aenter__(self):
+                    return self
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
+            class DummySession:
+                def post(self, url, headers=None, json=None, timeout=None):
+                    calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+                    if len(calls) == 1:
+                        return DummyResp(200, {"choices": [{"finish_reason": "stop", "message": {"content": ""}}]})
+                    return DummyResp(200, {
+                        "choices": [{"finish_reason": "stop", "message": {"content": "{\"opportunities\":[]}"}}],
+                        "usage": {"total_tokens": 321},
+                    })
+
+            with patch("scanner.ai_gateway.DEEPSEEK_API_KEY", "test-key"):
+                text, tokens = asyncio.run(ai_gateway._call_deepseek(DummySession(), "sys JSON", '{"k":1}', 256))
+
+            self.assertEqual(text, "{\"opportunities\":[]}")
+            self.assertEqual(tokens, 321)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0]["json"]["model"], "deepseek-v4-flash")
+            self.assertEqual(calls[0]["headers"]["Authorization"], "Bearer test-key")
+        finally:
+            config_manager.settings.clear()
+            config_manager.settings.update(orig)
+
+    def test_ai_gateway_can_use_deepseek_as_single_provider(self) -> None:
+        from config import config_manager
+        orig = config_manager.settings.copy()
+        old_usage = ai_gateway._USAGE_FILE
+        old_cache = ai_gateway._CACHE_FILE
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                ai_gateway._USAGE_FILE = os.path.join(tmp, "usage.json")
+                ai_gateway._CACHE_FILE = os.path.join(tmp, "cache.json")
+                config_manager.settings["YAOBI_AI_ENABLED"] = True
+                config_manager.settings["YAOBI_AI_PROVIDER_PRIORITY"] = "deepseek"
+                config_manager.settings["YAOBI_AI_DAILY_USD_CAP"] = 0.0
+
+                async def fake_deepseek(_session, _system_prompt, _payload, _max_output):
+                    return json.dumps({
+                        "opportunities": [{
+                            "symbol": "SKR",
+                            "action": "WATCH_SHORT_CONTINUATION",
+                            "permission": "ALLOW_IF_1M_SIGNAL",
+                            "confidence": 77,
+                        }]
+                    }), 700
+
+                c = Candidate(symbol="SKR", has_futures=True, opportunity_action="WATCH_SHORT_CONTINUATION")
+                with patch("scanner.ai_gateway.DEEPSEEK_API_KEY", "test-key"):
+                    with patch("scanner.ai_gateway.ai_credentials_status", return_value={"enabled": True}):
+                        with patch("scanner.ai_gateway._call_deepseek", fake_deepseek):
+                            result = asyncio.run(ai_gateway.analyze_opportunities(None, [c]))
+
+                self.assertEqual(result["status"]["last_provider"], "deepseek")
+                self.assertEqual(result["items"][0]["provider"], "deepseek")
+                self.assertEqual(result["items"][0]["permission"], "ALLOW_IF_1M_SIGNAL")
+        finally:
+            ai_gateway._USAGE_FILE = old_usage
+            ai_gateway._CACHE_FILE = old_cache
             config_manager.settings.clear()
             config_manager.settings.update(orig)
 

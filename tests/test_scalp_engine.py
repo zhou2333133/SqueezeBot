@@ -1,15 +1,21 @@
 import asyncio
 import time
 import unittest
+from unittest.mock import patch
 
 from bot_scalp import BinanceScalpBot, ScalpPosition
 from config import config_manager
 from scanner.candidates import Candidate, clear_candidates, upsert_candidate
+import signals as signals_mod
 
 
 class TestScalpEngine(unittest.TestCase):
     def setUp(self) -> None:
         self._orig_settings = config_manager.settings.copy()
+        self._orig_persist_ledger = signals_mod._persist_ledger
+        signals_mod._persist_ledger = lambda: None
+        self._feedback_patcher = patch("scanner.knowledge_base.record_trade_feedback")
+        self._feedback_patcher.start()
         clear_candidates()
         config_manager.settings.update({
             "FEE_RATE_PER_SIDE": 0.0004,
@@ -56,6 +62,8 @@ class TestScalpEngine(unittest.TestCase):
     def tearDown(self) -> None:
         config_manager.settings.clear()
         config_manager.settings.update(self._orig_settings)
+        self._feedback_patcher.stop()
+        signals_mod._persist_ledger = self._orig_persist_ledger
         clear_candidates()
 
     def test_close_segment_records_net_after_costs(self) -> None:

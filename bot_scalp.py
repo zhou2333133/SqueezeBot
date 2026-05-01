@@ -93,6 +93,39 @@ class ScalpPosition:
     next_force_exit_at: float      = 0.0
     force_exit_attempts: int       = 0
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "ScalpPosition":
+        pos = cls(
+            symbol=str(data.get("symbol", "")).upper(),
+            direction=str(data.get("direction", "LONG")).upper(),
+            entry_price=float(data.get("entry_price", 0.0) or 0.0),
+            quantity=float(data.get("quantity", 0.0) or 0.0),
+            quantity_remaining=float(data.get("quantity_remaining", data.get("quantity", 0.0)) or 0.0),
+            sl_price=float(data.get("sl_price", 0.0) or 0.0),
+            tp1_price=float(data.get("tp1_price", 0.0) or 0.0),
+            tp2_price=float(data.get("tp2_price", 0.0) or 0.0),
+            tp1_hit=bool(data.get("tp1_hit", False)),
+            tp2_hit=bool(data.get("tp2_hit", False)),
+            signal_label=str(data.get("signal_label", "")),
+            market_state=str(data.get("market_state", "UNKNOWN")),
+            tp1_ratio=float(data.get("tp1_ratio", 0.40) or 0.40),
+            tp2_ratio=float(data.get("tp2_ratio", 0.30) or 0.30),
+            risk_usdt=float(data.get("risk_usdt", 0.0) or 0.0),
+            paper=bool(data.get("paper", False)),
+            entry_time=str(data.get("entry_time", "")) or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            entry_context=dict(data.get("entry_context") or {}),
+            protection_failed=bool(data.get("protection_failed", False)),
+            protection_reason=str(data.get("protection_reason", "")),
+        )
+        pos.current_price = float(data.get("current_price", 0.0) or 0.0)
+        pos.realized_pnl = float(data.get("realized_pnl", 0.0) or 0.0)
+        pos.realized_gross_pnl = float(data.get("realized_gross_pnl", 0.0) or 0.0)
+        pos.fee_usdt = float(data.get("fee_usdt", 0.0) or 0.0)
+        pos.slippage_usdt = float(data.get("slippage_usdt", 0.0) or 0.0)
+        pos.max_favorable_pct = float(data.get("mfe_pct", 0.0) or 0.0)
+        pos.max_adverse_pct = float(data.get("mae_pct", 0.0) or 0.0)
+        return pos
+
     def to_dict(self) -> dict:
         unreal = 0.0
         if self.current_price and self.entry_price:
@@ -832,6 +865,7 @@ class BinanceScalpBot:
             async with aiohttp.ClientSession(trust_env=True) as session:
                 self.session = session
                 self.trader  = BinanceTrader(session)
+                await self._startup_reconcile_positions()
                 await self.refresh_symbols()
                 await self._do_refresh_candidates()
                 await asyncio.gather(
@@ -3444,6 +3478,69 @@ class BinanceScalpBot:
 
     # ─── REST 仓位同步（防WS漏消息）──────────────────────────────────────────
 
+    async def _startup_reconcile_positions(self) -> None:
+        """启动时用本地 ledger 和交易所仓位做一次对账，避免重启后裸奔。"""
+        restored = 0
+        for symbol, raw in list(_signals_mod.scalp_positions.items()):
+            if not isinstance(raw, dict):
+                continue
+            pos = ScalpPosition.from_dict(raw)
+            if not pos.symbol:
+                continue
+            if pos.paper:
+                self.open_positions[pos.symbol] = pos
+                restored += 1
+                continue
+            if not (self.trader and self.cfg.get("SCALP_AUTO_TRADE", False)):
+                continue
+            try:
+                live = await self.trader.get_position(pos.symbol)
+            except Exception as e:
+                logger.warning("⚡ [%s] 启动对账失败，真实仓位保留在面板: %s", pos.symbol, e)
+                continue
+            if live is None:
+                logger.warning("⚡ [%s] ledger 有真实仓位但交易所已无仓，清除本地记录", pos.symbol)
+                set_scalp_position(pos.symbol, None)
+                continue
+            amt = self._as_float(live.get("positionAmt"), pos.quantity_remaining)
+            pos.quantity_remaining = abs(amt) or pos.quantity_remaining
+            pos.current_price = self._as_float(live.get("markPrice"), pos.current_price)
+            self.open_positions[pos.symbol] = pos
+            set_scalp_position(pos.symbol, pos.to_dict())
+            restored += 1
+
+        if self.trader and self.cfg.get("SCALP_AUTO_TRADE", False) and not self.cfg.get("SCALP_PAPER_TRADE", False):
+            try:
+                live_positions = await self.trader.get_open_positions()
+            except Exception as e:
+                logger.warning("⚡ 启动交易所全仓位扫描失败: %s", e)
+                live_positions = []
+            known = set(self.open_positions)
+            unknown = [p for p in live_positions if str(p.get("symbol", "")).upper() not in known]
+            if unknown:
+                self._suspend_live_trading("startup_exchange_position_without_local_ledger")
+                for row in unknown:
+                    symbol = str(row.get("symbol", "")).upper()
+                    if not symbol:
+                        continue
+                    amt = self._as_float(row.get("positionAmt"))
+                    mark = self._as_float(row.get("markPrice"))
+                    set_scalp_position(symbol, {
+                        "symbol": symbol,
+                        "direction": "LONG" if amt > 0 else "SHORT",
+                        "quantity": abs(amt),
+                        "quantity_remaining": abs(amt),
+                        "current_price": mark,
+                        "paper": False,
+                        "exchange_position_only": True,
+                        "requires_manual_attention": True,
+                        "protection_reason": "startup_exchange_position_without_local_ledger",
+                    })
+                logger.critical("⚡ 启动对账发现 %d 个交易所未知真实仓位，已暂停自动实盘开仓", len(unknown))
+
+        if restored:
+            logger.info("⚡ 启动对账恢复本地持仓 %d 个", restored)
+
     async def _sync_live_position_once(self, symbol: str) -> None:
         pos = self.open_positions.get(symbol)
         if not pos or pos.paper or not self.trader:
@@ -3494,6 +3591,54 @@ class BinanceScalpBot:
             self.open_positions.pop(symbol, None)
             set_scalp_position(symbol, None)
             self._clear_live_trading_suspension_if_safe()
+
+    async def manual_close_position(self, symbol: str, percent: float, reason: str = "MANUAL_CLOSE") -> dict:
+        symbol = str(symbol or "").upper().strip()
+        pos = self.open_positions.get(symbol)
+        if not pos:
+            return {"status": "error", "message": f"{symbol} 没有本地活跃仓位"}
+        pct = max(0.0, min(100.0, float(percent or 0.0)))
+        if pct <= 0:
+            return {"status": "error", "message": "平仓比例必须大于 0"}
+        qty = pos.quantity_remaining * pct / 100.0
+        if qty <= 0:
+            return {"status": "error", "message": "剩余数量为 0，无法平仓"}
+        exit_side = "SELL" if pos.direction == "LONG" else "BUY"
+        exit_price = self._latest_known_price(pos)
+        fill_resp = None
+        if not pos.paper:
+            if not self.trader:
+                return {"status": "error", "message": "真实仓位平仓需要机器人运行并完成交易所连接"}
+            fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_side, qty)
+            if not fill_resp:
+                return {"status": "error", "message": f"{symbol} reduceOnly 平仓失败，未修改本地仓位"}
+        segment = self._apply_close_segment(pos, exit_price, qty, fill_resp=fill_resp)
+        closed_pct = segment["qty"] / max(pos.quantity, 1e-12) * 100.0
+        if pos.quantity_remaining <= max(pos.quantity * 1e-8, 1e-12):
+            if not pos.paper and self.trader:
+                try:
+                    await self.trader.cancel_all_orders(symbol)
+                except Exception as e:
+                    logger.debug("⚡ [%s] 手动全平后撤残单异常: %s", symbol, e)
+            self._record_scalp_trade(pos, segment["actual_exit"], reason, fill_resp=fill_resp)
+            self.open_positions.pop(symbol, None)
+            set_scalp_position(symbol, None)
+        else:
+            set_scalp_position(symbol, pos.to_dict())
+        logger.warning(
+            "⚡ [%s] 手动平仓 %.2f%% qty=%.6f @ %.6f paper=%s net=%.4fU",
+            symbol, closed_pct, segment["qty"], segment["actual_exit"], pos.paper, segment["net"],
+        )
+        return {
+            "status": "success",
+            "message": f"✅ {symbol} 已手动平仓 {closed_pct:.1f}%",
+            "symbol": symbol,
+            "closed_percent": round(closed_pct, 4),
+            "closed_qty": round(segment["qty"], 8),
+            "remaining_qty": round(max(pos.quantity_remaining, 0.0), 8),
+            "realized_segment_pnl": round(segment["net"], 4),
+            "paper": pos.paper,
+        }
 
     async def _position_monitor_once(self) -> None:
         if not self.open_positions:
