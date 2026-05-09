@@ -3,7 +3,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from bot_scalp import BinanceScalpBot, ScalpPosition
+from bot_scalp import BinanceScalpBot
+from scalp_position import ScalpPosition
 from config import config_manager
 from scanner.candidates import Candidate, clear_candidates, upsert_candidate
 import signals as signals_mod

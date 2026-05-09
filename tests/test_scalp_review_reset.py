@@ -4,7 +4,8 @@ import unittest
 
 import bot_state
 import signals as signals_mod
-from bot_scalp import BinanceScalpBot, ScalpPosition
+from bot_scalp import BinanceScalpBot
+from scalp_position import ScalpPosition
 from signals import scalp_positions, scalp_signals_history, scalp_trade_history
 from web import reset_scalp_review_data, _build_scalp_analysis_pack
 

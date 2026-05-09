@@ -13,11 +13,10 @@
 
 ## 2. 干什么的
 
-加密合约**超短线机器人 + 闪崩做空机器人 + 妖币扫描器**。三条主线共用一套面板和数据源：
+加密合约**超短线机器人 + 妖币扫描器**。两条主线共用一套面板和数据源：
 - **超短线（scalp）**：1 分钟级，两类信号 — Squeeze Hunter（爆仓反向）+ Trend Breakout（动能突破）+ 顺势回踩，下币安 U 本位合约，自带止损/分批止盈/移动止损/超时平仓。
-- **闪崩（flash, V4AF）**：1H/4H 级，**纯做空妖币暴涨后**，三条件入场（24H涨幅 + 4H多头衰竭 + 1H lower high）+ 智能时间止损（每 8H 重评估，趋势没反转就续期）。**独立账户**（BINANCE_FLASH_API_KEY），与 scalp 隔离。
 - **妖币扫描（yaobi）**：15 分钟级，从 GeckoTerminal/DEX Screener/币安广场抓热度 → Surf 新闻预过滤 → OKX 链上验证 → 币安合约 OI/资金费 → 市场结构剧本分类 → AI 终审 → 写入 Obsidian + 推送到候选池。OI/Taker 只作确认信号，不再单独作为入口。
-- **关系**：妖币扫描器选币 → 候选池 → scalp 在 1m 维度等开仓点；flash 跨 1H/4H 等闪崩做空时机。
+- **关系**：妖币扫描器选币 → 候选池 → scalp 在 1m 维度等开仓点。
 
 ## 3. 顶层目录速查
 
@@ -30,7 +29,6 @@ C:\BOT\SqueezeBot\
 ├── market_hub.py           ← 全局市场数据中心（Taker/LS/Basis/OKX-OI 共享缓存）
 ├── signals.py              ← 进程内共享状态：scalp_signals / scalp_positions / scalp_trade_history
 ├── bot_scalp.py            ← 超短线主体（≈2900 行，最大文件）
-├── bot_flash.py            ← V4AF 闪崩做空 bot（独立账户，智能时间止损）
 ├── scalp_diagnostics.py    ← 交易诊断（entry_bad / direction_wrong / ...）+ 学习报告
 ├── trader.py               ← 币安下单封装（市价/止损/reduceOnly），支持 key 注入做多账户
 ├── watchlist.py            ← 人工关注/禁入池
@@ -50,14 +48,12 @@ C:\BOT\SqueezeBot\
     ├── intelligence/       ← 链上筹码、市场剧本、历史案例相似度（只给 scanner/报告/许可层用）
     └── sources/
         ├── binance_futures.py        ← Binance 合约 OI/资金费/散户LS
-        ├── binance_klines.py         ← 1H/4H K 线共享缓存（V4AF 用）
         ├── binance_liquidations.py   ← 爆仓流
         ├── binance_square.py         ← 币安广场抓热度（需 cookie）
         ├── dexscreener.py            ← DEX Screener
         ├── geckoterminal.py          ← GeckoTerminal
         ├── okx_market.py             ← OKX 链上 + 大单
         ├── surf_api.py               ← Surf（新闻 + LLM）
-        └── token_supply.py           ← 上币时间 + 启发式 vesting 分组（V4AF 选币）
 ```
 
 ## 4. 状态在哪（哪些是内存、哪些落盘）
@@ -143,72 +139,7 @@ curl http://127.0.0.1:8000/api/scalp/analysis-pack.json?detail=full -o pack.json
 
 ---
 
-## 10. V4AF 闪崩做空模块（bot_flash）— 接口契约
-
-> 这块独立于 scalp，新会话改这块只读本节就够。
-
-### 入口
-- 启动开关：`FLASH_ENABLED` （默认 False；面板或 settings.json 设 True）
-- 自启动：`run.py` 检查 `FLASH_ENABLED` → `FlashCrashBot()` → `bot.run()`
-- 实例：`bot_state.flash_bot`，任务：`bot_state.flash_task`
-- 主循环周期：`FLASH_SCAN_INTERVAL_SECONDS`（默认 60s）
-- K 线刷新：独立后台任务，每 `FLASH_KLINE_REFRESH_SECONDS`（默认 300s）拉一次 1H+4H
-
-### 账户隔离
-- 用 `BINANCE_FLASH_API_KEY` / `BINANCE_FLASH_API_SECRET`（在 .env 设）
-- **实盘必须使用专用 flash key**；留空时 live 会拒绝启动，不再回退主账户
-- `trader.BinanceTrader(session, api_key=..., api_secret=..., label="flash")` 这个 label 只走日志，不影响下单
-
-### 核心模块边界
-
-| 模块 | 暴露接口 | 副作用 |
-|---|---|---|
-| `bot_flash.FlashCrashBot` | `run()` 主循环；`detect_entry(symbol, candidate)` 纯函数；`evaluate_continuation(pos)` 智能时间止损评估；`open_positions` dict；`snapshot_status()` | 写 `signals.flash_*` 全局列表；下单走 `trader` |
-| `bot_flash.detect_4h_exhaustion(rows_4h)` | 纯函数，返回 `(bool, detail)` | 无 |
-| `bot_flash.detect_1h_lower_high(rows_1h, lookback, min_drop_pct)` | 纯函数 | 无 |
-| `scanner.sources.binance_klines.klines_1h / klines_4h` | `get(symbol, n)`、`peek(symbol)`、`closed_only(symbol, n)`、`update_symbols(list)`、`refresh_once(session)`、`run_loop(session, interval)` | 内存 dict 缓存，重启失数据 |
-| `scanner.sources.token_supply.classify_vesting(...)` | 纯函数，返回 `(phase, eligible, ban_reason)` | 无 |
-| `scanner.sources.token_supply.refresh_listing_dates(session)` | 拉 Binance exchangeInfo 1d 一次 | 写入 `_listing_cache` |
-| `scanner.sources.token_supply.enrich_candidate(c, settings)` | in-place 给 candidate 注入 V4AF 字段 | 改 candidate dict |
-| `signals.add_flash_signal/trade/review`、`set_flash_position` | 写全局 list / dict（MAX 200 / 500 / 500） | 内存 |
-
-### 智能时间止损（这次的核心特性）
-
-到 `FLASH_REVIEW_HOURS`（默认 8H）时调 `evaluate_continuation(pos)`，返回 `{"keep": bool, "reason": str, ...}`：
-
-**继续持有的维持条件全部满足才返回 keep=True：**
-1. `extension_count < FLASH_REVIEW_MAX_EXTENSIONS`（默认 2，最多续 2 次 = 总持仓 ≤ 8+4+4=16H）
-2. 最新 1H 收盘价 < `peak_price`（趋势仍在 peak 下方）
-3. 最近 4 根 1H 没有刷出 ≥ peak 的高点
-4. 浮亏不超过 `FLASH_REVIEW_HOLD_LOSS_MAX_PCT`（默认 1.0%，亏损单不无限延期）
-
-通过 → next_review 推迟 `FLASH_REVIEW_EXTEND_HOURS`（默认 4H）；不通过 → 平仓 `close_reason="smart_time_stop"`。
-
-每次评估都写入 `signals.flash_review_log`，复盘包里看 `智能时间止损日志` 字段。
-
-### Web API
-
-| 路由 | 用途 |
-|---|---|
-| `GET /api/flash/status` | 运行状态 + 持仓数 + filter_stats |
-| `GET /api/flash/positions` | 当前活跃持仓（含智能时间止损下次审核时间） |
-| `GET /api/flash/trades?limit=50&full=false` | 历史成交（slim 默认） |
-| `GET /api/flash/reviews?limit=50` | 智能时间止损评估历史 |
-| `GET /api/flash/candidates` | 当前选币池（eligible / banned + 启发式 vesting 分组） |
-| `GET /api/flash/analysis-pack.json[?detail=full]` | 复盘包（slim 默认 + gzip，与 scalp 同套压缩规则） |
-| `DELETE /api/flash/paper/positions` | 清空 paper 持仓 |
-
-### 测试入口
-
-```bash
-python -m unittest tests.test_token_supply tests.test_flash_signals -v
-```
-
-22 个测试：vesting 分类 6 个 + 4H 衰竭 4 个 + 1H lower high 4 个 + 智能时间止损 5 个 + 入场流程 3 个。
-
----
-
-## 11. 参数现状
+## 10. 参数现状
 
 **真相源**：[config.py:163](config.py#L163) 的 `PROFILE_MIGRATION_DEFAULTS`（迁移强制覆盖）+ [config.py:354](config.py#L354) 的 `default_settings`（首次启动用）。两处必须同步改。
 **版本**：`PROFILE_VERSION` 是迁移触发器；改了 defaults 必须 bump 它，否则旧 settings.json 不会被覆盖。
@@ -254,6 +185,7 @@ python -m unittest tests.test_token_supply tests.test_flash_signals -v
 
 - **2026-05-01** — Scalp 52 笔复盘后参数直接落地：continuation 多空独立阈值、多头 ATR/EMA 过滤、TREND_LATE 新仓阻断、TP3 runner 默认更宽、TP1软保本 0.35、Squeeze 确认收紧。`PROFILE_VERSION` 2026042901→2026050101。
 - **2026-05-01** — 妖币扫描新增 `scanner/intelligence/` 市场结构层：筹码/控盘/出货风险评分、历史案例相似度、`market_stage`/`playbook_type`/`trade_permission`。OI/Taker 降级为确认信号；`AMBUSH_WATCH` 只进观察队列不自动交易；`bull_trap/distribution/dead` 会 BLOCK。新增 7 个剧本单测，全量 `141 passed`。
+- **2026-05-09** — 移除整个 V4AF 闪崩模块（bot_flash + binance_klines + token_supply + 前端 + API + 配置）。清理原因：模块长期未使用，降低维护负担。
 - **2026-04-27** — 妖币雷达 v2.8 风格三层决策面板。`Candidate` 加 `decision_tier`(L1_MAIN/L2_AMBUSH/RISK_AVOID/"") + `decision_subtype`(OI爆发/加速中/妖币启动/突破前夜/静默建仓/早期启动/出货家族/FR警告/AI高风险/链上风险/OI转弱/已破位) + `score_raw`(未截断原始分)。scorer.py 新增 `classify_decision_tier()` 在打分末尾调用。bot_scalp `_yaobi_entry_guard` 加 RISK_AVOID 强制 hard ban。Web 加 `/api/yaobi/tiers` 端点 + 妖币 tab 顶部 3 层分组面板。新增 scanner/notifier.py：扫描完按 tier 推 Telegram + Discord（去重指纹防重复）。17 个新测试。`PROFILE_VERSION` 2026042701→2026042702。
 - **2026-04-27** — 16 笔成交后第二轮调参 (entry_bad 占亏损 99.9% → 收紧入场质量): SCALP_YAOBI_MIN_SCORE 30→60 (D/MASK/AGT 这种边缘候选全亏)、SCALP_YAOBI_MIN_ANOMALY_SCORE 45→50、SCALP_TP1_SOFT_BREAKEVEN_PCT 0.30→0.60 (止损贴脸防洗盘)。`PROFILE_VERSION` 2026042601→2026042701。
 - **2026-04-27** — scanner/ai_gateway.py:546 移除 `gemini-3.1-pro-preview` + `gemini-3-flash-preview` from fallback。Why: 实测 89% 失败率 (58 calls / 52 fail, 全是 finish=MAX_TOKENS, JSON 截断)。只保留 2.5 系列稳定模型。

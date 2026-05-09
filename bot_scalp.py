@@ -10,12 +10,12 @@ import json
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
 from config import config_manager, configured_surf_keys
+from scalp_position import ScalpPosition
 from market_hub import hub
 import signals as _signals_mod
 from scanner.candidates import get_sorted_candidates
@@ -28,7 +28,7 @@ from scanner.sources.surf_api import (
     search_news as surf_search_news,
 )
 from scalp_diagnostics import apply_trade_diagnosis, build_entry_1m_profile
-from signals import add_scalp_signal, set_scalp_position, add_scalp_trade
+from signals import add_scalp_signal, set_scalp_position, add_scalp_trade, add_scalp_entry_block
 from trader import BinanceTrader
 from watchlist import get_watch_item, is_symbol_blocked
 
@@ -43,131 +43,6 @@ _MAJOR_SYMBOLS = frozenset({
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "LINKUSDT",
 })
-
-
-@dataclass
-class ScalpPosition:
-    symbol:             str
-    direction:          str
-    entry_price:        float
-    quantity:           float
-    quantity_remaining: float
-    sl_price:           float
-    tp1_price:          float
-    tp2_price:          float
-    tp1_hit:            bool       = False
-    tp2_hit:            bool       = False
-    trail_ref_price:    float      = 0.0
-    signal_label:       str        = ""
-    market_state:       str        = "UNKNOWN"
-    tp1_ratio:          float      = 0.40
-    tp2_ratio:          float      = 0.30
-    trail_pct:          float      = 5.0
-    structure_trail_bars: int      = 5
-    time_stop_minutes:  float      = 30.0
-    tp2_timeout_minutes: float     = 120.0
-    paper:              bool       = False
-    entry_time:         str        = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    entry_ts:           float      = field(default_factory=time.monotonic)
-    sl_order_id:        int | None = None
-    risk_usdt:          float      = 0.0
-    realized_gross_pnl: float      = 0.0
-    realized_pnl:       float      = 0.0
-    fee_usdt:           float      = 0.0
-    slippage_usdt:      float      = 0.0
-    closed_quantity:    float      = 0.0
-    current_price:      float      = 0.0
-    last_price_ts:      float      = field(default_factory=time.monotonic)
-    stale_position_check_used: bool = False
-    max_favorable_pct:  float      = 0.0
-    max_adverse_pct:    float      = 0.0
-    max_favorable_time: str        = ""
-    max_adverse_time:   str        = ""
-    entry_context:      dict       = field(default_factory=dict)
-    protection_failed:  bool       = False
-    protection_reason:  str        = ""
-    # L5: TP wick 双 tick 确认（连续命中 2 个 tick 才执行 TP1/TP2）
-    tp1_pending_hits:   int        = 0
-    tp2_pending_hits:   int        = 0
-    # P5: protection_failed 重试 backoff（monotonic 时间戳；下次允许重试的时刻）
-    next_force_exit_at: float      = 0.0
-    force_exit_attempts: int       = 0
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "ScalpPosition":
-        pos = cls(
-            symbol=str(data.get("symbol", "")).upper(),
-            direction=str(data.get("direction", "LONG")).upper(),
-            entry_price=float(data.get("entry_price", 0.0) or 0.0),
-            quantity=float(data.get("quantity", 0.0) or 0.0),
-            quantity_remaining=float(data.get("quantity_remaining", data.get("quantity", 0.0)) or 0.0),
-            sl_price=float(data.get("sl_price", 0.0) or 0.0),
-            tp1_price=float(data.get("tp1_price", 0.0) or 0.0),
-            tp2_price=float(data.get("tp2_price", 0.0) or 0.0),
-            tp1_hit=bool(data.get("tp1_hit", False)),
-            tp2_hit=bool(data.get("tp2_hit", False)),
-            signal_label=str(data.get("signal_label", "")),
-            market_state=str(data.get("market_state", "UNKNOWN")),
-            tp1_ratio=float(data.get("tp1_ratio", 0.40) or 0.40),
-            tp2_ratio=float(data.get("tp2_ratio", 0.30) or 0.30),
-            risk_usdt=float(data.get("risk_usdt", 0.0) or 0.0),
-            paper=bool(data.get("paper", False)),
-            entry_time=str(data.get("entry_time", "")) or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            entry_context=dict(data.get("entry_context") or {}),
-            protection_failed=bool(data.get("protection_failed", False)),
-            protection_reason=str(data.get("protection_reason", "")),
-        )
-        pos.current_price = float(data.get("current_price", 0.0) or 0.0)
-        pos.realized_pnl = float(data.get("realized_pnl", 0.0) or 0.0)
-        pos.realized_gross_pnl = float(data.get("realized_gross_pnl", 0.0) or 0.0)
-        pos.fee_usdt = float(data.get("fee_usdt", 0.0) or 0.0)
-        pos.slippage_usdt = float(data.get("slippage_usdt", 0.0) or 0.0)
-        pos.max_favorable_pct = float(data.get("mfe_pct", 0.0) or 0.0)
-        pos.max_adverse_pct = float(data.get("mae_pct", 0.0) or 0.0)
-        return pos
-
-    def to_dict(self) -> dict:
-        unreal = 0.0
-        if self.current_price and self.entry_price:
-            if self.direction == "LONG":
-                unreal = (self.current_price - self.entry_price) / self.entry_price * 100
-            else:
-                unreal = (self.entry_price - self.current_price) / self.entry_price * 100
-        return {
-            "symbol":             self.symbol,
-            "direction":          self.direction,
-            "entry_price":        round(self.entry_price, 8),
-            "quantity":           round(self.quantity, 6),
-            "quantity_remaining": round(self.quantity_remaining, 6),
-            "sl_price":           round(self.sl_price, 8),
-            "tp1_price":          round(self.tp1_price, 8),
-            "tp2_price":          round(self.tp2_price, 8),
-            "tp1_hit":            self.tp1_hit,
-            "tp2_hit":            self.tp2_hit,
-            "signal_label":       self.signal_label,
-            "market_state":       self.market_state,
-            "tp1_ratio":          self.tp1_ratio,
-            "tp2_ratio":          self.tp2_ratio,
-            "risk_usdt":          round(self.risk_usdt, 4),
-            "entry_context":      self.entry_context,
-            "protection_failed":  self.protection_failed,
-            "protection_reason":  self.protection_reason,
-            "paper":              self.paper,
-            "entry_time":         self.entry_time,
-            "realized_pnl":       round(self.realized_pnl, 4),
-            "realized_gross_pnl": round(self.realized_gross_pnl, 4),
-            "fee_usdt":           round(self.fee_usdt, 4),
-            "slippage_usdt":      round(self.slippage_usdt, 4),
-            "mfe_pct":            round(self.max_favorable_pct, 3),
-            "mae_pct":            round(self.max_adverse_pct, 3),
-            "unrealized_pct":     round(unreal, 2),
-            "current_price":      round(self.current_price, 8),
-            "time_stop_minutes":  round(self.time_stop_minutes, 2),
-            "tp2_timeout_minutes": round(self.tp2_timeout_minutes, 2),
-            "position_age_minutes": round((time.monotonic() - self.entry_ts) / 60, 2),
-            "position_last_price_age_seconds": round(max(0.0, time.monotonic() - self.last_price_ts), 2),
-            "stale_position_check_used": self.stale_position_check_used,
-        }
 
 
 class BinanceScalpBot:
@@ -203,19 +78,20 @@ class BinanceScalpBot:
         # 实时当前未闭合K线（随每个WS Tick更新）
         self._live_candle:      dict[str, dict]          = {}
         # 突破信号状态锁（按 (symbol, direction) 区分；每根K线收盘时清空）
-        self._breakout_fired:   dict[tuple[str, str], bool] = {}
+        self._breakout_fired:   dict[tuple[str, str], float] = {}
         # 信号冷却：同一币短时间内不重复触发
-        self._signal_cooldown:  dict[str, float]         = {}
+        self._signal_cooldown:  dict[tuple[str, str], float] = {}
         # 平均K线成交量（用于Taker比率噪声过滤）
         self._avg_vol:          dict[str, float]         = {}
         # 平仓后继续观察，用于判断卖飞/方向是否选对（不额外 REST 调用）
         self._post_exit_watch:   dict[str, list]          = {}
         # 最近未开仓/被拦截原因，写入分析包用于复盘 AI 剧本是否卡在执行层。
-        self._entry_block_log:    list[dict]               = []
         self._live_trading_suspended: bool                = False
         self._live_trading_suspended_reason: str          = ""
         # Surf 成本控制：后台新闻扫描按配置限频，默认关闭。
         self._last_surf_news_scan_at: float                = 0.0
+        # Surf entry check TTL 缓存（相同币种 ~5min 内不重复调用 AI）
+        self._surf_entry_cache: dict[str, tuple[float, bool, int, str]] = {}
         # OI暖机截止时间（首轮OI就绪后静默60秒，防信号井喷）—— 旧版全局暖机，保留兼容
         self._oi_warmup_until:  float                    = 0.0
         self._last_oi_poll_symbols: set[str]              = set()
@@ -231,6 +107,9 @@ class BinanceScalpBot:
             "squeeze": 0, "breakout": 0, "continuation": 0, "passed": 0,
         }
         self._fstat_ts:         float                    = 0.0
+        # ── 全局 API 熔断器 ─────────────────────────────────────────────────
+        self._api_failure_count: int    = 0
+        self._last_api_failure_ts: float = 0.0
 
     @property
     def cfg(self) -> dict:
@@ -257,6 +136,27 @@ class BinanceScalpBot:
         logger.warning("⚡ 保护失败仓位已清空，真实自动开仓暂停状态解除")
         self._live_trading_suspended = False
         self._live_trading_suspended_reason = ""
+
+    def _record_api_result(self, success: bool) -> None:
+        """全局 API 熔断器：追踪连续失败次数，超过阈值暂停真实开仓。"""
+        now = time.monotonic()
+        window = float(self.cfg.get("SCALP_CIRCUIT_BREAKER_WINDOW", 300) or 300)
+        threshold = int(self.cfg.get("SCALP_CIRCUIT_BREAKER_THRESHOLD", 15) or 15)
+        if now - self._last_api_failure_ts > window:
+            self._api_failure_count = 0
+        if success:
+            self._api_failure_count = max(0, self._api_failure_count - 1)
+            if self._api_failure_count == 0 and self._live_trading_suspended:
+                reason = self._live_trading_suspended_reason or ""
+                if "api_circuit_breaker" in reason:
+                    self._live_trading_suspended = False
+                    self._live_trading_suspended_reason = ""
+                    logger.warning("⚡ API 熔断器已自动恢复（连续失败计数归零）")
+            return
+        self._api_failure_count += 1
+        self._last_api_failure_ts = now
+        if self._api_failure_count >= threshold:
+            self._suspend_live_trading(f"api_circuit_breaker_{self._api_failure_count}")
 
     def _latest_known_price(self, pos: ScalpPosition) -> float:
         live = self._live_candle.get(pos.symbol, {})
@@ -322,12 +222,16 @@ class BinanceScalpBot:
                 status = getattr(resp, "status", 200)
                 if status != 200:
                     logger.debug("⚡ [%s] REST价格状态异常: %s", symbol, status)
+                    self._record_api_result(False)
                     return None
                 data = await resp.json()
                 price = self._as_float(data.get("price"))
-                return price if price > 0 else None
+                ok = price > 0
+                self._record_api_result(ok)
+                return price if ok else None
         except Exception as e:
             logger.debug("⚡ [%s] REST价格获取失败: %s", symbol, e)
+            self._record_api_result(False)
             return None
 
     def _candidate_age_minutes(self, symbol: str) -> float | None:
@@ -381,12 +285,10 @@ class BinanceScalpBot:
             "opportunity_score": meta.get("yaobi_opportunity_score", 0),
             "ai_provider": meta.get("yaobi_ai_provider", ""),
         }
-        self._entry_block_log.append(row)
-        if len(self._entry_block_log) > 240:
-            self._entry_block_log = self._entry_block_log[-180:]
+        add_scalp_entry_block(row)
 
     def entry_block_log_snapshot(self, limit: int = 120) -> list[dict]:
-        return list(self._entry_block_log[-max(1, int(limit)):])
+        return list(_signals_mod.scalp_entry_block_log[-max(1, int(limit)):])
 
     def candidate_wait_diagnostics(self, limit: int = 50) -> list[dict]:
         rows: list[dict] = []
@@ -769,17 +671,21 @@ class BinanceScalpBot:
         op_setup = str(meta.get("yaobi_opportunity_setup_state") or "").upper()
         max_candidate_age = float(self.cfg.get("SCALP_MAX_CANDIDATE_AGE_MINUTES", 180) or 0)
         candidate_age = self._candidate_age_minutes(symbol)
-        if (
-            max_candidate_age > 0
-            and candidate_age is not None
-            and candidate_age > max_candidate_age
-            and op_setup not in {"ARMED", "HOT"}
-        ):
-            return (
-                False,
-                f"候选已存在{candidate_age:.0f}分钟，超过{max_candidate_age:.0f}分钟且未重新确认ARMED/HOT",
-                1.0,
-            )
+        if max_candidate_age > 0 and candidate_age is not None and candidate_age > max_candidate_age:
+            if op_setup not in {"ARMED", "HOT"}:
+                return (
+                    False,
+                    f"候选已存在{candidate_age:.0f}分钟，超过{max_candidate_age:.0f}分钟且未重新确认ARMED/HOT",
+                    1.0,
+                )
+            # ARMED/HOT 也检查 AI 剧本是否已过期
+            if (self.cfg.get("SCALP_OPPORTUNITY_EXPIRY_GUARD", True)
+                    and self._yaobi_opportunity_expired(meta)):
+                return (
+                    False,
+                    f"候选{candidate_age:.0f}分钟ARMED/HOT但AI剧本已过期 ({meta.get('yaobi_opportunity_expires_at')})",
+                    1.0,
+                )
         # 三层决策面板: RISK_AVOID 强制 hard ban，跟 yaobi_decision_action="禁止交易" 同等优先级
         tier = str(meta.get("yaobi_decision_tier") or "")
         if tier == "RISK_AVOID":
@@ -1006,10 +912,13 @@ class BinanceScalpBot:
             ) as resp:
                 if resp.status != 200:
                     logger.warning("⚡ 候选币刷新失败: HTTP %s", resp.status)
+                    self._record_api_result(False)
                     return
                 tickers = await resp.json()
+                self._record_api_result(True)
         except Exception as e:
             logger.warning("⚡ 候选币刷新异常: %r", e)
+            self._record_api_result(False)
             return
 
         usdt = [t for t in tickers if str(t.get("symbol", "")).endswith("USDT")]
@@ -1326,10 +1235,13 @@ class BinanceScalpBot:
                 await self._check_observe_mode(symbol)
             return
 
-        # 信号冷却（同一币5秒内不重复）
+        # 信号冷却（区分方向：LONG/SHORT 互不阻塞）
         now      = time.monotonic()
         cooldown = self.cfg.get("SIGNAL_COOLDOWN_SECONDS", 5)
-        if now - self._signal_cooldown.get(symbol, 0) < cooldown:
+        if all(
+            now - self._signal_cooldown.get((symbol, d), 0) < cooldown
+            for d in ("LONG", "SHORT")
+        ):
             self._fstat["cooldown"] += 1
             return
 
@@ -1380,8 +1292,11 @@ class BinanceScalpBot:
                             cutoff = ts - 180
                             while cache and cache[0][0] < cutoff:
                                 cache.popleft()
+                            self._record_api_result(True)
+                        else:
+                            self._record_api_result(False)
                 except Exception:
-                    pass
+                    self._record_api_result(False)
 
         while self.running:
             interval = self.cfg.get("OI_POLL_INTERVAL", 10)
@@ -1394,9 +1309,11 @@ class BinanceScalpBot:
                 added = poll_set - self._last_oi_poll_symbols
                 removed = self._last_oi_poll_symbols - poll_set
                 self._last_oi_poll_symbols = poll_set
-                # 已经掉出候选的币：清空暖机标记
+                # 已经掉出候选的币：清空暖机标记和 OI 缓存（回收内存）
                 for sym in removed:
                     self._symbol_warmup_until.pop(sym, None)
+                    if sym not in self.open_positions:
+                        self._oi_cache.pop(sym, None)
                 # 新加入的币：仅"无现成缓存"才需要暖机
                 warm_deadline = time.monotonic() + 60.0
                 for sym in added:
@@ -1530,7 +1447,7 @@ class BinanceScalpBot:
         return eligible[:max(1, top_n)]
 
     async def _surf_entry_check(self, symbol: str, direction: str, price: float) -> tuple[bool, int, str]:
-        """仅极端行情（24h涨跌 > ±30%）调用 Surf AI 深度审查，普通行情直接放行"""
+        """仅极端行情（24h涨跌 > ±30%）调用 Surf AI 深度审查，普通行情直接放行。带 TTL 缓存"""
         if not self.cfg.get("SCALP_SURF_ENTRY_AI_ENABLED", False):
             record_provider_skip("surf", "chat/completions", "scalp_entry_ai_disabled")
             return True, 100, "Surf AI关闭"
@@ -1538,12 +1455,19 @@ class BinanceScalpBot:
             record_provider_skip("surf", "chat/completions", "missing_surf_api_key")
             return True, 100, "未配置"
 
+        # TTL 缓存：相同币种 ~5min 内不重复调 AI
+        SURF_ENTRY_CACHE_TTL = 300.0
+        cached = self._surf_entry_cache.get(symbol)
+        if cached and (time.monotonic() - cached[0]) < SURF_ENTRY_CACHE_TTL:
+            return cached[1], cached[2], cached[3]
+
         meta       = self.candidate_meta.get(symbol, {})
         change_24h = meta.get("change_24h", 0.0)
         vol_24h    = meta.get("volume_24h", 0.0)
 
         min_abs_change = float(self.cfg.get("SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE", 80.0) or 80.0)
         if abs(change_24h) < min_abs_change:
+            self._surf_entry_cache[symbol] = (time.monotonic(), True, 100, "正常行情跳过")
             return True, 100, "正常行情跳过"
 
         buf   = self.kline_buffer.get(symbol, [])
@@ -1585,6 +1509,7 @@ class BinanceScalpBot:
             ok     = score >= 50
             logger.info("⚡ [%s] 🤖 Surf score=%d [%s] %s → %s",
                         symbol, score, risk, reason, "✅入场" if ok else "❌拒绝")
+            self._surf_entry_cache[symbol] = (time.monotonic(), ok, score, reason)
             return ok, score, reason
         except json.JSONDecodeError as e:
             record_provider_call("surf", "chat/completions", False, status="json_decode", error=str(e))
@@ -2371,8 +2296,10 @@ class BinanceScalpBot:
 
         # ── Phase 3: 动能突破/接力（同根K线 多/空 各允许触发一次）─────────────
         atr_pct = self._calc_atr_pct(buf)
-        long_fired = self._breakout_fired.get((symbol, "LONG"), False)
-        short_fired = self._breakout_fired.get((symbol, "SHORT"), False)
+        _now_bf = time.monotonic()
+        _BF_TTL = 0.5  # 同一 tick 内不重复触发（防止开盘瞬间重复）
+        long_fired = _now_bf - self._breakout_fired.get((symbol, "LONG"), 0.0) < _BF_TTL
+        short_fired = _now_bf - self._breakout_fired.get((symbol, "SHORT"), 0.0) < _BF_TTL
 
         if allow_long and not long_fired:
             cont_ok, cont_reason, cont_pct = self._continuation_pullback_ready(
@@ -2389,7 +2316,7 @@ class BinanceScalpBot:
                     if not self._state_entry_allowed(symbol, state, "LONG", "顺势回踩多"):
                         return
                     self._fstat["continuation"] += 1
-                    self._breakout_fired[(symbol, "LONG")] = True
+                    self._breakout_fired[(symbol, "LONG")] = time.monotonic()
                     logger.info("⚡ [%s] 🟡 顺势回踩多: %s | 状态=%s", symbol, cont_reason, state)
                     await self._execute_entry(symbol, "LONG", cont_pct, "顺势回踩多", state)
                     return
@@ -2410,7 +2337,7 @@ class BinanceScalpBot:
                     if not self._state_entry_allowed(symbol, state, "SHORT", "顺势回踩空"):
                         return
                     self._fstat["continuation"] += 1
-                    self._breakout_fired[(symbol, "SHORT")] = True
+                    self._breakout_fired[(symbol, "SHORT")] = time.monotonic()
                     logger.info("⚡ [%s] 🟠 顺势回踩空: %s | 状态=%s", symbol, cont_reason, state)
                     await self._execute_entry(symbol, "SHORT", cont_pct, "顺势回踩空", state)
                     return
@@ -2451,12 +2378,12 @@ class BinanceScalpBot:
                 )
                 if not premove_ok:
                     self._fstat["premove_block"] += 1
-                    self._breakout_fired[(symbol, "LONG")] = True
+                    self._breakout_fired[(symbol, "LONG")] = time.monotonic()
                     self._record_entry_block(symbol, "premove", premove_reason, direction="LONG", signal_label="动能突破多")
                     logger.info("⚡ [%s] 🟡 动能突破多被追涨过滤: %s", symbol, premove_reason)
                     return
                 self._fstat["breakout"] += 1
-                self._breakout_fired[(symbol, "LONG")] = True
+                self._breakout_fired[(symbol, "LONG")] = time.monotonic()
                 bo_pct = (price - prev["h"]) / prev["h"] * 100
                 logger.info("⚡ [%s] 🟡 动能突破多: 突破前高%.6f → %.6f (+%.3f%%) | Taker=%.0f%% | 状态=%s",
                             symbol, prev["h"], price, bo_pct, taker_ratio * 100, state)
@@ -2486,12 +2413,12 @@ class BinanceScalpBot:
                 )
                 if not premove_ok:
                     self._fstat["premove_block"] += 1
-                    self._breakout_fired[(symbol, "SHORT")] = True
+                    self._breakout_fired[(symbol, "SHORT")] = time.monotonic()
                     self._record_entry_block(symbol, "premove", premove_reason, direction="SHORT", signal_label="动能突破空")
                     logger.info("⚡ [%s] 🟠 动能突破空被追空过滤: %s", symbol, premove_reason)
                     return
                 self._fstat["breakout"] += 1
-                self._breakout_fired[(symbol, "SHORT")] = True
+                self._breakout_fired[(symbol, "SHORT")] = time.monotonic()
                 bo_pct = (prev["l"] - price) / prev["l"] * 100
                 logger.info("⚡ [%s] 🟠 动能突破空: 跌破前低%.6f → %.6f (-%.3f%%) | Taker卖=%.0f%% | 状态=%s",
                             symbol, prev["l"], price, bo_pct, (1 - taker_ratio) * 100, state)
@@ -2530,13 +2457,13 @@ class BinanceScalpBot:
         yaobi_ok, yaobi_reason, yaobi_size_mult = self._yaobi_entry_guard(symbol, direction, signal_label)
         if not yaobi_ok:
             self._fstat["yaobi_block"] += 1
-            self._signal_cooldown[symbol] = time.monotonic()
+            self._signal_cooldown[(symbol, direction)] = time.monotonic()
             self._record_entry_block(symbol, "yaobi_guard", yaobi_reason, direction=direction, signal_label=signal_label)
             logger.info("⚡ [%s] 🧭 妖币共享数据拦截 %s: %s", symbol, direction, yaobi_reason)
             return
 
-        # 更新信号冷却时间戳
-        self._signal_cooldown[symbol] = time.monotonic()
+        # 更新信号冷却时间戳（区分方向）
+        self._signal_cooldown[(symbol, direction)] = time.monotonic()
 
         # 获取入场价（REST实时价）
         entry_price = await self._fetch_rest_price(symbol, timeout_sec=5)
@@ -3574,6 +3501,31 @@ class BinanceScalpBot:
                         "protection_reason": "startup_exchange_position_without_local_ledger",
                     })
                 logger.critical("⚡ 启动对账发现 %d 个交易所未知真实仓位，已暂停自动实盘开仓", len(unknown))
+
+        # ── 挂单对账 ─────────────────────────────────────────────────────
+        if self.trader and self.cfg.get("SCALP_AUTO_TRADE", False):
+            try:
+                all_open_orders = await self.trader.get_open_orders()
+            except Exception as e:
+                logger.warning("⚡ 启动挂单查询失败: %s", e)
+                all_open_orders = []
+            if all_open_orders:
+                known_symbols = set(self.open_positions)
+                orphaned = [o for o in all_open_orders if str(o.get("symbol")).upper() not in known_symbols]
+                for o in orphaned:
+                    sym = str(o.get("symbol")).upper()
+                    oid = o.get("orderId")
+                    otype = o.get("type", "")
+                    logger.warning("⚡ 发现孤立挂单 %s #%d (%s)，自动撤销", sym, oid, otype)
+                    try:
+                        await self.trader.cancel_order(sym, oid)
+                    except Exception as e:
+                        logger.warning("⚡ 撤销孤立挂单 %s #%d 失败: %s", sym, oid, e)
+                if orphaned:
+                    logger.info("⚡ 启动对账清理 %d 个孤立挂单", len(orphaned))
+                active = [o for o in all_open_orders if str(o.get("symbol")).upper() in known_symbols]
+                if active:
+                    logger.info("⚡ 已有持仓关联挂单 %d 个（保留）", len(active))
 
         if restored:
             logger.info("⚡ 启动对账恢复本地持仓 %d 个", restored)

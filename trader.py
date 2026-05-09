@@ -49,7 +49,7 @@ class BinanceTrader:
     币安 U 本位合约下单封装。
 
     凭证：
-        api_key/api_secret 可通过构造参数注入（V4AF 走独立账户）；
+        api_key/api_secret 可通过构造参数注入（独立账户）；
         留 None 时回退到 config 的 BINANCE_API_KEY/SECRET（scalp 主账户）。
     label 仅用于日志区分多账户。
     """
@@ -387,6 +387,14 @@ class BinanceTrader:
         if resp is None:
             raise RuntimeError("positionRisk request failed")
         return [p for p in resp if float(p.get("positionAmt", 0) or 0) != 0]
+
+    async def get_open_orders(self, symbol: str | None = None) -> list[dict]:
+        """查询当前全部（或某合约）挂单，用于启动对账。"""
+        params = {"symbol": symbol} if symbol else {}
+        resp = await self._request("GET", "/fapi/v1/openOrders", params)
+        if resp is None:
+            raise RuntimeError("openOrders request failed")
+        return resp
 
     async def place_limit_ioc_order(self, symbol: str, side: str, quantity: float, price: float) -> dict | None:
         """IOC 限价单（Immediate Or Cancel）— 防飞单追高核心机制"""

@@ -15,23 +15,16 @@ scalp_positions: dict[str, dict] = {}
 # ── 超短线历史成交记录 ────────────────────────────────────────────────────────
 scalp_trade_history: list[dict] = []
 
+# ── 超短线入场拦截日志（持久化，复盘包里用于回溯"为什么没开"）─────────────────
+scalp_entry_block_log: list[dict] = []
+
 MAX_SIGNALS = 200
 MAX_TRADES  = 500
+MAX_ENTRY_BLOCKS = 240
 
 # ── 超短线过滤统计（实时共享，web.py 读取）────────────────────────────────────
 scalp_filter_stats: dict = {}
 
-# ── V4AF 闪崩做空模块 ────────────────────────────────────────────────────────
-flash_signal_queue:   std_queue.Queue = std_queue.Queue(maxsize=200)
-flash_signals_history: list[dict]    = []
-flash_positions: dict[str, dict]     = {}
-flash_trade_history: list[dict]      = []
-flash_filter_stats: dict             = {}
-flash_review_log: list[dict]         = []   # 智能时间止损每次重评估的决策记录
-
-MAX_FLASH_SIGNALS = 200
-MAX_FLASH_TRADES  = 500
-MAX_FLASH_REVIEWS = 500
 LEDGER_FILE = os.path.join(DATA_DIR, "runtime_ledger.json")
 
 
@@ -45,8 +38,7 @@ def _load_ledger() -> None:
         return
     scalp_positions.update(data.get("scalp_positions") or {})
     scalp_trade_history.extend((data.get("scalp_trade_history") or [])[-MAX_TRADES:])
-    flash_positions.update(data.get("flash_positions") or {})
-    flash_trade_history.extend((data.get("flash_trade_history") or [])[-MAX_FLASH_TRADES:])
+    scalp_entry_block_log.extend((data.get("scalp_entry_block_log") or [])[-MAX_ENTRY_BLOCKS:])
 
 
 def _persist_ledger() -> None:
@@ -56,8 +48,7 @@ def _persist_ledger() -> None:
             "updated_at": time.time(),
             "scalp_positions": scalp_positions,
             "scalp_trade_history": scalp_trade_history[-MAX_TRADES:],
-            "flash_positions": flash_positions,
-            "flash_trade_history": flash_trade_history[-MAX_FLASH_TRADES:],
+            "scalp_entry_block_log": scalp_entry_block_log[-MAX_ENTRY_BLOCKS:],
         }
         tmp = LEDGER_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -104,36 +95,11 @@ def add_scalp_trade(trade: dict) -> None:
     _persist_ledger()
 
 
-# ── V4AF 写入接口 ─────────────────────────────────────────────────────────────
-def add_flash_signal(signal: dict) -> None:
-    flash_signals_history.append(signal)
-    if len(flash_signals_history) > MAX_FLASH_SIGNALS:
-        flash_signals_history.pop(0)
-    try:
-        _push(flash_signal_queue, json.dumps(signal, ensure_ascii=False, default=str))
-    except Exception:
-        pass
-
-
-def set_flash_position(symbol: str, pos: dict | None) -> None:
-    if pos is None:
-        flash_positions.pop(symbol, None)
-    else:
-        flash_positions[symbol] = pos
+def add_scalp_entry_block(block: dict) -> None:
+    scalp_entry_block_log.append(block)
+    if len(scalp_entry_block_log) > MAX_ENTRY_BLOCKS:
+        scalp_entry_block_log.pop(0)
     _persist_ledger()
-
-
-def add_flash_trade(trade: dict) -> None:
-    flash_trade_history.append(trade)
-    if len(flash_trade_history) > MAX_FLASH_TRADES:
-        flash_trade_history.pop(0)
-    _persist_ledger()
-
-
-def add_flash_review(review: dict) -> None:
-    flash_review_log.append(review)
-    if len(flash_review_log) > MAX_FLASH_REVIEWS:
-        flash_review_log.pop(0)
 
 
 _load_ledger()

@@ -2,7 +2,8 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
-from bot_scalp import BinanceScalpBot, ScalpPosition
+from bot_scalp import BinanceScalpBot
+from scalp_position import ScalpPosition
 from config import config_manager
 import signals as signals_mod
 from signals import scalp_positions, scalp_signals_history, scalp_trade_history

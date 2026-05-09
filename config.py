@@ -11,9 +11,6 @@ except ImportError:
 # ── API 密钥 ───────────────────────────────────────────────────────────────────
 BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY",    "YOUR_BINANCE_API_KEY")
 BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "YOUR_BINANCE_API_SECRET")
-# Flash (V4AF) 独立币安账户：留空则与 SCALP 共用主账户。
-BINANCE_FLASH_API_KEY    = os.getenv("BINANCE_FLASH_API_KEY",    "")
-BINANCE_FLASH_API_SECRET = os.getenv("BINANCE_FLASH_API_SECRET", "")
 # 妖币雷达推送通知 (Telegram / Discord)，留空即不推。
 TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN",  "")
 TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID",    "")
@@ -150,16 +147,6 @@ def okx_credentials_status() -> dict:
         "key_count": len(creds),
         "labels": [c["label"] for c in creds],
         "base_url": "https://web3.okx.com",
-    }
-
-
-def flash_credentials_status() -> dict:
-    """V4AF 模块币安账户状态。实盘要求专用账户，不再允许回退主账户。"""
-    has_dedicated = _valid_secret(BINANCE_FLASH_API_KEY) and _valid_secret(BINANCE_FLASH_API_SECRET)
-    return {
-        "dedicated_account": has_dedicated,
-        "fallback_to_main": False,
-        "live_ready": has_dedicated,
     }
 
 
@@ -336,30 +323,6 @@ class ConfigManager:
         "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
         "OKX_MIN_REQUEST_INTERVAL": 0.20,
         "SURF_MIN_REQUEST_INTERVAL": 0.20,
-        # ── V4AF 闪崩做空模块（独立 bot，独立账户可选）──────────────────────────
-        "FLASH_ENABLED": False,
-        "FLASH_AUTO_TRADE": False,                # paper 模式默认
-        "FLASH_PAPER_TRADE": True,
-        "FLASH_POSITION_USDT": 100.0,
-        "FLASH_LEVERAGE": 5,
-        "FLASH_MAX_POSITIONS": 3,
-        "FLASH_24H_GAIN_MIN_PCT": 15.0,           # 24H 累计涨幅下限（候选条件）
-        "FLASH_4H_TAKER_SELL_MIN": 0.55,          # 4H Taker 卖压瞬时阈值
-        "FLASH_1H_LOWER_HIGH_LOOKBACK": 8,        # 找 lower high 看最近 N 根 1H
-        "FLASH_1H_LOWER_HIGH_MIN_DROP_PCT": 0.5,  # peak 后 lower high 至少低 X%
-        "FLASH_VOLUME_24H_MIN_USD": 1_000_000.0,  # 低于此量的币不入场
-        "FLASH_FDV_RATIO_MAX": 0.85,              # market_cap/FDV 高于此值视为接近全流通（meme ban）
-        "FLASH_SCAN_INTERVAL_SECONDS": 60,        # 扫描频率
-        "FLASH_KLINE_REFRESH_SECONDS": 300,       # 1H/4H K 线刷新间隔
-        "FLASH_SL_PCT": 4.0,                      # 宽硬止损（开仓价 + X%）
-        "FLASH_TRAIL_ACTIVATION_PCT": 1.0,        # 浮盈达到此值开始 trail
-        "FLASH_TRAIL_PCT": 1.5,                   # trail 回调出场
-        "FLASH_REVIEW_HOURS": 8,                  # 智能时间止损：每 N 小时重评估
-        "FLASH_REVIEW_EXTEND_HOURS": 4,           # 重评估通过后延长 N 小时
-        "FLASH_REVIEW_MAX_EXTENSIONS": 2,         # 最多延长几次
-        "FLASH_REVIEW_HOLD_LOSS_MAX_PCT": 1.0,    # 浮亏超过 X% 时不再延期
-        "FLASH_REQUIRE_VESTING_GROUP": True,      # 必须命中 V4AF 的目标 vesting 组
-        "FLASH_BAN_NEAR_FULL_CIRC_MEME": True,    # 接近全流通 meme 直接 ban
     }
 
     _BOUNDS: dict[str, tuple] = {
@@ -480,157 +443,29 @@ class ConfigManager:
         "YAOBI_AI_MAX_OUTPUT_TOKENS":   (200,    8000),
         "OKX_MIN_REQUEST_INTERVAL":    (0.02,   5.0),
         "SURF_MIN_REQUEST_INTERVAL":   (0.02,   5.0),
-        # ── V4AF 闪崩 ────────────────────────────────────────────────────────────
-        "FLASH_POSITION_USDT":         (1,      1_000_000),
-        "FLASH_LEVERAGE":              (1,      125),
-        "FLASH_MAX_POSITIONS":         (1,      20),
-        "FLASH_24H_GAIN_MIN_PCT":      (1.0,    100.0),
-        "FLASH_4H_TAKER_SELL_MIN":     (0.4,    0.9),
-        "FLASH_1H_LOWER_HIGH_LOOKBACK": (3,     30),
-        "FLASH_1H_LOWER_HIGH_MIN_DROP_PCT": (0.0, 10.0),
-        "FLASH_VOLUME_24H_MIN_USD":    (0.0,    1_000_000_000.0),
-        "FLASH_FDV_RATIO_MAX":         (0.0,    1.0),
-        "FLASH_SCAN_INTERVAL_SECONDS": (10,     600),
-        "FLASH_KLINE_REFRESH_SECONDS": (30,     1800),
-        "FLASH_SL_PCT":                (0.5,    20.0),
-        "FLASH_TRAIL_ACTIVATION_PCT":  (0.0,    20.0),
-        "FLASH_TRAIL_PCT":             (0.1,    10.0),
-        "FLASH_REVIEW_HOURS":          (1,      48),
-        "FLASH_REVIEW_EXTEND_HOURS":   (1,      24),
-        "FLASH_REVIEW_MAX_EXTENSIONS": (0,      10),
-        "FLASH_REVIEW_HOLD_LOSS_MAX_PCT": (0.0, 10.0),
     }
 
     def __init__(self):
         self.default_settings: dict = {
             "CONFIG_PROFILE_VERSION":   self.PROFILE_VERSION,
-            # ── 超短线策略 V3.0 (Squeeze Hunter) ─────────────────────────────
+            # ── 策略参数由 PROFILE_MIGRATION_DEFAULTS 统一管理 ──────────────────
+            **self.PROFILE_MIGRATION_DEFAULTS,
+            # ── 以下为 UI 开关 / 连接设置 / 非策略默认值（不参与 migration） ──
             "SCALP_ENABLED":             False,
             "SCALP_AUTO_TRADE":          False,
             "SCALP_ENABLE_LONG":         True,
             "SCALP_ENABLE_SHORT":        True,
-            "SCALP_MAX_POSITIONS":       3,
             "SCALP_POSITION_USDT":       100.0,
             "SCALP_LEVERAGE":            10,
             "SCALP_STOP_LOSS_PCT":       50.0,
-            "SCALP_TP1_RATIO":           0.30,
-            "SCALP_TP2_RATIO":           0.30,
-            "SCALP_TP3_TRAIL_PCT":       8.0,
             "SCALP_WATCHLIST":           "",
-            "SCALP_CANDIDATE_LIMIT":     40,
-            "SCALP_CANDIDATE_SOURCE_MODE": "YAOBI_ONLY",
             "SCALP_PAPER_TRADE":         False,
             "MANUAL_REAL_TRADE_ENABLED": False,
-            # ── 动态止损 & 风控 ───────────────────────────────────────────────
             "SCALP_USE_DYNAMIC_SL":      True,
             "SCALP_RISK_PER_TRADE_USDT": 20.0,
-            "SCALP_MAX_DAILY_LOSS_USDT": 200.0,
-            "SCALP_MAX_DAILY_LOSS_R":    10.0,
-            "SCALP_TP1_RR":              1.5,
-            "SCALP_TP2_RR":              3.0,
-            "SCALP_TIME_STOP_MINUTES":   45,
-            "SCALP_TP2_TIMEOUT_MINUTES": 120,
-            "SCALP_STRUCTURE_TRAIL_BARS": 20,
-            "SCALP_TP3_AGGRESSIVE_RUNNER": False,
-            "SCALP_SKIP_TP1_IN_STRONG_TREND": False,
-            "SCALP_NET_BREAKEVEN_LOCK_PCT": 0.15,
-            "SCALP_TP1_SOFT_BREAKEVEN_PCT": 0.35,
-            "SCALP_REVERSAL_STOP_SL_FRACTION": 0.40,
-            "SCALP_WS_STALE_SECONDS":   90,
-            "SCALP_WS_DIRECT":          False,
-            "SCALP_WS_COMBINED_STREAM": True,
-            "SCALP_POSITION_CHECK_INTERVAL_SECONDS": 10,
-            "SCALP_POSITION_STALE_SECONDS": 60,
-            "SCALP_SKIP_UNKNOWN_STATE": True,
-            "SCALP_MAX_CANDIDATE_AGE_MINUTES": 180,
-            # L5/L3/L7 新增可调项
-            "SCALP_TP_CONFIRM_TICKS":    2,
-            "SCALP_TREND_LATE_SIZE_MULT": 0.5,
-            "SCALP_BLOCK_TREND_LATE_ENTRY": True,
-            "SCALP_SYMBOL_BAN_WINDOW_MINUTES": 120,
-            "SCALP_SYMBOL_BAN_SL_COUNT": 2,
-            "SCALP_SYMBOL_BAN_LOSS_R":   2.0,
-            "SCALP_SYMBOL_BAN_DURATION_MINUTES": 0,
-            "FEE_RATE_PER_SIDE":         0.0004,
-            "SLIPPAGE_RATE_PER_SIDE":    0.0005,
-            # ── V3.0 轧空猎杀参数 ─────────────────────────────────────────────
-            "SQUEEZE_OI_DROP_MAJOR":     0.5,
-            "SQUEEZE_OI_DROP_MID":       1.0,
-            "SQUEEZE_OI_DROP_MEME":      1.5,
-            "SQUEEZE_WICK_PCT":          1.0,
-            # L2: 默认 0.58 比旧 0.65 更敏感；多/空可独立覆盖
-            "SQUEEZE_TAKER_MIN":         0.60,
-            "SQUEEZE_TAKER_MIN_LONG":    0.62,
-            "SQUEEZE_TAKER_MIN_SHORT":   0.62,
-            # ── V3.0 动能突破参数 ─────────────────────────────────────────────
-            "BREAKOUT_TAKER_MIN":        0.62,
-            "BREAKOUT_MIN_PCT":          0.15,
-            "BREAKOUT_ATR_MULT":         0.7,
-            "BREAKOUT_ATR_MIN_PCT":      0.50,
-            "BREAKOUT_ATR_MAX_PCT":      2.00,
-            "BREAKOUT_MIN_VOL_RATIO":    0.40,
-            # ATR 自适应：根据 BTC 当前 1m ATR 动态缩放上下限
-            "BREAKOUT_ATR_ADAPTIVE":     True,
-            "MARKET_VOL_BTC_ATR_BASELINE": 0.15,
-            "MARKET_VOL_SCALE_MIN":      0.8,
-            "MARKET_VOL_SCALE_MAX":      2.5,
-            "BREAKOUT_MAX_PREMOVE_5M_PCT": 1.2,
-            "BREAKOUT_MAX_PREMOVE_15M_PCT": 2.5,
-            "BREAKOUT_MAX_PREMOVE_30M_PCT": 2.5,
-            "BREAKOUT_MAX_EMA20_DEVIATION_PCT": 3.0,
-            "CONTINUATION_PULLBACK_ENABLED": True,
-            "CONTINUATION_TAKER_MIN":    0.58,
-            "CONTINUATION_TAKER_MIN_LONG": 0.62,
-            "CONTINUATION_TAKER_MIN_SHORT": 0.52,
-            "CONTINUATION_HOT_TAKER_MIN": 0.52,
-            "CONTINUATION_HOT_TAKER_MIN_LONG": 0.60,
-            "CONTINUATION_HOT_TAKER_MIN_SHORT": 0.52,
-            "CONTINUATION_MIN_PULLBACK_PCT": 0.20,
-            "CONTINUATION_RECLAIM_LOOKBACK": 3,
-            "CONTINUATION_ATR_MIN_PCT":   0.0,
-            "CONTINUATION_ATR_MIN_PCT_LONG": 0.70,
-            "CONTINUATION_ATR_MIN_PCT_SHORT": 0.30,
-            "CONTINUATION_ATR_MAX_PCT":   2.50,
-            "CONTINUATION_ATR_MAX_PCT_LONG": 2.00,
-            "CONTINUATION_ATR_MAX_PCT_SHORT": 1.50,
-            "CONTINUATION_MAX_EMA20_DEVIATION_PCT": 4.00,
-            "CONTINUATION_MAX_EMA20_DEVIATION_PCT_LONG": 2.50,
-            "CONTINUATION_MAX_EMA20_DEVIATION_PCT_SHORT": 2.50,
-            "SIGNAL_COOLDOWN_SECONDS":   30,
-            "OI_POLL_INTERVAL":          10,
-            "SCALP_OI_PREFETCH_TOP_N":   30,
-            # L4: 旧 BTC_GUARD_PCT 改作 reject 兜底；新增分级
-            "BTC_GUARD_PCT":             1.5,
-            "BTC_GUARD_REJECT_PCT":      1.5,
-            "BTC_GUARD_WARN_PCT":        0.8,
-            # Surf 成本控制：默认关闭后台/AI 调用，需要时在 UI 手动开启。
-            "SCALP_SURF_NEWS_ENABLED":    False,
-            "SCALP_SURF_NEWS_INTERVAL_MINUTES": 60,
-            "SCALP_SURF_NEWS_TOP_N":      8,
-            "SCALP_SURF_ENTRY_AI_ENABLED": False,
-            "SCALP_SURF_ENTRY_AI_MIN_ABS_CHANGE": 80.0,
-            "SCALP_USE_YAOBI_CONTEXT":    True,
-            "SCALP_REQUIRE_YAOBI_CONTEXT": True,
-            "SCALP_YAOBI_CONTEXT_TOP_N":  30,
-            "SCALP_YAOBI_MIN_SCORE":      60,
-            "SCALP_YAOBI_MIN_ANOMALY_SCORE": 50,
-            "SCALP_YAOBI_BLOCK_DECISION_BAN": True,
-            "SCALP_YAOBI_BLOCK_WAIT_CONFIRM": True,
-            "SCALP_YAOBI_BLOCK_HIGH_RISK": True,
-            "SCALP_YAOBI_DIRECTION_GUARD": False,
-            "SCALP_YAOBI_FUNDING_OI_GUARD": True,
-            "SCALP_YAOBI_FUNDING_OI_GUARD_HARD": False,
-            "SCALP_YAOBI_FUNDING_OI_SOFT_MULT": 0.5,
-            "SCALP_SQUEEZE_OI_STABILIZE_ENABLED": True,
-            "SCALP_SQUEEZE_OI_STABILIZE_LOOKBACK_SEC": 60,
-            "SCALP_SQUEEZE_OI_REBOUND_PCT": 0.12,
-            "SCALP_OPPORTUNITY_EXPIRY_GUARD": True,
-            "SCALP_OPPORTUNITY_GUARD_ENABLED": True,
-            "SCALP_REQUIRE_OPPORTUNITY_QUEUE": True,
-            "SCALP_REQUIRE_OPPORTUNITY_PERMISSION": True,
-            "SCALP_YAOBI_FUNDING_EXTREME_PCT": 0.05,
-            "SCALP_YAOBI_OI_GUARD_MIN_24H_PCT": 50.0,
-            # ── 妖币扫描器 ────────────────────────────────────────────────────
+            "SCALP_WS_DIRECT":           False,
+            "SCALP_WS_COMBINED_STREAM":  True,
+            # ── 妖币扫描 UI 开关 ────────────────────────────────────────────────
             "YAOBI_ENABLED":             False,
             "YAOBI_SCAN_INTERVAL":       15,
             "YAOBI_MIN_SCORE":           30,
@@ -638,17 +473,7 @@ class ConfigManager:
             "YAOBI_CHAINS":              "eth,bsc,solana,base,arbitrum",
             "OBSIDIAN_VAULT_PATH":       r"C:\BOT\yaobi",
             "COINGLASS_API_KEY":         "",
-            # 妖币雷达推送通知（Telegram / Discord webhook）
-            "YAOBI_NOTIFIER_ENABLED":    False,
-            "YAOBI_NOTIFIER_MIN_TIER":   "L2_AMBUSH",
-            "YAOBI_NOTIFIER_MAX_PER_BATCH": 8,
             "YAOBI_SURF_ENABLED":        True,
-            "YAOBI_SURF_NEWS_ENABLED":   False,
-            "YAOBI_SURF_NEWS_TOP_N":     20,
-            "YAOBI_SURF_FALLBACK_SEARCH_LIMIT": 3,
-            "YAOBI_SURF_AI_ENABLED":     True,
-            "YAOBI_SURF_TOP_N":          6,
-            "YAOBI_SURF_AI_MODEL":       "surf-ask",
             "YAOBI_SQUARE_ENABLED":      True,
             "YAOBI_SQUARE_ROWS":         50,
             "YAOBI_SQUARE_BROWSER_ENABLED": True,
@@ -658,60 +483,6 @@ class ConfigManager:
             "YAOBI_SQUARE_SCROLL_RESET_EVERY": 20,
             "YAOBI_OKX_ENABLED":         True,
             "YAOBI_OKX_HOT_ENABLED":     True,
-            "YAOBI_OKX_HOT_LIMIT":       50,
-            "YAOBI_OKX_HEAVY_TOP_N":     40,
-            "YAOBI_OKX_PRICE_BATCH_SIZE": 100,
-            "YAOBI_OKX_SEARCH_CACHE_MINUTES": 60,
-            "YAOBI_FUTURES_TOP_N":       120,
-            "YAOBI_BINANCE_SHORT_INTEL_ENABLED": True,
-            "YAOBI_BINANCE_LIQUIDATION_WS_ENABLED": True,
-            "YAOBI_OPPORTUNITY_TOP_N":    6,
-            "YAOBI_OPPORTUNITY_MIN_SCORE": 45,
-            "YAOBI_AI_ENABLED":           True,
-            "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
-            "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": False,
-            "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": 55,
-            "YAOBI_AI_PROVIDER_PRIORITY": "gemini",
-            "YAOBI_AI_MODEL_OPENAI":      "gpt-4o-mini",
-            "YAOBI_AI_MODEL_GEMINI":      "gemini-2.5-flash",
-            "YAOBI_AI_MODEL_ANTHROPIC":   "claude-3-5-haiku-latest",
-            "YAOBI_AI_MODEL_DEEPSEEK":    "deepseek-v4-flash",
-            "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
-            "YAOBI_AI_TOP_OUTPUT":        6,
-            "YAOBI_AI_FAILURE_FALLBACK_ENABLED": True,
-            "YAOBI_AI_FAILURE_FALLBACK_MIN_SCORE": 45,
-            "YAOBI_AI_MIN_INTERVAL_MINUTES": 15,
-            "YAOBI_AI_CACHE_TTL_MINUTES": 30,
-            "YAOBI_PLAYBOOK_TTL_MINUTES": 45,
-            "YAOBI_AI_DAILY_USD_CAP":     1.0,
-            "YAOBI_AI_MAX_INPUT_TOKENS":  8000,
-            "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
-            "OKX_MIN_REQUEST_INTERVAL":  0.20,
-            "SURF_MIN_REQUEST_INTERVAL": 0.20,
-            # ── V4AF 闪崩做空模块 ───────────────────────────────────────────────
-            "FLASH_ENABLED":             False,
-            "FLASH_AUTO_TRADE":          False,
-            "FLASH_PAPER_TRADE":         True,
-            "FLASH_POSITION_USDT":       100.0,
-            "FLASH_LEVERAGE":            5,
-            "FLASH_MAX_POSITIONS":       3,
-            "FLASH_24H_GAIN_MIN_PCT":    15.0,
-            "FLASH_4H_TAKER_SELL_MIN":   0.55,
-            "FLASH_1H_LOWER_HIGH_LOOKBACK": 8,
-            "FLASH_1H_LOWER_HIGH_MIN_DROP_PCT": 0.5,
-            "FLASH_VOLUME_24H_MIN_USD":  1_000_000.0,
-            "FLASH_FDV_RATIO_MAX":       0.85,
-            "FLASH_SCAN_INTERVAL_SECONDS": 60,
-            "FLASH_KLINE_REFRESH_SECONDS": 300,
-            "FLASH_SL_PCT":              4.0,
-            "FLASH_TRAIL_ACTIVATION_PCT": 1.0,
-            "FLASH_TRAIL_PCT":           1.5,
-            "FLASH_REVIEW_HOURS":        8,
-            "FLASH_REVIEW_EXTEND_HOURS": 4,
-            "FLASH_REVIEW_MAX_EXTENSIONS": 2,
-            "FLASH_REVIEW_HOLD_LOSS_MAX_PCT": 1.0,
-            "FLASH_REQUIRE_VESTING_GROUP": True,
-            "FLASH_BAN_NEAR_FULL_CIRC_MEME": True,
         }
         self.settings: dict = self.load()
 
