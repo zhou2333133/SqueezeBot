@@ -158,6 +158,11 @@ class BinanceScalpBot:
         if self._api_failure_count >= threshold:
             self._suspend_live_trading(f"api_circuit_breaker_{self._api_failure_count}")
 
+    @staticmethod
+    def _position_side(direction: str) -> str:
+        """Hedge Mode 下所需 positionSide，单向模式忽略此参数无影响。"""
+        return "LONG" if direction == "LONG" else "SHORT"
+
     def _latest_known_price(self, pos: ScalpPosition) -> float:
         live = self._live_candle.get(pos.symbol, {})
         for value in (
@@ -1575,7 +1580,7 @@ class BinanceScalpBot:
         actual_price = price
         if is_real:
             exit_side = "SELL" if pos.direction == "LONG" else "BUY"
-            fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_side, pos.quantity_remaining)
+            fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_side, pos.quantity_remaining, self._position_side(pos.direction))
             if not fill_resp:
                 logger.error("⚡ [%s] 紧急平仓下单失败，保留本地仓位和保护单", symbol)
                 return False
@@ -2649,14 +2654,11 @@ class BinanceScalpBot:
             return
 
         hedge_mode = await self.trader.is_hedge_mode()
-        if hedge_mode is None:
-            logger.error("⚡ [%s] 真实开仓跳过：无法确认账户持仓模式，避免 Hedge/One-way 参数错配", symbol)
-            return
+        pos_side = self._position_side(direction)  # Hedge Mode 需要；One-way 忽略
         if hedge_mode:
-            logger.error(
-                "⚡ [%s] 真实开仓跳过：当前账户为双向持仓 Hedge Mode，本机器人实盘保护链仅支持单向持仓 One-way Mode",
-                symbol,
-            )
+            logger.info("⚡ [%s] Hedge Mode 检测到 → 下单自动添加 positionSide=%s", symbol, pos_side)
+        elif hedge_mode is None:
+            logger.error("⚡ [%s] 真实开仓跳过：无法确认账户持仓模式，避免 Hedge/One-way 参数错配", symbol)
             return
 
         lev_resp = await self.trader.set_leverage(symbol, leverage)
@@ -2665,7 +2667,7 @@ class BinanceScalpBot:
             return
 
         ioc_price  = entry_price * 1.003 if direction == "LONG" else entry_price * 0.997
-        trade_resp = await self.trader.place_limit_ioc_order(symbol, side, quantity, ioc_price)
+        trade_resp = await self.trader.place_limit_ioc_order(symbol, side, quantity, ioc_price, pos_side)
         if not trade_resp:
             logger.error("⚡ [%s] IOC限价单请求失败", symbol)
             return
@@ -2698,13 +2700,13 @@ class BinanceScalpBot:
             "risk_usdt_actual": round(actual_risk_usdt, 4),
         })
 
-        sl_resp     = await self.trader.place_stop_loss_order(symbol, exit_s, sl_price)
+        sl_resp     = await self.trader.place_stop_loss_order(symbol, exit_s, sl_price, quantity, pos_side)
         sl_order_id = sl_resp.get("orderId") if sl_resp else None
         protection_failed = False
         protection_reason = ""
         if not sl_order_id:
             logger.critical("⚡ [%s] 交易所止损单挂单失败，立即 reduceOnly 市价撤出，禁止裸仓继续运行", symbol)
-            emergency_resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, quantity)
+            emergency_resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, quantity, pos_side)
             if emergency_resp:
                 add_scalp_signal({**base_signal, "auto_traded": False, "paper": False,
                                   "order_id": trade_resp.get("orderId"),
@@ -3118,6 +3120,7 @@ class BinanceScalpBot:
         tp2_ratio = pos.tp2_ratio
         trail_pct = pos.trail_pct
         exit_s    = "SELL" if pos.direction == "LONG" else "BUY"
+        pos_side  = self._position_side(pos.direction)
         auto      = cfg.get("SCALP_AUTO_TRADE", False)
         is_paper  = pos.paper
         tag       = "📋 " if is_paper else ""
@@ -3149,7 +3152,7 @@ class BinanceScalpBot:
             fill_resp: dict | None = None
             actual_price = price
             if not is_paper and auto and self.trader:
-                fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, pos.quantity_remaining)
+                fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, pos.quantity_remaining, pos_side)
                 if not fill_resp:
                     logger.error("⚡ [%s] %s平仓失败，保留本地仓位等待下一次检查", symbol, reason)
                     return False
@@ -3217,12 +3220,12 @@ class BinanceScalpBot:
                             await self.trader.cancel_order(symbol, old_sl_order_id)
                         except Exception as e:
                             logger.warning("⚡ [%s] 撤旧SL单异常: %s", symbol, e)
-                    sl_resp = await self.trader.place_stop_loss_order(symbol, exit_s, new_sl)
+                    sl_resp = await self.trader.place_stop_loss_order(symbol, exit_s, new_sl, pos.quantity_remaining, pos_side)
                     if sl_resp and sl_resp.get("orderId"):
                         pos.sl_order_id = sl_resp["orderId"]
                     else:
                         logger.critical("⚡ [%s] 飞升保本SL挂单失败，紧急重挂原SL兜底", symbol)
-                        fallback = await self.trader.place_stop_loss_order(symbol, exit_s, pos.sl_price)
+                        fallback = await self.trader.place_stop_loss_order(symbol, exit_s, pos.sl_price, pos.quantity_remaining, pos_side)
                         if fallback and fallback.get("orderId"):
                             pos.sl_order_id = fallback["orderId"]
                         else:
@@ -3247,7 +3250,7 @@ class BinanceScalpBot:
                 pos.tp1_hit = True
                 pos.sl_price = new_sl
             elif auto:
-                resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty)
+                resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty, pos_side)
                 if not resp:
                     logger.error("⚡ [%s] TP1减仓失败，保留本地仓位等待下一次检查", symbol)
                     return
@@ -3290,7 +3293,7 @@ class BinanceScalpBot:
                 self._apply_close_segment(pos, price, qty)
                 pos.tp2_hit = True
             elif auto:
-                resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty)
+                resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty, pos_side)
                 if not resp:
                     logger.error("⚡ [%s] TP2减仓失败，保留本地仓位等待下一次检查", symbol)
                     return
@@ -3561,7 +3564,7 @@ class BinanceScalpBot:
                 "⚡ [%s] 保护失败仓位仍存在(第%d次重试)，reduceOnly 市价撤出 qty=%.6f",
                 symbol, pos.force_exit_attempts, qty,
             )
-            resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty)
+            resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty, self._position_side(pos.direction))
             if not resp:
                 # 指数退避：30 * 2^(n-1)，封顶 1800
                 backoff = min(30 * (2 ** max(0, pos.force_exit_attempts - 1)), 1800)
@@ -3598,7 +3601,7 @@ class BinanceScalpBot:
         if not pos.paper:
             if not self.trader:
                 return {"status": "error", "message": "真实仓位平仓需要机器人运行并完成交易所连接"}
-            fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_side, qty)
+            fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_side, qty, self._position_side(pos.direction))
             if not fill_resp:
                 return {"status": "error", "message": f"{symbol} reduceOnly 平仓失败，未修改本地仓位"}
         segment = self._apply_close_segment(pos, exit_price, qty, fill_resp=fill_resp)

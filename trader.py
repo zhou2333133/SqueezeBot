@@ -70,6 +70,9 @@ class BinanceTrader:
         self.api_secret = api_secret if api_secret is not None else BINANCE_API_SECRET
         self.label = label
         self._symbol_filters: dict[str, dict] = {}
+        # ── 持仓模式缓存（避免每次信号都请求 API） ─────────────────────────
+        self._hedge_mode: bool | None = None
+        self._last_hedge_mode_check: float = 0.0
         # ── 时钟漂移修复 ──────────────────────────────────────────────────
         # Windows 系统经常出现 +/- 数秒漂移，导致 -1021 Timestamp out of recvWindow。
         # 我们定期拉 GET /fapi/v1/time，按服务器时间补偿本地戳。
@@ -263,13 +266,20 @@ class BinanceTrader:
         return await self._request("GET", "/fapi/v1/positionSide/dual", {})
 
     async def is_hedge_mode(self) -> bool | None:
+        HEDGE_CACHE_TTL = 300.0  # 缓存 5 分钟，避免高频信号触发限频
+        now = time.time()
+        if self._hedge_mode is not None and now - self._last_hedge_mode_check < HEDGE_CACHE_TTL:
+            return self._hedge_mode
         resp = await self.get_position_mode()
         if resp is None:
             return None
         val = resp.get("dualSidePosition", False)
         if isinstance(val, str):
-            return val.lower() == "true"
-        return bool(val)
+            self._hedge_mode = val.lower() == "true"
+        else:
+            self._hedge_mode = bool(val)
+        self._last_hedge_mode_check = now
+        return self._hedge_mode
 
     async def set_leverage(self, symbol: str, leverage: int) -> dict | None:
         """设置合约杠杆倍数"""
@@ -280,65 +290,101 @@ class BinanceTrader:
             logger.info("✅ 杠杆设置成功: %s → %dx", symbol, resp["leverage"])
         return resp
 
-    async def place_market_order(self, symbol: str, side: str, quantity: float) -> dict | None:
+    async def place_market_order(self, symbol: str, side: str, quantity: float, position_side: str | None = None) -> dict | None:
         """市价开仓单"""
         qty = await self._quantity_param(symbol, quantity, market=True, enforce_notional=False)
         if not qty:
             return None
-        resp = await self._request("POST", "/fapi/v1/order", {
+        params = {
             "symbol": symbol,
             "side": side,
             "type": "MARKET",
             "quantity": qty,
-        })
+        }
+        if position_side:
+            params["positionSide"] = position_side
+        resp = await self._request("POST", "/fapi/v1/order", params)
         if resp and resp.get("orderId"):
             logger.info("✅ 市价单成功: %s %s %.6f (OrderID: %s)", symbol, side, quantity, resp["orderId"])
         return resp
 
-    async def place_reduce_only_market_order(self, symbol: str, side: str, quantity: float) -> dict | None:
+    async def place_reduce_only_market_order(self, symbol: str, side: str, quantity: float, position_side: str | None = None) -> dict | None:
         """只减仓市价单，供TP/SL/紧急平仓使用，避免状态延迟造成反向开仓。"""
         qty = await self._quantity_param(symbol, quantity, market=True, enforce_notional=False)
         if not qty:
             return None
-        resp = await self._request("POST", "/fapi/v1/order", {
+        params = {
             "symbol": symbol,
             "side": side,
             "type": "MARKET",
             "quantity": qty,
             "reduceOnly": "true",
-        })
+        }
+        if position_side:
+            params["positionSide"] = position_side
+        resp = await self._request("POST", "/fapi/v1/order", params)
         if resp and resp.get("orderId"):
             logger.info("✅ ReduceOnly 市价平仓: %s %s %.6f (OrderID: %s)", symbol, side, quantity, resp["orderId"])
         return resp
 
-    async def place_stop_loss_order(self, symbol: str, side: str, stop_price: float) -> dict | None:
-        """止损单（平仓市价止损）"""
+    async def place_stop_loss_order(self, symbol: str, side: str, stop_price: float, quantity: float | None = None, position_side: str | None = None) -> dict | None:
+        """止损单（平仓市价止损）。Hedge Mode 需传入 quantity + position_side，不使用 closePosition。"""
         stop = await self._price_param(symbol, stop_price)
         if not stop:
             return None
-        resp = await self._request("POST", "/fapi/v1/order", {
-            "symbol": symbol,
-            "side": side,
-            "type": "STOP_MARKET",
-            "stopPrice": stop,
-            "closePosition": "true",
-        })
+        hedge_mode = self._hedge_mode or False
+        if hedge_mode and position_side and quantity:
+            qty = await self._quantity_param(symbol, quantity, market=True, enforce_notional=False)
+            if not qty:
+                return None
+            resp = await self._request("POST", "/fapi/v1/order", {
+                "symbol": symbol,
+                "side": side,
+                "type": "STOP_MARKET",
+                "quantity": qty,
+                "stopPrice": stop,
+                "reduceOnly": "true",
+                "positionSide": position_side,
+            })
+        else:
+            resp = await self._request("POST", "/fapi/v1/order", {
+                "symbol": symbol,
+                "side": side,
+                "type": "STOP_MARKET",
+                "stopPrice": stop,
+                "closePosition": "true",
+            })
         if resp and resp.get("orderId"):
             logger.info("✅ 止损单成功: %s %s 触发价 %s", symbol, side, stop)
         return resp
 
-    async def place_take_profit_order(self, symbol: str, side: str, stop_price: float) -> dict | None:
-        """止盈单（平仓市价止盈）"""
+    async def place_take_profit_order(self, symbol: str, side: str, stop_price: float, quantity: float | None = None, position_side: str | None = None) -> dict | None:
+        """止盈单（平仓市价止盈）。Hedge Mode 需传入 quantity + position_side。"""
         stop = await self._price_param(symbol, stop_price)
         if not stop:
             return None
-        resp = await self._request("POST", "/fapi/v1/order", {
-            "symbol": symbol,
-            "side": side,
-            "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": stop,
-            "closePosition": "true",
-        })
+        hedge_mode = self._hedge_mode or False
+        if hedge_mode and position_side and quantity:
+            qty = await self._quantity_param(symbol, quantity, market=True, enforce_notional=False)
+            if not qty:
+                return None
+            resp = await self._request("POST", "/fapi/v1/order", {
+                "symbol": symbol,
+                "side": side,
+                "type": "TAKE_PROFIT_MARKET",
+                "quantity": qty,
+                "stopPrice": stop,
+                "reduceOnly": "true",
+                "positionSide": position_side,
+            })
+        else:
+            resp = await self._request("POST", "/fapi/v1/order", {
+                "symbol": symbol,
+                "side": side,
+                "type": "TAKE_PROFIT_MARKET",
+                "stopPrice": stop,
+                "closePosition": "true",
+            })
         if resp and resp.get("orderId"):
             logger.info("✅ 止盈单成功: %s %s 触发价 %s", symbol, side, stop)
         return resp
@@ -350,6 +396,7 @@ class BinanceTrader:
         activation_price: float,
         callback_rate: float,
         quantity: float,
+        position_side: str | None = None,
     ) -> dict | None:
         """追踪止损单"""
         qty = await self._quantity_param(symbol, quantity, market=True, enforce_notional=False)
@@ -357,7 +404,7 @@ class BinanceTrader:
         if not qty or not activ:
             return None
         callback = max(0.1, min(10.0, float(callback_rate)))
-        resp = await self._request("POST", "/fapi/v1/order", {
+        params = {
             "symbol": symbol,
             "side": side,
             "type": "TRAILING_STOP_MARKET",
@@ -365,7 +412,10 @@ class BinanceTrader:
             "callbackRate": f"{callback:.1f}",
             "quantity": qty,
             "reduceOnly": "true",
-        })
+        }
+        if position_side:
+            params["positionSide"] = position_side
+        resp = await self._request("POST", "/fapi/v1/order", params)
         if resp and resp.get("orderId"):
             logger.info(
                 "✅ 追踪止损单成功: %s %s 激活价 %s 回调 %.1f%%",
@@ -396,20 +446,23 @@ class BinanceTrader:
             raise RuntimeError("openOrders request failed")
         return resp
 
-    async def place_limit_ioc_order(self, symbol: str, side: str, quantity: float, price: float) -> dict | None:
+    async def place_limit_ioc_order(self, symbol: str, side: str, quantity: float, price: float, position_side: str | None = None) -> dict | None:
         """IOC 限价单（Immediate Or Cancel）— 防飞单追高核心机制"""
         qty = await self._quantity_param(symbol, quantity, market=False, price=price, enforce_notional=True)
         px = await self._price_param(symbol, price)
         if not qty or not px:
             return None
-        resp = await self._request("POST", "/fapi/v1/order", {
+        params = {
             "symbol":      symbol,
             "side":        side,
             "type":        "LIMIT",
             "timeInForce": "IOC",
             "quantity":    qty,
             "price":       px,
-        })
+        }
+        if position_side:
+            params["positionSide"] = position_side
+        resp = await self._request("POST", "/fapi/v1/order", params)
         if resp and resp.get("orderId"):
             filled = float(resp.get("executedQty", 0))
             status = resp.get("status", "")

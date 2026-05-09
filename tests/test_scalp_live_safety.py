@@ -35,19 +35,19 @@ class StopFailTrader:
     async def set_leverage(self, symbol, leverage):
         return {"symbol": symbol, "leverage": leverage}
 
-    async def place_limit_ioc_order(self, symbol, side, quantity, price):
+    async def place_limit_ioc_order(self, symbol, side, quantity, price, position_side=None):
         return {"orderId": 1, "executedQty": str(quantity), "avgPrice": "100", "status": "FILLED"}
 
-    async def place_stop_loss_order(self, symbol, side, stop_price):
+    async def place_stop_loss_order(self, symbol, side, stop_price, quantity=None, position_side=None):
         return None
 
-    async def place_reduce_only_market_order(self, symbol, side, quantity):
+    async def place_reduce_only_market_order(self, symbol, side, quantity, position_side=None):
         self.emergency_closed = True
         return {"orderId": 2}
 
 
 class StopAndEmergencyFailTrader(StopFailTrader):
-    async def place_reduce_only_market_order(self, symbol, side, quantity):
+    async def place_reduce_only_market_order(self, symbol, side, quantity, position_side=None):
         self.emergency_closed = True
         return None
 
@@ -67,7 +67,7 @@ class PositionSyncTrader:
         self.cancel_all_calls += 1
         return {"code": 200}
 
-    async def place_reduce_only_market_order(self, symbol, side, quantity):
+    async def place_reduce_only_market_order(self, symbol, side, quantity, position_side=None):
         self.reduce_calls.append((symbol, side, quantity))
         return self.reduce_resp or {"orderId": 9}
 
