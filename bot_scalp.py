@@ -2662,7 +2662,12 @@ class BinanceScalpBot:
             return
 
         lev_resp = await self.trader.set_leverage(symbol, leverage)
-        if not lev_resp:
+        if lev_resp is None and leverage > 5:
+            logger.warning("⚡ [%s] 杠杆%.0fx设置失败(子账户可能受限)，降级到5x重试", symbol, leverage)
+            lev_resp = await self.trader.set_leverage(symbol, 5)
+            if lev_resp and "leverage" in lev_resp:
+                leverage = 5
+        if not lev_resp or "leverage" not in lev_resp:
             logger.error("⚡ [%s] 杠杆设置失败，跳过真实开仓", symbol)
             return
 
