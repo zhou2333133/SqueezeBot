@@ -47,6 +47,14 @@ def record_trade(trade: dict) -> None:
         "market_state":   str(trade.get("market_state", "")),
         "paper":          bool(trade.get("paper", True)),
         "ts":             time.time(),
+        # ── 学习闭环字段 ─────────────────────────────────────────────────
+        "signal_id":      str(trade.get("signal_id") or ""),
+        "duration_sec":   _f(trade.get("duration_sec")),
+        "failure_tags":   list(trade.get("failure_tags") or trade.get("diagnosis_tags") or []),
+        "policy_version": str(trade.get("policy_version") or ""),
+        "order_plan":     trade.get("order_plan") or None,
+        "decision_trace": trade.get("decision_trace") or None,
+        "exec_result":    trade.get("exec_result") or None,
     }
     try:
         os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)

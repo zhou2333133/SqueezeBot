@@ -66,6 +66,28 @@ class _ExecResult:
     raw: dict | None = None
 
 
+
+def _make_signal_id(symbol: str, direction: str, entry_time: str, strategy_tag: str, entry_price: float) -> str:
+    """生成统一 signal_id。同一笔交易在 trade_history/diagnostics/strategy_trades 中一致。"""
+    import hashlib
+    try:
+        raw = f"{symbol}:{direction}:{entry_time}:{strategy_tag}:{entry_price}"
+        return hashlib.md5(raw.encode()).hexdigest()[:16]
+    except Exception:
+        return "UNKNOWN"
+
+
+def _parse_time(time_str: str) -> float:
+    """解析 "%Y-%m-%d %H:%M:%S" 为时间戳。失败返回 time.time()。"""
+    from datetime import datetime
+    try:
+        dt = datetime.strptime(str(time_str)[:19], "%Y-%m-%d %H:%M:%S")
+        return dt.timestamp()
+    except Exception:
+        import time
+        return time.time()
+
+
 class BinanceScalpBot:
     def __init__(self):
         self.open_positions:    dict[str, ScalpPosition] = {}
@@ -3272,9 +3294,47 @@ class BinanceScalpBot:
             "strategy_tag":   pos.strategy_tag,
             "leverage":     self.cfg.get("SCALP_LEVERAGE", 10),
             "quantity":     round(pos.quantity, 6),
+            # ── 学习闭环字段 ─────────────────────────────────────────────────
+            "signal_id":    _make_signal_id(pos.symbol, pos.direction, pos.entry_time,
+                                            pos.strategy_tag, pos.entry_price),
+            "duration_sec":  round(hold_minutes * 60, 1),
+            "policy_version": str(self.cfg.get("CONFIG_PROFILE_VERSION", "UNKNOWN")),
+            "order_plan": {
+                "side": pos.direction,
+                "entry_ref": round(pos.entry_price, 8),
+                "qty": round(pos.quantity, 6),
+                "notional_usdt": round(pos.entry_price * pos.quantity, 4),
+                "leverage": self.cfg.get("SCALP_LEVERAGE", 10),
+                "stop_loss": round(pos.sl_price, 8),
+                "take_profit_1": round(pos.tp1_price, 8),
+                "take_profit_2": round(pos.tp2_price, 8),
+            },
+            "exec_result": {
+                "success": close_reason not in ("PROTECTION_FAILED_FORCE_EXIT",),
+                "backend": "PAPER" if pos.paper else "LIVE",
+                "filled_qty": round(pos.quantity, 6),
+                "avg_price": round(exit_price, 8),
+                "order_id": getattr(pos, "sl_order_id", None),
+                "sl_order_id": getattr(pos, "sl_order_id", None),
+                "protection_failed": pos.protection_failed,
+                "protection_reason": pos.protection_reason,
+                "raw": None,
+            },
+            "decision_trace": {
+                "strategy_classifier": {"strategy_tag": pos.strategy_tag, "confidence": None},
+                "multi_tf_gate": None,
+                "single_coin_judge": None,
+                "risk_controller": {},
+                "base_signal": {},
+                "blocked_reason": "",
+            },
         }
         self._start_post_exit_watch(trade, pos, exit_price)
         apply_trade_diagnosis(trade)
+        # failure_tags 从 diagnosis_tags 提取
+        diag_tags = trade.get("diagnosis_tags") or trade.get("failure_tags") or []
+        if not trade.get("failure_tags"):
+            trade["failure_tags"] = [t for t in diag_tags if t != "good_trade"] if diag_tags else []
         add_scalp_trade(trade)
         try:
             from scanner.knowledge_base import record_trade_feedback
