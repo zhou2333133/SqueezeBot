@@ -98,6 +98,10 @@
         class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
         🔍 妖币扫描
       </button>
+      <button @click="mode='strategy'" :class="mode==='strategy'?'tab-sc-on':'tab-off'"
+        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
+        📊 策略统计
+      </button>
     </div>
 
     <div class="flex-1"></div>
@@ -2001,6 +2005,90 @@
 
 </div><!-- /yaobi -->
 
+<!-- ═══════════ STRATEGY STATS TAB ════════════════════════════════════════════ -->
+<div x-show="mode==='strategy'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
+
+  <!-- Control Bar -->
+  <div class="card px-5 py-4 flex flex-wrap items-center gap-4" style="border-color:rgba(96,165,250,.2)">
+    <div class="flex items-center gap-2.5">
+      <span class="text-lg">📊</span>
+      <span class="font-semibold text-blue-300">策略统计</span>
+      <span class="text-xs text-gray-600 ml-1">按 strategy_tag 分类</span>
+    </div>
+    <div class="flex items-center gap-2 ml-auto">
+      <span class="text-xs text-gray-500">模式</span>
+      <select class="inp w-auto text-xs py-1" x-model="strategyMode" @change="loadStrategyStats()"
+        style="border-color:#1a3a2a">
+        <option value="all">全部</option>
+        <option value="paper">模拟盘</option>
+        <option value="live">实盘</option>
+      </select>
+      <button @click="loadStrategyStats()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs font-medium">↻ 刷新</button>
+    </div>
+  </div>
+
+  <template x-if="Object.keys(strategyStats.strategies||{}).length===0">
+    <div class="card p-6 text-center text-gray-500 text-sm">暂无策略成交记录</div>
+  </template>
+
+  <template x-for="[tag, st] in Object.entries(strategyStats.strategies||{})" :key="tag">
+    <div class="card p-4 mb-3" style="border-color:rgba(96,165,250,.12)">
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-base">📈</span>
+          <span class="font-bold text-blue-300 text-sm" x-text="tag"></span>
+          <span class="text-xs text-gray-600" x-text="'共 '+st.total+' 笔'"></span>
+        </div>
+        <div class="flex items-center gap-4 text-xs">
+          <span :class="st.total_pnl>=0?'text-green-400':'text-red-400'"
+            x-text="'总盈亏 '+(st.total_pnl>=0?'+':'')+st.total_pnl.toFixed(2)+'U'"></span>
+          <span class="px-2 py-0.5 rounded text-xs font-bold"
+            :class="st.win_rate>=0.5?'bg-green-900/30 text-green-400':'bg-red-900/30 text-red-400'"
+            x-text="'胜率 '+(st.win_rate*100).toFixed(0)+'%'"></span>
+        </div>
+      </div>
+
+      <!-- Strategy stat cards -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        <div class="bg-[#08081c] rounded-lg p-2.5 border border-[#1c1c38]">
+          <div class="text-[10px] text-gray-600 uppercase tracking-wider">24h 盈亏</div>
+          <div class="text-sm font-bold mt-0.5" :class="st.pnl_24h>=0?'text-green-400':'text-red-400'"
+            x-text="(st.pnl_24h>=0?'+':'')+st.pnl_24h.toFixed(2)+'U'"></div>
+        </div>
+        <div class="bg-[#08081c] rounded-lg p-2.5 border border-[#1c1c38]">
+          <div class="text-[10px] text-gray-600 uppercase tracking-wider">7d 盈亏</div>
+          <div class="text-sm font-bold mt-0.5" :class="st.pnl_7d>=0?'text-green-400':'text-red-400'"
+            x-text="(st.pnl_7d>=0?'+':'')+st.pnl_7d.toFixed(2)+'U'"></div>
+        </div>
+        <div class="bg-[#08081c] rounded-lg p-2.5 border border-[#1c1c38]">
+          <div class="text-[10px] text-gray-600 uppercase tracking-wider">平均盈亏</div>
+          <div class="text-sm font-bold mt-0.5" :class="st.avg_pnl>=0?'text-green-400':'text-red-400'"
+            x-text="(st.avg_pnl>=0?'+':'')+st.avg_pnl.toFixed(2)+'U'"></div>
+        </div>
+        <div class="bg-[#08081c] rounded-lg p-2.5 border border-[#1c1c38]">
+          <div class="text-[10px] text-gray-600 uppercase tracking-wider">胜/负</div>
+          <div class="text-sm font-bold mt-0.5">
+            <span class="text-green-400" x-text="st.wins"></span>
+            <span class="text-gray-600"> / </span>
+            <span class="text-red-400" x-text="st.losses"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Failure reasons -->
+      <template x-if="st.top_failures && st.top_failures.length>0">
+        <div class="flex flex-wrap gap-1.5">
+          <span class="text-[10px] text-gray-600 mr-1">失败原因:</span>
+          <template x-for="f in st.top_failures" :key="f.reason">
+            <span class="px-2 py-0.5 rounded bg-red-900/15 text-red-400 text-[10px] border border-red-900/20"
+              x-text="f.reason+'('+f.count+')'"></span>
+          </template>
+        </div>
+      </template>
+    </div>
+  </template>
+
+</div><!-- /strategy -->
 
 </main>
 
@@ -2074,6 +2162,9 @@ function app() {
     yaobiPage: 1,
     filteredCandidates: [],
 
+    strategyStats: { strategies: {} },
+    strategyMode: 'all',
+
     scalpToggles: [
       { key:'SCALP_ENABLE_LONG',  label:'做多',   color:'text-green-400'  },
       { key:'SCALP_ENABLE_SHORT', label:'做空',   color:'text-red-400'    },
@@ -2101,6 +2192,7 @@ function app() {
       this.loadCsvSymbols()
       this.pollScalpStatus()
       this.pollYaobiStatus()
+      this.loadStrategyStats()
       this.loadYaobiCandidates()
       this.loadYaobiOpportunities()
       this.loadYaobiTiers()
@@ -2117,6 +2209,7 @@ function app() {
       setInterval(() => this.loadBalance(), 30000)
       this.loadScalpFilterStats()
       this.loadBalance()
+      setInterval(() => this.loadStrategyStats(), 15000)
       setInterval(() => this.loadFlashTrades(), 15000)
       setInterval(() => this.loadFlashReviews(), 15000)
       setInterval(() => this.loadFlashCandidates(), 30000)
@@ -2211,6 +2304,13 @@ function app() {
 
     async loadBalance() {
       try { const d=await(await this.apiFetch('/api/account/balance')).json(); if(d.asset) this.balance=d } catch{}
+    },
+
+    async loadStrategyStats() {
+      try {
+        const resp = await this.apiFetch(`/api/strategy/stats?mode=${this.strategyMode}`)
+        if (resp.ok) this.strategyStats = await resp.json()
+      } catch(e) { /* ignore */ }
     },
 
     async copyScalpReport() {
