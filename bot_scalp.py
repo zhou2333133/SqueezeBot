@@ -10,6 +10,7 @@ import json
 import logging
 import time
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -44,6 +45,25 @@ _MAJOR_SYMBOLS = frozenset({
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "TRXUSDT", "AVAXUSDT", "LINKUSDT",
 })
+
+
+@dataclass
+class _ExecResult:
+    """执行适配器统一返回值。PAPER/LIVE 共用。"""
+    success: bool = False
+    backend: str = "PAPER"           # PAPER / LIVE
+    status: str = ""                 # filled / partial / rejected / protection_failed
+    error: str = ""
+    filled_qty: float = 0.0
+    avg_price: float = 0.0
+    order_id: int | None = None
+    sl_order_id: int | None = None
+    protection_failed: bool = False
+    protection_reason: str = ""
+    fill_resp: dict | None = None
+    requested_qty: float = 0.0
+    requested_price: float = 0.0
+    raw: dict | None = None
 
 
 class BinanceScalpBot:
@@ -137,6 +157,128 @@ class BinanceScalpBot:
         logger.warning("⚡ 保护失败仓位已清空，真实自动开仓暂停状态解除")
         self._live_trading_suspended = False
         self._live_trading_suspended_reason = ""
+
+    async def _get_mark_price(self, symbol: str) -> float | None:
+        """统一行情价格：优先 WS live_candle，兜底 REST。PAPER/LIVE 共用。"""
+        live = self._live_candle.get(symbol, {})
+        for key in ("close", "c"):
+            price = self._as_float(live.get(key))
+            if price > 0:
+                return price
+        return await self._fetch_rest_price(symbol, timeout_sec=5)
+
+    async def _exec_cancel_all(self, symbol: str, is_paper: bool) -> None:
+        """撤单。PAPER：no-op；LIVE：trader.cancel_all_orders。"""
+        if not is_paper and self.trader:
+            try:
+                await self.trader.cancel_all_orders(symbol)
+            except Exception as e:
+                logger.debug("⚡ [%s] 撤单异常: %s", symbol, e)
+
+    async def _exec_close_qty(self, pos, exit_side: str, qty: float, pos_side: str, is_paper: bool) -> _ExecResult:
+        """平仓指定数量。PAPER：虚拟成交；LIVE：reduceOnly 市价单。"""
+        if is_paper:
+            return _ExecResult(success=True, backend="PAPER", filled_qty=qty,
+                               requested_qty=qty, status="filled")
+        if not self.trader:
+            return _ExecResult(success=False, backend="LIVE", error="trader_unavailable")
+        resp = await self.trader.place_reduce_only_market_order(pos.symbol, exit_side, qty, pos_side)
+        if resp and resp.get("orderId"):
+            filled = self._as_float(resp.get("executedQty"), qty)
+            avg = self._as_float(resp.get("avgPrice"))
+            return _ExecResult(success=True, backend="LIVE", status="filled",
+                               filled_qty=filled, avg_price=avg,
+                               order_id=resp["orderId"], fill_resp=resp,
+                               requested_qty=qty)
+        return _ExecResult(success=False, backend="LIVE", error="reduce_only_failed",
+                           requested_qty=qty)
+
+    async def _exec_replace_sl(self, pos, exit_side: str, new_sl: float, qty: float,
+                                pos_side: str, old_order_id: int | None, is_paper: bool) -> _ExecResult:
+        """原子替换止损单。PAPER：no-op；LIVE：cancel+place+fallback。"""
+        if is_paper or not self.trader:
+            return _ExecResult(success=True, backend="PAPER")
+        if old_order_id:
+            try:
+                await self.trader.cancel_order(pos.symbol, old_order_id)
+            except Exception as e:
+                logger.warning("⚡ [%s] 撤旧SL单异常: %s", pos.symbol, e)
+        resp = await self.trader.place_stop_loss_order(pos.symbol, exit_side, new_sl, qty, pos_side)
+        if resp and resp.get("orderId"):
+            return _ExecResult(success=True, backend="LIVE", sl_order_id=resp["orderId"],
+                               status="filled")
+        # fallback 到原 SL
+        logger.critical("⚡ [%s] 新SL挂单失败，紧急重挂原SL兜底", pos.symbol)
+        fallback = await self.trader.place_stop_loss_order(pos.symbol, exit_side, pos.sl_price, qty, pos_side)
+        if fallback and fallback.get("orderId"):
+            return _ExecResult(success=True, backend="LIVE", sl_order_id=fallback["orderId"],
+                               status="filled")
+        return _ExecResult(success=False, backend="LIVE", status="protection_failed",
+                           protection_failed=True,
+                           protection_reason=f"{pos.symbol}: sl_replace_failed")
+
+    async def _exec_open(self, symbol: str, direction: str, side: str, exit_s: str,
+                          entry_price: float, sl_price: float, quantity: float,
+                          leverage: int, pos_side: str, intended_risk_usdt: float,
+                          base_signal: dict, entry_context: dict,
+                          is_paper: bool, **kwargs) -> _ExecResult:
+        """统一开仓执行。PAPER：虚拟成交；LIVE：杠杆+IOC+SL+保护处理。"""
+        if is_paper:
+            return _ExecResult(success=True, backend="PAPER", status="filled",
+                               filled_qty=quantity, avg_price=entry_price,
+                               requested_qty=quantity, requested_price=entry_price)
+
+        # ── LIVE 路径 ──────────────────────────────────────────────────────
+        if not self.trader:
+            return _ExecResult(success=False, backend="LIVE", error="trader_uninitialized")
+        hedge_mode = await self.trader.is_hedge_mode()
+        if hedge_mode is None:
+            return _ExecResult(success=False, backend="LIVE", error="cannot_check_position_mode")
+        if hedge_mode:
+            logger.info("⚡ [%s] Hedge Mode → positionSide=%s", symbol, pos_side)
+
+        lev_resp = await self.trader.set_leverage(symbol, leverage)
+        if lev_resp is None and leverage > 5:
+            logger.warning("⚡ [%s] 杠杆%.0fx失败，降级到5x", symbol, leverage)
+            lev_resp = await self.trader.set_leverage(symbol, 5)
+            if lev_resp and "leverage" in lev_resp:
+                leverage = 5
+        if not lev_resp or "leverage" not in lev_resp:
+            return _ExecResult(success=False, backend="LIVE", error="leverage_set_failed")
+
+        ioc_price = entry_price * 1.003 if direction == "LONG" else entry_price * 0.997
+        trade_resp = await self.trader.place_limit_ioc_order(symbol, side, quantity, ioc_price, pos_side)
+        if not trade_resp:
+            return _ExecResult(success=False, backend="LIVE", error="ioc_order_failed")
+        filled_qty = self._as_float(trade_resp.get("executedQty", 0))
+        if filled_qty <= 0:
+            return _ExecResult(success=False, backend="LIVE", error="ioc_no_fill",
+                               status="rejected")
+        actual_entry = self._as_float(trade_resp.get("avgPrice") or entry_price)
+
+        sl_resp = await self.trader.place_stop_loss_order(symbol, exit_s, sl_price, filled_qty, pos_side)
+        sl_order_id = sl_resp.get("orderId") if sl_resp else None
+        protection_failed = False
+        protection_reason = ""
+        if not sl_order_id:
+            logger.critical("⚡ [%s] 止损单挂单失败，立即 reduceOnly 市价撤出", symbol)
+            emergency = await self.trader.place_reduce_only_market_order(symbol, exit_s, filled_qty, pos_side)
+            if emergency:
+                return _ExecResult(success=False, backend="LIVE", error="stop_loss_order_failed_emergency_closed",
+                                   status="protection_failed", fill_resp=emergency)
+            protection_failed = True
+            protection_reason = "stop_loss_order_failed_emergency_failed"
+            self._suspend_live_trading(f"{symbol}: {protection_reason}")
+            logger.critical("⚡ [%s] 紧急撤出失败，请人工检查交易所持仓", symbol)
+
+        return _ExecResult(success=True, backend="LIVE", status="filled",
+                           filled_qty=filled_qty, avg_price=actual_entry,
+                           order_id=trade_resp.get("orderId"),
+                           sl_order_id=sl_order_id,
+                           protection_failed=protection_failed,
+                           protection_reason=protection_reason,
+                           fill_resp=trade_resp,
+                           requested_qty=quantity, requested_price=entry_price)
 
     def _record_api_result(self, success: bool) -> None:
         """全局 API 熔断器：追踪连续失败次数，超过阈值暂停真实开仓。"""
@@ -1581,7 +1723,8 @@ class BinanceScalpBot:
         actual_price = price
         if is_real:
             exit_side = "SELL" if pos.direction == "LONG" else "BUY"
-            fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_side, pos.quantity_remaining, self._position_side(pos.direction))
+            em_result = await self._exec_close_qty(pos, exit_side, pos.quantity_remaining, self._position_side(pos.direction), pos.paper)
+            fill_resp = em_result.fill_resp
             if not fill_resp:
                 logger.error("⚡ [%s] 紧急平仓下单失败，保留本地仓位和保护单", symbol)
                 return False
@@ -2641,159 +2784,84 @@ class BinanceScalpBot:
 
         side   = "BUY"  if direction == "LONG" else "SELL"
         exit_s = "SELL" if direction == "LONG" else "BUY"
+        pos_side = self._position_side(direction)
 
-        # ── 模拟开仓 ──────────────────────────────────────────────────────
-        if paper_mode:
-            pos = ScalpPosition(
-                symbol             = symbol,
-                direction          = direction,
-                entry_price        = entry_price,
-                quantity           = quantity,
-                quantity_remaining = quantity,
-                sl_price           = sl_price,
-                tp1_price          = tp1_price,
-                tp2_price          = tp2_price,
-                current_price      = entry_price,
-                signal_label       = signal_label,
-                market_state       = market_state,
-                tp1_ratio          = tp1_ratio,
-                tp2_ratio          = tp2_ratio,
-                trail_pct          = cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
-                structure_trail_bars = int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
-                time_stop_minutes  = time_stop_minutes,
-                tp2_timeout_minutes = tp2_timeout_minutes,
-                risk_usdt          = actual_risk_usdt,
-                paper              = True,
-                entry_context      = entry_context,
-                strategy_tag       = strategy_tag,
-            )
-            self.open_positions[symbol] = pos
-            set_scalp_position(symbol, pos.to_dict())
-            add_scalp_signal({**base_signal, "auto_traded": True, "paper": True,
-                              "quantity": round(quantity, 6), "leverage": leverage})
-            logger.info("⚡ [%s] 📋 模拟开仓 %s ×%.6f @ %.6f | SL %.6f | TP1 %.6f | TP2 %.6f",
-                        symbol, direction, quantity, entry_price, sl_price, tp1_price, tp2_price)
-            return
-
-        # ── 真实开仓（IOC 限价单，防飞单追高）─────────────────────────────
-        if not self.trader:
-            logger.error("⚡ [%s] 真实开仓失败：交易模块未初始化", symbol)
-            return
-
-        hedge_mode = await self.trader.is_hedge_mode()
-        pos_side = self._position_side(direction)  # Hedge Mode 需要；One-way 忽略
-        if hedge_mode:
-            logger.info("⚡ [%s] Hedge Mode 检测到 → 下单自动添加 positionSide=%s", symbol, pos_side)
-        elif hedge_mode is None:
-            logger.error("⚡ [%s] 真实开仓跳过：无法确认账户持仓模式，避免 Hedge/One-way 参数错配", symbol)
-            return
-
-        lev_resp = await self.trader.set_leverage(symbol, leverage)
-        if lev_resp is None and leverage > 5:
-            logger.warning("⚡ [%s] 杠杆%.0fx设置失败(子账户可能受限)，降级到5x重试", symbol, leverage)
-            lev_resp = await self.trader.set_leverage(symbol, 5)
-            if lev_resp and "leverage" in lev_resp:
-                leverage = 5
-        if not lev_resp or "leverage" not in lev_resp:
-            logger.error("⚡ [%s] 杠杆设置失败，跳过真实开仓", symbol)
-            return
-
-        ioc_price  = entry_price * 1.003 if direction == "LONG" else entry_price * 0.997
-        trade_resp = await self.trader.place_limit_ioc_order(symbol, side, quantity, ioc_price, pos_side)
-        if not trade_resp:
-            logger.error("⚡ [%s] IOC限价单请求失败", symbol)
-            return
-        filled_qty = float(trade_resp.get("executedQty", 0))
-        if filled_qty <= 0:
-            logger.info("⚡ [%s] IOC未成交（行情飞跃超过0.3%%滑点），信号作废", symbol)
-            return
-
-        actual      = float(trade_resp.get("avgPrice") or entry_price)
-        entry_price = actual if actual > 0 else entry_price
-        quantity    = filled_qty  # 使用实际成交量
-        sl_distance_pct = abs(entry_price - sl_price) / entry_price * 100 if entry_price > 0 else sl_distance_pct
-        actual_risk_usdt = (
-            entry_price * quantity * sl_distance_pct / 100
-            if sl_distance_pct > 0 else intended_risk_usdt
+        # ── 统一执行（PAPER/LIVE 通过 _exec_open 适配）────────────────────
+        result = await self._exec_open(
+            symbol, direction, side, exit_s, entry_price, sl_price,
+            quantity, leverage, pos_side, intended_risk_usdt,
+            base_signal, entry_context,
+            is_paper=paper_mode,
+            tp1_ratio=tp1_ratio, tp2_ratio=tp2_ratio,
+            trail_pct=cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
+            structure_trail_bars=int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
+            time_stop_minutes=time_stop_minutes,
+            tp2_timeout_minutes=tp2_timeout_minutes,
+            actual_risk_usdt=actual_risk_usdt,
+            strategy_tag=strategy_tag,
         )
-        tp1_dist = sl_distance_pct * cfg.get("SCALP_TP1_RR", 1.2)
-        tp2_dist = sl_distance_pct * cfg.get("SCALP_TP2_RR", 3.0)
-        if direction == "LONG":
-            tp1_price = entry_price * (1 + tp1_dist / 100)
-            tp2_price = entry_price * (1 + tp2_dist / 100)
-        else:
-            tp1_price = entry_price * (1 - tp1_dist / 100)
-            tp2_price = entry_price * (1 - tp2_dist / 100)
-        base_signal.update({
-            "entry_price": round(entry_price, 8),
-            "tp1_price": round(tp1_price, 8),
-            "tp2_price": round(tp2_price, 8),
-            "quantity": round(quantity, 6),
-            "risk_usdt_actual": round(actual_risk_usdt, 4),
-        })
+        if not result.success:
+            # 保护失败且已市价撤出：记录信号但不建仓
+            if result.status == "protection_failed" and result.fill_resp:
+                add_scalp_signal({**base_signal, "auto_traded": False, "paper": paper_mode,
+                                  "rejected_reason": result.error})
+            return
 
-        sl_resp     = await self.trader.place_stop_loss_order(symbol, exit_s, sl_price, quantity, pos_side)
-        sl_order_id = sl_resp.get("orderId") if sl_resp else None
-        protection_failed = False
-        protection_reason = ""
-        if not sl_order_id:
-            logger.critical("⚡ [%s] 交易所止损单挂单失败，立即 reduceOnly 市价撤出，禁止裸仓继续运行", symbol)
-            emergency_resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, quantity, pos_side)
-            if emergency_resp:
-                add_scalp_signal({**base_signal, "auto_traded": False, "paper": False,
-                                  "order_id": trade_resp.get("orderId"),
-                                  "rejected_reason": "stop_loss_order_failed_emergency_closed"})
-                logger.critical("⚡ [%s] 裸仓保护已执行：真实仓位已 reduceOnly 市价撤出", symbol)
-                return
-            protection_failed = True
-            protection_reason = "stop_loss_order_failed_emergency_failed"
-            self._suspend_live_trading(f"{symbol}: {protection_reason}")
-            logger.critical("⚡ [%s] 裸仓紧急撤出失败：纳入故障仓位监控并持续重试撤出，请人工检查交易所持仓", symbol)
+        # ── 统一后处理 ────────────────────────────────────────────────────
+        actual_entry = result.avg_price or entry_price
+        actual_qty   = result.filled_qty or quantity
+        sl_dist = abs(actual_entry - sl_price) / actual_entry * 100 if actual_entry > 0 else sl_distance_pct
+        t1 = sl_dist * cfg.get("SCALP_TP1_RR", 1.2)
+        t2 = sl_dist * cfg.get("SCALP_TP2_RR", 3.0)
+        if direction == "LONG":
+            tp1 = actual_entry * (1 + t1 / 100)
+            tp2 = actual_entry * (1 + t2 / 100)
+        else:
+            tp1 = actual_entry * (1 - t1 / 100)
+            tp2 = actual_entry * (1 - t2 / 100)
+        actual_risk = actual_entry * actual_qty * sl_dist / 100 if sl_dist > 0 else intended_risk_usdt
 
         pos = ScalpPosition(
-            symbol             = symbol,
-            direction          = direction,
-            entry_price        = entry_price,
-            quantity           = quantity,
-            quantity_remaining = quantity,
-            sl_price           = sl_price,
-            tp1_price          = tp1_price,
-            tp2_price          = tp2_price,
-            sl_order_id        = sl_order_id,
-            current_price      = entry_price,
-            signal_label       = signal_label,
-            market_state       = market_state,
-            tp1_ratio          = tp1_ratio,
-            tp2_ratio          = tp2_ratio,
-            trail_pct          = cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
-            structure_trail_bars = int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
-            time_stop_minutes  = time_stop_minutes,
-            tp2_timeout_minutes = tp2_timeout_minutes,
-            risk_usdt          = actual_risk_usdt,
-            paper              = False,
-            entry_context      = entry_context,
-            protection_failed  = protection_failed,
-            protection_reason  = protection_reason,
-            strategy_tag       = strategy_tag,
+            symbol=symbol, direction=direction,
+            entry_price=actual_entry, quantity=actual_qty,
+            quantity_remaining=actual_qty,
+            sl_price=sl_price, tp1_price=tp1, tp2_price=tp2,
+            sl_order_id=result.sl_order_id,
+            current_price=actual_entry,
+            signal_label=signal_label, market_state=market_state,
+            tp1_ratio=tp1_ratio, tp2_ratio=tp2_ratio,
+            trail_pct=cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
+            structure_trail_bars=int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
+            time_stop_minutes=time_stop_minutes,
+            tp2_timeout_minutes=tp2_timeout_minutes,
+            risk_usdt=actual_risk,
+            paper=paper_mode,
+            entry_context=entry_context,
+            protection_failed=result.protection_failed,
+            protection_reason=result.protection_reason,
+            strategy_tag=strategy_tag,
         )
         self.open_positions[symbol] = pos
         set_scalp_position(symbol, pos.to_dict())
-        signal_payload = {**base_signal, "auto_traded": True, "paper": False,
-                          "quantity": round(quantity, 6), "leverage": leverage,
-                          "order_id": trade_resp.get("orderId")}
-        if protection_failed:
-            signal_payload.update({
-                "protection_failed": True,
-                "rejected_reason": protection_reason,
-                "requires_manual_attention": True,
-            })
+
+        signal_payload = {**base_signal, "auto_traded": True, "paper": paper_mode,
+                          "quantity": round(actual_qty, 6), "leverage": leverage,
+                          "entry_price": round(actual_entry, 8),
+                          "tp1_price": round(tp1, 8), "tp2_price": round(tp2, 8),
+                          "risk_usdt_actual": round(actual_risk, 4)}
+        if result.order_id:
+            signal_payload["order_id"] = result.order_id
+        if result.protection_failed:
+            signal_payload.update({"protection_failed": True, "rejected_reason": result.protection_reason,
+                                   "requires_manual_attention": True})
             add_scalp_signal(signal_payload)
-            logger.critical("⚡ [%s] 开仓已成交但保护失败 %s ×%.6f @ %.6f | 本地SL %.6f | 自动开仓暂停",
-                            symbol, direction, quantity, entry_price, sl_price)
+            logger.critical("⚡ [%s] 开仓已成交但保护失败 %s ×%.6f @ %.6f | 自动开仓暂停",
+                            symbol, direction, actual_qty, actual_entry)
         else:
             add_scalp_signal(signal_payload)
-            logger.info("⚡ [%s] 开仓成功 %s ×%.6f @ %.6f | SL %.6f | TP1 %.6f | TP2 %.6f",
-                        symbol, direction, quantity, entry_price, sl_price, tp1_price, tp2_price)
+            tag = "📋 " if paper_mode else ""
+            logger.info("⚡ [%s] %s开仓成功 %s ×%.6f @ %.6f | SL %.6f | TP1 %.6f | TP2 %.6f",
+                        symbol, tag, direction, actual_qty, actual_entry, sl_price, tp1, tp2)
 
     # ─── TP / SL 实时检查 ──────────────────────────────────────────────────────
 
@@ -3191,16 +3259,13 @@ class BinanceScalpBot:
             return False
 
         async def _close_remaining(reason: str) -> bool:
-            fill_resp: dict | None = None
-            actual_price = price
-            if not is_paper and auto and self.trader:
-                fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, pos.quantity_remaining, pos_side)
-                if not fill_resp:
-                    logger.error("⚡ [%s] %s平仓失败，保留本地仓位等待下一次检查", symbol, reason)
-                    return False
-                actual_price = self._actual_fill_price(fill_resp, price)
-                await self.trader.cancel_all_orders(symbol)
-            self._record_scalp_trade(pos, actual_price, reason, fill_resp=fill_resp)
+            result = await self._exec_close_qty(pos, exit_s, pos.quantity_remaining, pos_side, is_paper)
+            if not result.success:
+                logger.error("⚡ [%s] %s平仓失败，保留本地仓位等待下一次检查", symbol, reason)
+                return False
+            actual_price = result.avg_price or price
+            await self._exec_cancel_all(symbol, is_paper)
+            self._record_scalp_trade(pos, actual_price, reason, fill_resp=result.fill_resp)
             del self.open_positions[symbol]
             set_scalp_position(symbol, None)
             self._clear_live_trading_suspension_if_safe()
@@ -3254,29 +3319,18 @@ class BinanceScalpBot:
             if cfg.get("SCALP_SKIP_TP1_IN_STRONG_TREND", False) and (
                (pos.direction == "LONG"  and tp_trend == "WATERFALL_UP") or
                (pos.direction == "SHORT" and tp_trend == "WATERFALL_DOWN")):
-                new_sl              = self._breakeven_price(pos)
-                if not is_paper and auto and self.trader:
-                    old_sl_order_id = pos.sl_order_id
-                    if old_sl_order_id:
-                        try:
-                            await self.trader.cancel_order(symbol, old_sl_order_id)
-                        except Exception as e:
-                            logger.warning("⚡ [%s] 撤旧SL单异常: %s", symbol, e)
-                    sl_resp = await self.trader.place_stop_loss_order(symbol, exit_s, new_sl, pos.quantity_remaining, pos_side)
-                    if sl_resp and sl_resp.get("orderId"):
-                        pos.sl_order_id = sl_resp["orderId"]
-                    else:
-                        logger.critical("⚡ [%s] 飞升保本SL挂单失败，紧急重挂原SL兜底", symbol)
-                        fallback = await self.trader.place_stop_loss_order(symbol, exit_s, pos.sl_price, pos.quantity_remaining, pos_side)
-                        if fallback and fallback.get("orderId"):
-                            pos.sl_order_id = fallback["orderId"]
-                        else:
-                            pos.sl_order_id = None
-                            pos.protection_failed = True
-                            pos.protection_reason = "skip_tp1_sl_replace_failed"
-                            self._suspend_live_trading(f"{symbol}: skip_tp1_sl_replace_failed")
-                            logger.critical("⚡ [%s] 原SL兜底重挂失败，标记 protection_failed", symbol)
-                            return
+                new_sl = self._breakeven_price(pos)
+                sl_result = await self._exec_replace_sl(pos, exit_s, new_sl, pos.quantity_remaining, pos_side, pos.sl_order_id, is_paper)
+                if sl_result.success:
+                    pos.sl_order_id = sl_result.sl_order_id
+                else:
+                    pos.sl_order_id = None
+                    if sl_result.protection_failed:
+                        pos.protection_failed = True
+                        pos.protection_reason = sl_result.protection_reason
+                        self._suspend_live_trading(f"{symbol}: {sl_result.protection_reason}")
+                        logger.critical("⚡ [%s] SL替换失败，标记 protection_failed", symbol)
+                        return
                 pos.sl_price        = new_sl
                 pos.tp1_hit         = True
                 pos.tp2_hit         = True
@@ -3287,42 +3341,25 @@ class BinanceScalpBot:
                 return
             qty     = pos.quantity * tp1_ratio
             new_sl  = self._tp1_soft_breakeven_price(pos)
-            if is_paper:
-                segment = self._apply_close_segment(pos, price, qty)
-                pos.tp1_hit = True
+            # 统一 TP1 执行
+            tp1_close = await self._exec_close_qty(pos, exit_s, qty, pos_side, is_paper)
+            if not tp1_close.success:
+                logger.error("⚡ [%s] TP1减仓失败，保留本地仓位等待下一次检查", symbol)
+                return
+            segment = self._apply_close_segment(pos, price, qty, fill_resp=tp1_close.fill_resp)
+            pos.tp1_hit = True
+            # 统一 SL 替换
+            sl_result = await self._exec_replace_sl(pos, exit_s, new_sl, pos.quantity_remaining, pos_side, pos.sl_order_id, is_paper)
+            if sl_result.success:
+                pos.sl_order_id = sl_result.sl_order_id
                 pos.sl_price = new_sl
-            elif auto:
-                resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty, pos_side)
-                if not resp:
-                    logger.error("⚡ [%s] TP1减仓失败，保留本地仓位等待下一次检查", symbol)
-                    return
-                segment = self._apply_close_segment(pos, price, qty, fill_resp=resp)
-                pos.tp1_hit = True
-                # 原子替换：先撤旧 SL，再挂新 SL；若挂新失败立即重挂原 SL 兜底
-                old_sl_order_id = pos.sl_order_id
-                if old_sl_order_id:
-                    try:
-                        await self.trader.cancel_order(symbol, old_sl_order_id)
-                    except Exception as e:
-                        logger.warning("⚡ [%s] 撤旧SL单异常: %s", symbol, e)
-                sl_resp = await self.trader.place_stop_loss_order(symbol, exit_s, new_sl)
-                if sl_resp and sl_resp.get("orderId"):
-                    pos.sl_order_id = sl_resp["orderId"]
-                    pos.sl_price    = new_sl
-                else:
-                    logger.critical("⚡ [%s] TP1后软保本SL挂单失败，紧急重挂原SL兜底", symbol)
-                    fallback = await self.trader.place_stop_loss_order(symbol, exit_s, pos.sl_price)
-                    if fallback and fallback.get("orderId"):
-                        pos.sl_order_id = fallback["orderId"]
-                    else:
-                        pos.sl_order_id = None
-                        pos.protection_failed = True
-                        pos.protection_reason = "tp1_sl_replace_failed"
-                        self._suspend_live_trading(f"{symbol}: tp1_sl_replace_failed")
-                        logger.critical("⚡ [%s] 原SL兜底重挂失败，标记 protection_failed", symbol)
             else:
-                segment = {"net": 0.0}
-                pos.tp1_hit = True
+                pos.sl_order_id = None
+                if sl_result.protection_failed:
+                    pos.protection_failed = True
+                    pos.protection_reason = sl_result.protection_reason
+                    self._suspend_live_trading(f"{symbol}: {sl_result.protection_reason}")
+                    logger.critical("⚡ [%s] SL替换失败，标记 protection_failed", symbol)
             pct_margin = segment["net"] / (pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)) * 100
             logger.info("⚡ [%s] %s🟡 TP1 @ %.6f | 锁%.0f%%仓 | 净保证金+%.1f%% | SL→软保本 %.6f",
                         symbol, tag, price, tp1_ratio * 100, pct_margin, new_sl)
@@ -3330,19 +3367,13 @@ class BinanceScalpBot:
 
         # ── TP2：再锁一部分，剩余大头进入EMA20/结构追踪 ──────────────────
         elif pos.tp1_hit and not pos.tp2_hit and _tp_confirmed(pos.tp2_price, "tp2_pending_hits"):
-            qty     = pos.quantity * tp2_ratio
-            if is_paper:
-                self._apply_close_segment(pos, price, qty)
-                pos.tp2_hit = True
-            elif auto:
-                resp = await self.trader.place_reduce_only_market_order(symbol, exit_s, qty, pos_side)
-                if not resp:
-                    logger.error("⚡ [%s] TP2减仓失败，保留本地仓位等待下一次检查", symbol)
-                    return
-                self._apply_close_segment(pos, price, qty, fill_resp=resp)
-                pos.tp2_hit = True
-            else:
-                pos.tp2_hit = True
+            qty = pos.quantity * tp2_ratio
+            tp2_close = await self._exec_close_qty(pos, exit_s, qty, pos_side, is_paper)
+            if not tp2_close.success:
+                logger.error("⚡ [%s] TP2减仓失败，保留本地仓位等待下一次检查", symbol)
+                return
+            self._apply_close_segment(pos, price, qty, fill_resp=tp2_close.fill_resp)
+            pos.tp2_hit = True
             pos.trail_ref_price = price
             margin_base = pos.entry_price * pos.quantity / cfg.get("SCALP_LEVERAGE", 10)
             pct_margin = pos.realized_pnl / margin_base * 100 if margin_base > 0 else 0.0
@@ -3643,17 +3674,14 @@ class BinanceScalpBot:
         if not pos.paper:
             if not self.trader:
                 return {"status": "error", "message": "真实仓位平仓需要机器人运行并完成交易所连接"}
-            fill_resp = await self.trader.place_reduce_only_market_order(symbol, exit_side, qty, self._position_side(pos.direction))
-            if not fill_resp:
+            mclose_result = await self._exec_close_qty(pos, exit_side, qty, self._position_side(pos.direction), pos.paper)
+            if not mclose_result.success:
                 return {"status": "error", "message": f"{symbol} reduceOnly 平仓失败，未修改本地仓位"}
+            fill_resp = mclose_result.fill_resp
         segment = self._apply_close_segment(pos, exit_price, qty, fill_resp=fill_resp)
         closed_pct = segment["qty"] / max(pos.quantity, 1e-12) * 100.0
         if pos.quantity_remaining <= max(pos.quantity * 1e-8, 1e-12):
-            if not pos.paper and self.trader:
-                try:
-                    await self.trader.cancel_all_orders(symbol)
-                except Exception as e:
-                    logger.debug("⚡ [%s] 手动全平后撤残单异常: %s", symbol, e)
+            await self._exec_cancel_all(symbol, pos.paper)
             self._record_scalp_trade(pos, segment["actual_exit"], reason, fill_resp=fill_resp)
             self.open_positions.pop(symbol, None)
             set_scalp_position(symbol, None)
@@ -3688,30 +3716,18 @@ class BinanceScalpBot:
                     if not pos:
                         continue
 
-                price: float | None
-                stale_used = False
-                if pos.paper:
+                price = await self._get_mark_price(symbol)
+                if price is None or price <= 0:
                     price = self._latest_known_price(pos)
-                    stale_after = float(self.cfg.get("SCALP_POSITION_STALE_SECONDS", 60) or 60)
-                    stale_used = (time.monotonic() - pos.last_price_ts) > stale_after
-                else:
-                    if not (self.trader and self.cfg.get("SCALP_AUTO_TRADE", False)):
+                    if price is None or price <= 0:
                         continue
-                    price = await self._fetch_rest_price(symbol, timeout_sec=5)
-                    if price is None:
-                        logger.warning("⚡ [%s] 仓位周期检查跳过：无法获取REST最新价，避免用陈旧价处理真实仓", symbol)
-                        continue
-
-                if price and price > 0:
-                    pos.current_price = price
-                    if not pos.paper:
-                        pos.last_price_ts = time.monotonic()
-                    pos.stale_position_check_used = stale_used
-                    await self._check_tp_sl(symbol, price)
-                    current = self.open_positions.get(symbol)
-                    if current:
-                        current.stale_position_check_used = stale_used
-                        set_scalp_position(symbol, current.to_dict())
+                pos.current_price = price
+                if self.trader and not pos.paper:
+                    pos.last_price_ts = time.monotonic()
+                await self._check_tp_sl(symbol, price)
+                current = self.open_positions.get(symbol)
+                if current:
+                    set_scalp_position(symbol, current.to_dict())
             except Exception as e:
                 logger.debug("⚡ 仓位同步异常 [%s]: %s", symbol, e)
 
