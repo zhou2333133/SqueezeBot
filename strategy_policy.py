@@ -151,3 +151,91 @@ def is_last_strategy(eng_key: str, cfg: dict | None = None) -> bool:
 def set_config_value(cfg: dict, dotted_key: str, value: Any) -> None:
     """支持 dotted key 写入配置。如 STRATEGY_WEIGHTS.STARTUP=0.7。"""
     cfg[dotted_key] = value
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 权重准入逻辑
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_strategy_weight_to_signal(signal: dict, strategy_tag: str, cfg: dict | None = None) -> dict:
+    """让 STRATEGY_WEIGHTS 真实影响信号准入。
+    
+    逻辑：
+      - weight = 0 → BLOCK
+      - weight < 1.0 → 降低通过率（提高准入要求）
+      - weight > 1.0 → 提高通过率（降低准入要求）
+      - weight = 1.0 → 正常
+    """
+    if cfg is None:
+        cfg = config_manager.settings
+    eng_key = normalize_strategy_tag(strategy_tag)
+    weight = get_strategy_weight(strategy_tag, cfg)
+    enabled = get_strategy_enabled(strategy_tag, cfg)
+
+    result = {
+        "raw_score": None,
+        "weight": weight,
+        "weighted_score": None,
+        "required_score": None,
+        "action": "ALLOW",
+        "reason": "",
+    }
+
+    if not enabled:
+        result["action"] = "BLOCK"
+        result["reason"] = "STRATEGY_DISABLED_BY_EVOLVER"
+        return result
+
+    if weight <= 0:
+        result["action"] = "BLOCK"
+        result["reason"] = "STRATEGY_WEIGHT_ZERO"
+        return result
+
+    # 尝试从 signal/intent 中找到可用分数
+    raw_score = _extract_raw_score(signal)
+    result["raw_score"] = raw_score
+
+    if raw_score is not None:
+        weighted_score = round(raw_score * weight, 2)
+        result["weighted_score"] = weighted_score
+        # 基础要求分 = 50（无其他分数时保守基线）
+        base_required = 50
+        # 权重越低，required 越高
+        effective_required = round(base_required / max(weight, 0.1), 2)
+        result["required_score"] = effective_required
+
+        if weighted_score < effective_required:
+            result["action"] = "BLOCK"
+            result["reason"] = f"WEIGHTED_SCORE_BELOW_REQUIRED (w={weight}, ws={weighted_score} < r={effective_required})"
+            return result
+    else:
+        # 无分数：用 weight 做准入概率采样
+        # weight >= 1.0 → 全部 ALLOW
+        # weight < 1.0 → 概率拒绝
+        if weight < 1.0:
+            # 暂时只记录，不强制 BLOCK（未来可改为概率采样）
+            result["reason"] = f"NO_SCORE_WEIGHT_RECORDED_ONLY (w={weight})"
+        else:
+            result["reason"] = "NO_SCORE_WEIGHT_NEUTRAL"
+
+    return result
+
+
+def _extract_raw_score(signal: dict) -> float | None:
+    """从 signal 中提取最接近的分数。"""
+    candidates = [
+        signal.get("score"),
+        signal.get("confidence"),
+        signal.get("tier_score"),
+        signal.get("signal_score"),
+        signal.get("opportunity_score"),
+        signal.get("strategy_confidence"),
+    ]
+    for c in candidates:
+        try:
+            v = float(c) if c is not None else None
+            if v is not None and 0 <= v <= 100:
+                return v
+        except (TypeError, ValueError):
+            continue
+    return None

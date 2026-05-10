@@ -175,11 +175,8 @@ class ConfigManager:
         "SCALP_RISK_PER_TRADE_USDT",
     })
 
-    # ── 无效进化参数（PARAM_BOUNDS 中定义但代码未读取，禁止 Evolver 修改）──
-    INEFFECTIVE_PARAMS = frozenset({
-        "STRATEGY_OI爆发_MIN_OI_CHANGE_15M",
-        "STRATEGY_静默建仓_MIN_OI_CHANGE_1H",
-    })
+    # ── 无效进化参数（当前无无效参数）──
+    INEFFECTIVE_PARAMS = frozenset()
 
     # ── 进化策略允许修改的参数边界 ─────────────────────────────────────────
     # {key: [min, max]} 只有在此列表中的参数才允许自动修改
@@ -229,13 +226,11 @@ class ConfigManager:
         "STRATEGY_启动型_MAX_PRICE_CHANGE_1H":  [0.1,  8.0],
         "STRATEGY_启动型_MIN_VOL_RATIO":       [0.5,  5.0],
         "STRATEGY_启动型_MIN_OI_CHANGE_15M":    [0.1,  5.0],
-        "STRATEGY_OI爆发_MIN_OI_CHANGE_15M":    [0.5, 10.0],
         "STRATEGY_OI爆发_MIN_OI_CHANGE_1H":     [1.0, 20.0],
         "STRATEGY_OI爆发_MIN_VOL_RATIO":        [0.5,  8.0],
         "STRATEGY_OI爆发_MAX_PRICE_CHANGE_15M": [0.5, 10.0],
         "STRATEGY_静默建仓_MAX_PRICE_CHANGE_15M":[0.1,  3.0],
         "STRATEGY_静默建仓_MIN_OI_CHANGE_15M":  [0.05, 3.0],
-        "STRATEGY_静默建仓_MIN_OI_CHANGE_1H":   [0.1,  8.0],
         "STRATEGY_突破前夜_MIN_OI_CHANGE_15M":  [0.1,  5.0],
         "STRATEGY_突破前夜_MIN_VOL_RATIO":      [0.5,  5.0],
         "STRATEGY_早期启动_MIN_PRICE_CHANGE_15M":[0.1,  5.0],

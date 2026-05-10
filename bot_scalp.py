@@ -86,6 +86,25 @@ def _compute_cfg_hash(cfg: dict) -> str:
         return "UNKNOWN"
 
 
+def _log_blocked_signal(symbol, direction, strategy_tag, reason, policy_result, cfg):
+    """记录被策略策略拦截的信号到 blocked_signals.jsonl。"""
+    try:
+        from persistence import append_jsonl
+        from config import DATA_DIR
+        import time
+        append_jsonl(os.path.join(DATA_DIR, "blocked_signals.jsonl"), {
+            "symbol": symbol, "side": direction,
+            "strategy_tag": strategy_tag, "blocked_reason": reason,
+            "policy_version": str(cfg.get("POLICY_VERSION", "")),
+            "config_hash": str(cfg.get("config_hash", "")),
+            "strategy_weight": policy_result.get("weight", 1.0) if isinstance(policy_result, dict) else 1.0,
+            "decision_trace": {"strategy_policy": policy_result} if isinstance(policy_result, dict) else {},
+            "timestamp": time.time(),
+        })
+    except Exception:
+        pass
+
+
 def _parse_time(time_str: str) -> float:
     """解析 "%Y-%m-%d %H:%M:%S" 为时间戳。失败返回 time.time()。"""
     from datetime import datetime
@@ -2805,7 +2824,7 @@ class BinanceScalpBot:
         # ── 策略策略（Evolver 控制启停/权重）────────────────────────────────────
         _policy_result = None
         try:
-            from strategy_policy import apply_strategy_policy
+            from strategy_policy import apply_strategy_policy, apply_strategy_weight_to_signal
             _policy_result = apply_strategy_policy(strategy_tag, base_signal, cfg)
             base_signal["strategy_policy"] = _policy_result
             if _policy_result.get("action") == "BLOCK":
@@ -2813,20 +2832,18 @@ class BinanceScalpBot:
                 _policy_result["blocked_reason"] = reason
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": reason})
-                try:
-                    from persistence import append_jsonl
-                    import os
-                    from config import DATA_DIR
-                    append_jsonl(os.path.join(DATA_DIR, "blocked_signals.jsonl"), {
-                        "signal_id": "", "symbol": symbol, "side": direction,
-                        "strategy_tag": strategy_tag, "blocked_reason": reason,
-                        "policy_version": str(cfg.get("POLICY_VERSION", "")),
-                        "decision_trace": {"strategy_policy": _policy_result},
-                        "timestamp": __import__("time").time(),
-                    })
-                except Exception:
-                    pass
                 logger.info("⚡ [%s] ❌ 策略 %s 已禁用，跳过开仓", symbol, strategy_tag)
+                return
+            # 权重准入检查
+            _weight_result = apply_strategy_weight_to_signal(base_signal, strategy_tag, cfg)
+            base_signal["strategy_weight_result"] = _weight_result
+            if _weight_result.get("action") == "BLOCK":
+                _wreason = _weight_result.get("reason", "WEIGHT_BLOCKED")
+                _policy_result["action"] = "BLOCK"
+                _policy_result["reason"] = _wreason
+                add_scalp_signal({**base_signal, "auto_traded": False,
+                                  "rejected_reason": _wreason})
+                logger.info("⚡ [%s] ❌ 权重准入拦截 %s: %s", symbol, strategy_tag, _wreason)
                 return
         except Exception as e:
             logger.debug("⚡ [%s] 策略策略异常 (不影响交易): %s", symbol, e)

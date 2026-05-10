@@ -843,3 +843,92 @@ def run_evolution_auto():
         logger.error("Evolver auto error: %s", e, exc_info=True)
         result["reason"] = f"exception:{e}"
         return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 17. blocked_signals 读取 + 过度过滤保护
+# ══════════════════════════════════════════════════════════════════════════════
+def load_blocked_signals() -> list[dict]:
+    """读取 blocked_signals.jsonl。"""
+    path = os.path.join(DATA_DIR, "blocked_signals.jsonl")
+    return _read_jsonl(path)
+
+
+def compute_blocked_signal_stats(blocked: list[dict]) -> dict[str, dict]:
+    """按 strategy_tag 统计被拦截信号。"""
+    by_tag: dict[str, dict] = {}
+    for b in blocked:
+        tag = str(b.get("strategy_tag", "UNKNOWN"))
+        if tag not in by_tag:
+            by_tag[tag] = {"blocked_count": 0, "reasons": {}}
+        by_tag[tag]["blocked_count"] += 1
+        reason = str(b.get("blocked_reason", "UNKNOWN"))
+        by_tag[tag]["reasons"][reason] = by_tag[tag]["reasons"].get(reason, 0) + 1
+    return by_tag
+
+
+def _check_over_filter_protection(state: dict, trades: list[dict], blocked: list[dict],
+                                   cfg: dict) -> list[dict]:
+    """检查是否过度过滤，如果是则生成恢复 proposal。"""
+    proposals = []
+    min_trades = int(cfg.get("EVOLVER_MIN_TRADES_AFTER_POLICY", 5) or 5)
+    no_trade_minutes = float(cfg.get("EVOLVER_REENABLE_IF_NO_TRADES_MINUTES", 180) or 180)
+    reenable_weight = float(cfg.get("EVOLVER_REENABLE_WEIGHT", 0.5) or 0.5)
+    min_enabled = int(cfg.get("EVOLVER_MIN_ENABLED_STRATEGIES", 2) or 2)
+
+    # 检查：新 policy 后是否交易太少
+    since_policy = state.get("trades_since_last_policy", 0)
+    policy_age = time.time() - state.get("evaluation_started_at", state.get("last_evolver_run_at", 0))
+    if since_policy < min_trades and policy_age > no_trade_minutes * 60:
+        # 可能是过度过滤
+        blocked_stats = compute_blocked_signal_stats(blocked)
+        total_blocked = sum(s["blocked_count"] for s in blocked_stats.values())
+        if total_blocked > since_policy * 2 and since_policy < 5:
+            # 恢复一个被禁用策略
+            from strategy_policy import get_enabled_strategies, normalize_strategy_tag
+            enabled = get_enabled_strategies(cfg)
+            if len(enabled) < min_enabled:
+                for tag_key in ["STARTUP", "OI_EXPLOSION", "QUIET_ACCUM", "PRE_BREAKOUT", "EARLY_START"]:
+                    ekey = f"STRATEGY_ENABLED.{tag_key}"
+                    wkey = f"STRATEGY_WEIGHTS.{tag_key}"
+                    if not cfg.get(ekey, True) is False:
+                        proposals.append({"key": ekey, "old": False, "new": True,
+                                          "reason": "over_filter_protection_reenable", "strategy_tag": tag_key})
+                        proposals.append({"key": wkey, "old": cfg.get(wkey, 0.0), "new": reenable_weight,
+                                          "reason": "over_filter_protection_weight_reset", "strategy_tag": tag_key})
+                        break
+            # 升权一个低权重策略
+            for tag_key in ["STARTUP", "OI_EXPLOSION", "QUIET_ACCUM", "PRE_BREAKOUT", "EARLY_START"]:
+                wkey = f"STRATEGY_WEIGHTS.{tag_key}"
+                current_w = float(cfg.get(wkey, 1.0))
+                if current_w < 0.3:
+                    proposals.append({"key": wkey, "old": current_w, "new": 0.5,
+                                      "reason": "over_filter_protection_weight_raise", "strategy_tag": tag_key})
+                    break
+    return proposals
+
+
+def _ensure_min_enabled_strategies(proposals: list[dict], cfg: dict) -> list[dict]:
+    """确保不会禁用所有策略。"""
+    from strategy_policy import get_enabled_strategies
+    # 模拟应用 proposal 后的 enabled 状态
+    temp_cfg = dict(cfg)
+    for p in proposals:
+        if p.get("key", "").startswith("STRATEGY_ENABLED.") and p.get("new") is False:
+            temp_cfg[p["key"]] = False
+    enabled = get_enabled_strategies(temp_cfg)
+    min_enabled = int(cfg.get("EVOLVER_MIN_ENABLED_STRATEGIES", 2) or 2)
+    if len(enabled) < min_enabled:
+        # 拒绝最后一个禁用 proposal
+        filtered = []
+        for p in proposals:
+            if p.get("key", "").startswith("STRATEGY_ENABLED.") and p.get("new") is False:
+                tag = p["key"].split(".")[1]
+                temp_cfg[p["key"]] = True
+                if len(get_enabled_strategies(temp_cfg)) < min_enabled:
+                    p["rejected_reason"] = "WOULD_DISABLE_LAST_STRATEGY"
+                    continue
+                temp_cfg[p["key"]] = False
+            filtered.append(p)
+        return filtered
+    return proposals
