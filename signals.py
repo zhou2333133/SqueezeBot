@@ -18,6 +18,9 @@ scalp_trade_history: list[dict] = []
 # ── 超短线入场拦截日志（持久化，复盘包里用于回溯"为什么没开"）─────────────────
 scalp_entry_block_log: list[dict] = []
 
+# ── 策略标签成交明细（独立 JSONL，用于策略复盘统计）────────────────────────
+strategy_trade_queue: std_queue.Queue = std_queue.Queue(maxsize=200)
+
 MAX_SIGNALS = 200
 MAX_TRADES  = 500
 MAX_ENTRY_BLOCKS = 240
@@ -100,6 +103,11 @@ def add_scalp_entry_block(block: dict) -> None:
     if len(scalp_entry_block_log) > MAX_ENTRY_BLOCKS:
         scalp_entry_block_log.pop(0)
     _persist_ledger()
+
+
+def push_strategy_trade(trade: dict) -> None:
+    """推送一笔带 strategy_tag 的成交到队列，供 strategy_stats 消费。"""
+    _push(strategy_trade_queue, json.dumps(trade, ensure_ascii=False, default=str))
 
 
 _load_ledger()

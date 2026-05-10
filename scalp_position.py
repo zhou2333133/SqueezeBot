@@ -51,6 +51,7 @@ class ScalpPosition:
     tp2_pending_hits:   int        = 0
     next_force_exit_at: float      = 0.0
     force_exit_attempts: int       = 0
+    strategy_tag:       str        = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> "ScalpPosition":
@@ -75,6 +76,7 @@ class ScalpPosition:
             entry_context=dict(data.get("entry_context") or {}),
             protection_failed=bool(data.get("protection_failed", False)),
             protection_reason=str(data.get("protection_reason", "")),
+            strategy_tag=str(data.get("strategy_tag", "")),
         )
         pos.current_price = float(data.get("current_price", 0.0) or 0.0)
         pos.realized_pnl = float(data.get("realized_pnl", 0.0) or 0.0)

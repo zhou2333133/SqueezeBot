@@ -28,7 +28,8 @@ from scanner.sources.surf_api import (
     search_news as surf_search_news,
 )
 from scalp_diagnostics import apply_trade_diagnosis, build_entry_1m_profile
-from signals import add_scalp_signal, set_scalp_position, add_scalp_trade, add_scalp_entry_block
+from signals import add_scalp_signal, set_scalp_position, add_scalp_trade, add_scalp_entry_block, push_strategy_trade
+from strategy_classifier import classify as classify_strategy
 from trader import BinanceTrader
 from watchlist import get_watch_item, is_symbol_blocked
 
@@ -2147,6 +2148,19 @@ class BinanceScalpBot:
             return None
         return (newest_oi - oldest_oi) / oldest_oi * 100
 
+    def _current_taker_ratio(self, symbol: str) -> float | None:
+        """当前 taker buy 比，策略分类用。"""
+        return self._get_taker_ratio(symbol)
+
+    def _volume_ratio(self, symbol: str) -> float | None:
+        """当前K线成交量 / 平均成交量，策略分类用。"""
+        live = self._live_candle.get(symbol, {})
+        total_vol = self._as_float(live.get("total_vol"))
+        avg_vol = self._avg_vol.get(symbol, 0.0)
+        if total_vol > 0 and avg_vol > 0:
+            return total_vol / avg_vol
+        return None
+
     def _get_squeeze_oi_threshold(self, symbol: str) -> float:
         """按币种分层返回轧空触发所需的最小OI降幅%;FR极负时保守降低门槛×0.5"""
         cfg = self.cfg
@@ -2599,6 +2613,18 @@ class BinanceScalpBot:
         })
         self._fstat["passed"] += 1
 
+        # ── 策略分类标签 ─────────────────────────────────────────────────────
+        strategy_tag = classify_strategy(
+            cfg, signal_label, direction, market_state,
+            oi_change_pct=self._get_oi_change_pct(symbol),
+            price_change_15m=trigger_pct,
+            price_change_1h=None,  # 暂缺
+            price_change_24h=None,
+            taker_ratio=self._current_taker_ratio(symbol),
+            vol_ratio=self._volume_ratio(symbol),
+        )
+        base_signal["strategy_tag"] = strategy_tag
+
         paper_mode = cfg.get("SCALP_PAPER_TRADE", False)
         if not cfg.get("SCALP_AUTO_TRADE", False) and not paper_mode:
             add_scalp_signal({**base_signal, "auto_traded": False, "paper": False})
@@ -2639,6 +2665,7 @@ class BinanceScalpBot:
                 risk_usdt          = actual_risk_usdt,
                 paper              = True,
                 entry_context      = entry_context,
+                strategy_tag       = strategy_tag,
             )
             self.open_positions[symbol] = pos
             set_scalp_position(symbol, pos.to_dict())
@@ -2747,6 +2774,7 @@ class BinanceScalpBot:
             entry_context      = entry_context,
             protection_failed  = protection_failed,
             protection_reason  = protection_reason,
+            strategy_tag       = strategy_tag,
         )
         self.open_positions[symbol] = pos
         set_scalp_position(symbol, pos.to_dict())
@@ -3103,6 +3131,7 @@ class BinanceScalpBot:
             "entry_context": pos.entry_context,
             "close_reason": close_reason,
             "paper":        pos.paper,
+            "strategy_tag": pos.strategy_tag,
             "leverage":     self.cfg.get("SCALP_LEVERAGE", 10),
             "quantity":     round(pos.quantity, 6),
         }
@@ -3114,6 +3143,13 @@ class BinanceScalpBot:
             record_trade_feedback(trade)
         except Exception as e:
             logger.debug("⚡ [%s] 写入AI复盘知识库失败: %s", pos.symbol, e)
+        # ── 策略统计 ─────────────────────────────────────────────────────────
+        try:
+            push_strategy_trade(trade)
+            from strategy_stats import record_trade as _record_strategy_trade
+            _record_strategy_trade(trade)
+        except Exception as e:
+            logger.debug("⚡ [%s] 写入策略统计失败: %s", pos.symbol, e)
 
     async def _check_tp_sl(self, symbol: str, price: float) -> None:
         pos = self.open_positions.get(symbol)
