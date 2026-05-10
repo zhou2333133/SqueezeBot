@@ -153,6 +153,9 @@ class BinanceScalpBot:
         # ── 全局 API 熔断器 ─────────────────────────────────────────────────
         self._api_failure_count: int    = 0
         self._last_api_failure_ts: float = 0.0
+        # ── Evolver 触发状态 ───────────────────────────────────────────────
+        self._evolver_trade_count: int = 0
+        self._evolver_last_run: float = 0.0
 
     @property
     def cfg(self) -> dict:
@@ -3348,6 +3351,24 @@ class BinanceScalpBot:
             _record_strategy_trade(trade)
         except Exception as e:
             logger.debug("⚡ [%s] 写入策略统计失败: %s", pos.symbol, e)
+        # ── 自动进化触发 ─────────────────────────────────────────────────────
+        try:
+            _evolver_trade_count = getattr(self, "_evolver_trade_count", 0) + 1
+            self._evolver_trade_count = _evolver_trade_count
+            _evolver_last_run = getattr(self, "_evolver_last_run", 0.0)
+            _evolver_after = int(self.cfg.get("EVOLVER_RUN_AFTER_CLOSED_TRADES", 30) or 30)
+            _evolver_interval = float(self.cfg.get("EVOLVER_INTERVAL_MINUTES", 60) or 60)
+            if (self.cfg.get("EVOLVER_ENABLED", True)
+                    and _evolver_trade_count >= _evolver_after
+                    and time.time() - _evolver_last_run >= _evolver_interval * 60):
+                self._evolver_trade_count = 0
+                self._evolver_last_run = time.time()
+                from strategy_evolver import run_evolution_once
+                _evolver_result = run_evolution_once()
+                if _evolver_result.get("applied_updates"):
+                    logger.info("Evolver 已自动应用 %d 个参数修改", len(_evolver_result["applied_updates"]))
+        except Exception as e:
+            logger.debug("Evolver 触发异常 (不影响交易): %s", e)
 
     async def _check_tp_sl(self, symbol: str, price: float) -> None:
         pos = self.open_positions.get(symbol)
