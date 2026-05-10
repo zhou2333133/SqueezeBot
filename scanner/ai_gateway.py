@@ -875,3 +875,52 @@ def _parse_deepseek_response(data: dict, model: str) -> tuple[str | None, str]:
     if finish in {"content_filter", "insufficient_system_resource"}:
         return None, f"deepseek_finish_{finish}[{model}]"
     return text, f"finish={finish or 'stop'}"
+async def call_single_coin_judge(payload: dict, prompt: str, *, timeout: int | None = None) -> dict:
+    """单币判单路由：复用现有 provider/fallback/cache/metrics。"""
+    cfg = config_manager.settings
+    providers = [
+        p.strip().lower()
+        for p in str(cfg.get("YAOBI_AI_PROVIDER_PRIORITY", "gemini")).split(",")
+        if p.strip()
+    ]
+    max_output = int(cfg.get("YAOBI_AI_MAX_OUTPUT_TOKENS", 1200) or 1200)
+    timeout_sec = timeout or 20
+    system_prompt = prompt
+    try:
+        raw_payload = json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        raw_payload = str(payload)
+    import aiohttp
+    async with aiohttp.ClientSession(trust_env=True) as session:
+        for provider in providers:
+            in_backoff, remain = _provider_in_backoff(provider)
+            if in_backoff:
+                record_provider_skip(provider, "single_coin_judge", f"backoff_{int(remain)}s")
+                continue
+            try:
+                text, token_count = "", 0
+                if provider == "openai" and OPENAI_API_KEY:
+                    text, token_count = await _call_openai(session, system_prompt, raw_payload, max_output)
+                elif provider == "gemini" and GEMINI_API_KEY:
+                    text, token_count = await _call_gemini(system_prompt, raw_payload, max_output)
+                elif provider == "anthropic" and ANTHROPIC_API_KEY:
+                    text, token_count = await _call_anthropic(session, system_prompt, raw_payload, max_output)
+                elif provider == "deepseek" and (os.getenv("DEEPSEEK_API_KEY") or DEEPSEEK_API_KEY):
+                    text, token_count = await _call_deepseek(session, system_prompt, raw_payload, max_output)
+                elif provider == "minimax" and (os.getenv("MINIMAX_API_KEY") or MINIMAX_API_KEY):
+                    text, token_count = await _call_minimax(session, system_prompt, raw_payload, max_output)
+                else:
+                    record_provider_skip(provider, "single_coin_judge", "key_missing")
+                    continue
+                if text:
+                    estimated = max(0.001, token_count / 1_000_000 * 2.0)
+                    _record_usage(token_count, estimated)
+                    _clear_provider_backoff(provider)
+                    record_provider_call(provider, "single_coin_judge", True, status="200")
+                    return {"text": text, "provider": provider}
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                _record_provider_failure(provider, e)
+                record_provider_call(provider, "single_coin_judge", False, status="exception", error=last_error)
+                continue
+    return {"error": "all_providers_failed", "text": ""}

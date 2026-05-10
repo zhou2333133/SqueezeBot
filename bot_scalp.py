@@ -2768,6 +2768,40 @@ class BinanceScalpBot:
         )
         base_signal["strategy_tag"] = strategy_tag
 
+        # ── 单币 AI 判单（统一 Gate，PAPER/LIVE 共用）─────────────────────────
+        _judge_result = None
+        if cfg.get("SINGLE_COIN_JUDGE_ENABLED", False):
+            try:
+                from single_coin_judge import (
+                    build_judge_payload, judge_single_coin, judge_to_signal_fields,
+                    default_judge_result,
+                )
+                _judge_payload = build_judge_payload(
+                    symbol=symbol, direction=direction,
+                    strategy_tag=strategy_tag, signal_label=signal_label,
+                    entry_price=entry_price, sl_price=sl_price,
+                    tp1_price=tp1_price, tp2_price=tp2_price,
+                    market_snapshot=entry_context,
+                    execution_backend="PAPER" if cfg.get("SCALP_PAPER_TRADE") else "LIVE",
+                )
+                _judge_result = await judge_single_coin(_judge_payload)
+                _judge_fields = judge_to_signal_fields(_judge_result)
+                base_signal.update(_judge_fields)
+                if cfg.get("SINGLE_COIN_JUDGE_CAN_VETO", False) and _judge_result.action in ("WAIT", "REJECT"):
+                    _judge_fields["ai_judge_blocked"] = True
+                    _judge_fields["ai_judge_block_reason"] = f"AI_JUDGE_{_judge_result.action}: {_judge_result.reason}"
+                    add_scalp_signal({**base_signal, "auto_traded": False, "paper": cfg.get("SCALP_PAPER_TRADE"),
+                                      "rejected_reason": _judge_fields["ai_judge_block_reason"]})
+                    logger.info("⚡ [%s] ℹ AI Gate %s: %s", symbol, _judge_result.action, _judge_result.reason)
+                    return
+                logger.info("⚡ [%s] ℹ AI Gate ALLOW (%.0f%%): %s", symbol, (_judge_result.confidence or 0) * 100, _judge_result.reason)
+            except Exception as e:
+                logger.warning("⚡ [%s] AI Gate 异常 (不影响交易): %s", symbol, e)
+                if _judge_result is None:
+                    _judge_result = default_judge_result(f"exception:{e}")
+                    base_signal.update(judge_to_signal_fields(_judge_result))
+
+
         paper_mode = cfg.get("SCALP_PAPER_TRADE", False)
         if not cfg.get("SCALP_AUTO_TRADE", False) and not paper_mode:
             add_scalp_signal({**base_signal, "auto_traded": False, "paper": False})
