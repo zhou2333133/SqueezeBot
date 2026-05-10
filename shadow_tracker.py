@@ -84,6 +84,11 @@ def create_shadow_trade(blocked_signal: dict) -> dict | None:
             "decision_trace": blocked_signal.get("decision_trace", {}),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        try:
+            from param_attribution import attach_active_patches_to_shadow_trade
+            attach_active_patches_to_shadow_trade(shadow)
+        except Exception:
+            pass
         append_jsonl(SHADOW_TRADES_FILE, shadow)
         return shadow
     except Exception as e:

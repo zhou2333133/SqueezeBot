@@ -213,6 +213,21 @@ def propose_param_updates(metrics: dict[str, dict], patterns: list[dict], curren
                 proposals.append({"key": weight_key, "old": current_w, "new": new_w,
                                   "reason": f"win_rate={wr:.2f}>={up_wr} 升权", "strategy_tag": tag})
 
+    # 参数冷却检查：排除冷却中的参数
+    try:
+        from param_attribution import is_param_in_cooldown
+        filtered = []
+        for prop in proposals:
+            key = prop.get("key", "")
+            in_cd, _ = is_param_in_cooldown(key)
+            if in_cd:
+                prop["rejected_reason"] = "PARAM_COOLDOWN"
+                continue
+            filtered.append(prop)
+        proposals = filtered
+    except Exception:
+        pass
+
     # shadow outcome 调权
     proposals = _apply_shadow_to_proposals(proposals, metrics, cfg)
 
@@ -556,9 +571,27 @@ def run_evolution_once() -> dict[str, Any]:
             result["message"] = "EVOLVER_AUTO_APPLY=False，仅生成建议未应用"
             return result
 
-        # 9. 记录历史
+        # 9. 创建参数补丁
+        try:
+            from param_attribution import create_param_patches
+            applied = result.get("applied_updates", [])
+            version = result.get("policy_version", "")
+            pid_list = create_param_patches(applied, version, result.get("evolver_run_id", ""))
+            result["param_patches_created"] = len(pid_list)
+        except Exception as e:
+            logger.debug("创建 param_patches 失败: %s", e)
+        # 参数补丁回滚标记
+        try:
+            from param_attribution import mark_patches_reverted_by_policy
+            old_ver = result.get("previous_policy", "")
+            if old_ver:
+                rc = mark_patches_reverted_by_policy(old_ver, version)
+                if rc:
+                    logger.info("回滚标记 %d 个补丁", rc)
+        except Exception:
+            pass
+        # 10. 记录历史
         append_evolver_history(result)
-
         result["status"] = "applied"
         result["message"] = f"已应用 {len(result['applied_updates'])} 个参数修改"
         return result

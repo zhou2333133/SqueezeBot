@@ -57,6 +57,7 @@ def record_trade(trade: dict) -> None:
         "order_plan":     trade.get("order_plan") or None,
         "decision_trace": trade.get("decision_trace") or None,
         "exec_result":    trade.get("exec_result") or None,
+        "active_param_patches": list(trade.get("active_param_patches") or []),
     }
     try:
         os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)

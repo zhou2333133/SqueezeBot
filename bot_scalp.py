@@ -3365,6 +3365,7 @@ class BinanceScalpBot:
             "policy_version": str(self.cfg.get("POLICY_VERSION") or self.cfg.get("CONFIG_PROFILE_VERSION", "UNKNOWN")),
             "config_hash": _compute_cfg_hash(self.cfg),
             "evolver_run_id": str(self.cfg.get("EVOLVER_RUN_ID", "")),
+            "active_param_patches": [],
             "order_plan": {
                 "side": pos.direction,
                 "entry_ref": round(pos.entry_price, 8),
@@ -3408,6 +3409,11 @@ class BinanceScalpBot:
         except Exception as e:
             logger.debug("⚡ [%s] 写入AI复盘知识库失败: %s", pos.symbol, e)
         # ── 策略统计 ─────────────────────────────────────────────────────────
+        try:
+            from param_attribution import attach_patches_to_trade_record
+            attach_patches_to_trade_record(trade)
+        except Exception:
+            pass
         try:
             push_strategy_trade(trade)
             from strategy_stats import record_trade as _record_strategy_trade
