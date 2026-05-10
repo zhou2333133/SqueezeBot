@@ -504,6 +504,11 @@ class ConfigManager:
         "STRATEGY_ENABLED_静默建仓": True,
         "STRATEGY_ENABLED_突破前夜": True,
         "STRATEGY_ENABLED_早期启动": True,
+                # ── Shadow Tracker ─────────────────────────────────────────────────────
+        "SHADOW_TRACKER_ENABLED": True,
+        "SHADOW_MAX_HOLD_MINUTES": 240,
+        "SHADOW_UPDATE_INTERVAL_SEC": 30,
+        "SHADOW_MIN_PRICE_MOVE_TO_UPDATE": 0.0,
         "MULTI_TF_GATE_ENABLED": False,
         "MULTI_TF_GATE_CAN_VETO": False,
         "MULTI_TF_GATE_DEFAULT_ON_ERROR": "WAIT",

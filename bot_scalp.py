@@ -87,12 +87,12 @@ def _compute_cfg_hash(cfg: dict) -> str:
 
 
 def _log_blocked_signal(symbol, direction, strategy_tag, reason, policy_result, cfg):
-    """记录被策略策略拦截的信号到 blocked_signals.jsonl。"""
+    """记录被策略策略拦截的信号到 blocked_signals.jsonl 并创建 shadow trade。"""
     try:
         from persistence import append_jsonl
         from config import DATA_DIR
         import time
-        append_jsonl(os.path.join(DATA_DIR, "blocked_signals.jsonl"), {
+        record = {
             "symbol": symbol, "side": direction,
             "strategy_tag": strategy_tag, "blocked_reason": reason,
             "policy_version": str(cfg.get("POLICY_VERSION", "")),
@@ -100,7 +100,11 @@ def _log_blocked_signal(symbol, direction, strategy_tag, reason, policy_result, 
             "strategy_weight": policy_result.get("weight", 1.0) if isinstance(policy_result, dict) else 1.0,
             "decision_trace": {"strategy_policy": policy_result} if isinstance(policy_result, dict) else {},
             "timestamp": time.time(),
-        })
+        }
+        append_jsonl(os.path.join(DATA_DIR, "blocked_signals.jsonl"), record)
+        # 同时创建 shadow trade 追踪假设结果
+        from shadow_tracker import create_shadow_trade
+        create_shadow_trade(record)
     except Exception:
         pass
 
@@ -4021,8 +4025,24 @@ class BinanceScalpBot:
             except Exception as e:
                 logger.debug("⚡ 仓位同步异常 [%s]: %s", symbol, e)
 
+    async def _update_shadow_prices(self) -> None:
+        """用当前行情更新 shadow trades 价格。"""
+        try:
+            from shadow_tracker import update_shadow_trades
+            prices = {}
+            for sym in self._live_candle:
+                c = self._live_candle[sym]
+                p = self._as_float(c.get("close") or c.get("c"))
+                if p > 0:
+                    prices[sym] = p
+            if prices:
+                update_shadow_trades(prices)
+        except Exception as e:
+            logger.debug("Shadow price update 异常: %s", e)
+
     async def _position_monitor_loop(self) -> None:
         _last_orphan_scan = 0.0
+        _last_shadow_update = 0.0
         while self.running:
             interval = float(self.cfg.get("SCALP_POSITION_CHECK_INTERVAL_SECONDS", 10) or 10)
             await asyncio.sleep(max(3.0, interval))
@@ -4033,3 +4053,8 @@ class BinanceScalpBot:
             if self.cfg.get("ORPHAN_SCAN_ENABLED", True) and now - _last_orphan_scan >= orphan_interval:
                 _last_orphan_scan = now
                 await self._orphan_scan_once()
+            # Shadow trade 价格更新
+            shadow_interval = float(self.cfg.get("SHADOW_UPDATE_INTERVAL_SEC", 30) or 30)
+            if self.cfg.get("SHADOW_TRACKER_ENABLED", True) and now - _last_shadow_update >= shadow_interval:
+                _last_shadow_update = now
+                await self._update_shadow_prices()

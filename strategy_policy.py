@@ -201,12 +201,11 @@ def apply_strategy_weight_to_signal(signal: dict, strategy_tag: str, cfg: dict |
         # 基础要求分 = 50（无其他分数时保守基线）
         base_required = 50
         # 权重越低，required 越高
-        effective_required = round(base_required / max(weight, 0.1), 2)
-        result["required_score"] = effective_required
+        result["required_score"] = base_required
 
-        if weighted_score < effective_required:
+        if weighted_score < base_required:
             result["action"] = "BLOCK"
-            result["reason"] = f"WEIGHTED_SCORE_BELOW_REQUIRED (w={weight}, ws={weighted_score} < r={effective_required})"
+            result["reason"] = f"WEIGHTED_SCORE_BELOW_REQUIRED (w={weight}, ws={weighted_score} < r={base_required})"
             return result
     else:
         # 无分数：用 weight 做准入概率采样

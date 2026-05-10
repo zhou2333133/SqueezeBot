@@ -213,6 +213,9 @@ def propose_param_updates(metrics: dict[str, dict], patterns: list[dict], curren
                 proposals.append({"key": weight_key, "old": current_w, "new": new_w,
                                   "reason": f"win_rate={wr:.2f}>={up_wr} 升权", "strategy_tag": tag})
 
+    # shadow outcome 调权
+    proposals = _apply_shadow_to_proposals(proposals, metrics, cfg)
+
     for p in patterns:
         tag = p["strategy_tag"]
         pattern = p["pattern"]
@@ -931,4 +934,62 @@ def _ensure_min_enabled_strategies(proposals: list[dict], cfg: dict) -> list[dic
                 temp_cfg[p["key"]] = False
             filtered.append(p)
         return filtered
+    return proposals
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 18. Shadow outcome 读取 + 自动调权重
+# ══════════════════════════════════════════════════════════════════════════════
+def load_shadow_trades() -> list[dict]:
+    """读取 shadow_trades.jsonl。"""
+    path = os.path.join(DATA_DIR, "shadow_trades.jsonl")
+    return _read_jsonl(path)
+
+
+def compute_shadow_stats() -> dict[str, dict]:
+    """统计 shadow outcomes 按 strategy_tag。"""
+    try:
+        from shadow_tracker import compute_shadow_outcomes
+        return compute_shadow_outcomes()
+    except Exception as e:
+        logger.debug("compute_shadow_stats 失败: %s", e)
+        return {}
+
+
+def _apply_shadow_to_proposals(proposals: list[dict], metrics: dict, cfg: dict) -> list[dict]:
+    """根据 shadow outcome 调整权重 proposals。"""
+    shadow = compute_shadow_stats()
+    if not shadow:
+        return proposals
+
+    for tag_key in ["STARTUP", "OI_EXPLOSION", "QUIET_ACCUM", "PRE_BREAKOUT", "EARLY_START"]:
+        sdata = shadow.get(tag_key, {})
+        if sdata.get("shadow_closed", 0) < 5:
+            continue
+        swr = sdata.get("shadow_win_rate", 0.0)
+        avg_pnl = sdata.get("avg_hypothetical_pnl_pct", 0.0)
+        wkey = f"STRATEGY_WEIGHTS.{tag_key}"
+        ekey = f"STRATEGY_ENABLED.{tag_key}"
+        current_w = float(cfg.get(wkey, 1.0))
+
+        # shadow 表现好 → 说明过度过滤 → 升权或重新启用
+        if swr > 0.55 and avg_pnl > 0:
+            # 当前禁用 → 重新启用
+            if not cfg.get(ekey, True):
+                if not _is_last_enabled_strategy(tag_key, cfg):
+                    proposals.append({"key": ekey, "old": False, "new": True,
+                                      "reason": f"shadow_swr={swr:.2f}_reenable", "strategy_tag": tag_key})
+            # 当前权重低 → 升权
+            elif current_w < 1.0:
+                new_w = min(1.5, current_w + 0.2)
+                proposals.append({"key": wkey, "old": current_w, "new": new_w,
+                                  "reason": f"shadow_swr={swr:.2f}_upweight", "strategy_tag": tag_key})
+
+        # shadow 表现差 → 说明拦截正确 → 维持或加强过滤
+        elif swr < 0.35 and avg_pnl < 0:
+            if current_w > 0.5:
+                new_w = max(0.3, current_w - 0.2)
+                proposals.append({"key": wkey, "old": current_w, "new": new_w,
+                                  "reason": f"shadow_swr={swr:.2f}_downweight", "strategy_tag": tag_key})
+
     return proposals
