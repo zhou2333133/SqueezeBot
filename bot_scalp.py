@@ -2801,6 +2801,41 @@ class BinanceScalpBot:
                     _judge_result = default_judge_result(f"exception:{e}")
                     base_signal.update(judge_to_signal_fields(_judge_result))
 
+        # ── 多周期 Gate（统一，PAPER/LIVE 共用）────────────────────────────────
+        _tf_gate_result = None
+        if cfg.get("MULTI_TF_GATE_ENABLED", False):
+            try:
+                from multi_tf_gate import (
+                    build_tf_context, evaluate_multi_tf_gate,
+                    gate_to_signal_fields, should_block_by_gate,
+                    default_gate_result,
+                )
+                _kline_buf = self.kline_buffer.get(symbol, [])
+                _tf_context = build_tf_context(
+                    symbol=symbol, side=direction,
+                    signal_label=signal_label, market_state=market_state,
+                    entry_context=entry_context,
+                    kline_buffer=_kline_buf,
+                    cfg=cfg,
+                )
+                _tf_gate_result = evaluate_multi_tf_gate(_tf_context, cfg)
+                _tf_fields = gate_to_signal_fields(_tf_gate_result)
+                base_signal.update(_tf_fields)
+                _tf_block, _tf_reason = should_block_by_gate(_tf_gate_result, cfg)
+                if _tf_block:
+                    _tf_fields["multi_tf_blocked"] = True
+                    _tf_fields["multi_tf_block_reason"] = _tf_reason
+                    add_scalp_signal({**base_signal, "auto_traded": False,
+                                      "rejected_reason": _tf_reason})
+                    logger.info("⚡ [%s] 📐 Gate %s: %s", symbol, _tf_gate_result.action, _tf_reason)
+                    return
+                logger.info("⚡ [%s] 📐 Gate ALLOW (%.0f%%): %s", symbol,
+                            (_tf_gate_result.confidence or 0) * 100, _tf_gate_result.block_reason or "ok")
+            except Exception as e:
+                logger.warning("⚡ [%s] 多周期 Gate 异常 (不影响交易): %s", symbol, e)
+                if _tf_gate_result is None:
+                    _tf_gate_result = default_gate_result(f"exception:{e}")
+                    base_signal.update(gate_to_signal_fields(_tf_gate_result))
 
         paper_mode = cfg.get("SCALP_PAPER_TRADE", False)
         if not cfg.get("SCALP_AUTO_TRADE", False) and not paper_mode:

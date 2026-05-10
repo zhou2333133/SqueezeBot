@@ -367,6 +367,26 @@ class ConfigManager:
         "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
         "OKX_MIN_REQUEST_INTERVAL": 0.20,
         "SURF_MIN_REQUEST_INTERVAL": 0.20,
+        # ── 多周期 Gate ──────────────────────────────────────────────────────
+        "MULTI_TF_GATE_ENABLED": False,
+        "MULTI_TF_GATE_CAN_VETO": False,
+        "MULTI_TF_GATE_DEFAULT_ON_ERROR": "WAIT",
+        "MULTI_TF_4H_REQUIRED": True,
+        "MULTI_TF_4H_ALLOW_NEUTRAL": True,
+        "MULTI_TF_4H_BLOCK_AGAINST": True,
+        "MULTI_TF_1H_BLOCK_EQUILIBRIUM": True,
+        "MULTI_TF_1H_BLOCK_AGAINST": True,
+        "MULTI_TF_15M_BLOCK_OVERHEATED": True,
+        "MULTI_TF_NEAR_LEVEL_PCT": 0.5,
+        "MULTI_TF_MIN_ROOM_TO_RESISTANCE_PCT_LONG": 0.8,
+        "MULTI_TF_MIN_ROOM_TO_SUPPORT_PCT_SHORT": 0.8,
+        "MULTI_TF_15M_MAX_CHASE_PCT": 3.0,
+        "MULTI_TF_15M_MAX_ATR_DISTANCE": 1.8,
+        "MULTI_TF_SUPPORT_RESISTANCE_LOOKBACK_1H": 80,
+        "MULTI_TF_SUPPORT_RESISTANCE_LOOKBACK_4H": 80,
+        "MULTI_TF_MIN_CANDLES_15M": 50,
+        "MULTI_TF_MIN_CANDLES_1H": 50,
+        "MULTI_TF_MIN_CANDLES_4H": 50,
     }
 
     _BOUNDS: dict[str, tuple] = {
