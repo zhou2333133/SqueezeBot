@@ -52,6 +52,8 @@ def record_trade(trade: dict) -> None:
         "duration_sec":   _f(trade.get("duration_sec")),
         "failure_tags":   list(trade.get("failure_tags") or trade.get("diagnosis_tags") or []),
         "policy_version": str(trade.get("policy_version") or ""),
+        "config_hash": str(trade.get("config_hash") or ""),
+        "evolver_run_id": str(trade.get("evolver_run_id") or ""),
         "order_plan":     trade.get("order_plan") or None,
         "decision_trace": trade.get("decision_trace") or None,
         "exec_result":    trade.get("exec_result") or None,

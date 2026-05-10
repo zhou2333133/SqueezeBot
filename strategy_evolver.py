@@ -534,3 +534,271 @@ def _f(v) -> float:
         return float(v) if v is not None else 0.0
     except (TypeError, ValueError):
         return 0.0
+
+
+import hashlib
+import json
+import os
+import time
+from datetime import datetime, timezone
+
+
+EVOLVER_STATE_FILE = os.path.join(DATA_DIR, "evolver_state.json")
+POLICY_PERF_FILE = os.path.join(DATA_DIR, "policy_performance.jsonl")
+
+
+def compute_config_hash(cfg=None):
+    if cfg is None:
+        cfg = config_manager.settings
+    relevant = {}
+    for key in sorted(config_manager.PARAM_BOUNDS.keys()):
+        if key in cfg:
+            relevant[key] = cfg[key]
+    raw = json.dumps(relevant, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+def _default_evolver_state():
+    return {
+        "current_policy_version": str(config_manager.settings.get("POLICY_VERSION", "manual-v1")),
+        "current_config_hash": compute_config_hash(),
+        "previous_policy_version": "",
+        "previous_config_hash": "",
+        "last_evolver_run_at": 0.0,
+        "last_evolver_run_id": "",
+        "trades_since_last_policy": 0,
+        "closed_trades_since_last_policy": 0,
+        "pending_evaluation": False,
+        "evaluation_min_trades": 30,
+        "evaluation_started_at": 0.0,
+        "rollback_count": 0,
+        "last_rollback_at": None,
+        "freeze_until": 0.0,
+        "daily_rollback_count": 0,
+        "last_daily_reset": 0.0,
+    }
+
+
+def _get_evolver_state():
+    state = safe_read_json(EVOLVER_STATE_FILE)
+    if not isinstance(state, dict):
+        state = {}
+    defaults = _default_evolver_state()
+    defaults.update(state)
+    return defaults
+
+
+def _save_evolver_state(state):
+    from persistence import atomic_write_json
+    try:
+        atomic_write_json(EVOLVER_STATE_FILE, state)
+    except Exception as e:
+        logger.warning("写入 evolver_state 失败: %s", e)
+
+
+def update_evolver_state_after_trade(trade):
+    try:
+        state = _get_evolver_state()
+        state["trades_since_last_policy"] = state.get("trades_since_last_policy", 0) + 1
+        state["closed_trades_since_last_policy"] = state.get("closed_trades_since_last_policy", 0) + 1
+        _save_evolver_state(state)
+    except Exception as e:
+        logger.debug("更新 evolver state 失败: %s", e)
+
+
+def compute_policy_performance(policy_version, trades):
+    ptrades = [t for t in trades if str(t.get("policy_version", "")).strip() == policy_version.strip()]
+    if not ptrades:
+        return {"policy_version": policy_version, "trades": 0, "decision": "NO_DATA"}
+    n = len(ptrades)
+    wins = [t for t in ptrades if _f(t.get("pnl_usdt")) >= 0]
+    pnls = [_f(t.get("pnl_usdt")) for t in ptrades]
+    win_pnls = [_f(t.get("pnl_usdt")) for t in wins]
+    loss_pnls = [abs(_f(t.get("pnl_usdt"))) for t in ptrades if _f(t.get("pnl_usdt")) < 0]
+    total_pnl = sum(pnls)
+    win_rate = len(wins) / n if n > 0 else 0.0
+    avg_win = sum(win_pnls) / len(win_pnls) if win_pnls else 0.0
+    avg_loss = sum(loss_pnls) / len(loss_pnls) if loss_pnls else 1.0
+    expectancy = (win_rate * avg_win - (1 - win_rate) * avg_loss) if n > 0 else 0.0
+    pf = sum(win_pnls) / sum(loss_pnls) if sum(loss_pnls) > 0 else (float("inf") if total_pnl > 0 else 0.0)
+    cum, peak, dd = 0.0, 0.0, 0.0
+    for p in pnls:
+        cum += p
+        peak = max(peak, cum)
+        dd = min(dd, cum - peak)
+    mfes = [_f(t.get("mfe_pct")) for t in ptrades]
+    maes = [_f(t.get("mae_pct")) for t in ptrades]
+    return {
+        "policy_version": policy_version,
+        "config_hash": compute_config_hash(),
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "trades": n, "win_rate": round(win_rate, 4), "pnl_total": round(total_pnl, 4),
+        "expectancy": round(expectancy, 4),
+        "profit_factor": round(pf, 4) if pf != float("inf") else None,
+        "max_drawdown": round(dd, 2),
+        "avg_mfe": round(sum(mfes) / n, 4) if n else 0.0,
+        "avg_mae": round(sum(maes) / n, 4) if n else 0.0,
+    }
+
+
+def evaluate_current_policy(trades=None):
+    state = _get_evolver_state()
+    cfg = config_manager.settings
+    cur_ver = str(state.get("current_policy_version", ""))
+    pre_ver = str(state.get("previous_policy_version", ""))
+    if not cur_ver:
+        return {"decision": "NO_POLICY"}
+    if trades is None:
+        from strategy_evolver import load_trade_data
+        trades = load_trade_data()
+    cur_perf = compute_policy_performance(cur_ver, trades)
+    cur_trades = cur_perf.get("trades", 0)
+    min_trades = int(cfg.get("EVOLVER_EVAL_MIN_TRADES", 30) or 30)
+    if cur_trades < min_trades:
+        return {"decision": "PENDING", "trades": cur_trades, "need": min_trades}
+    pre_perf = compute_policy_performance(pre_ver, trades) if pre_ver else None
+    pre_wr = pre_perf.get("win_rate", 0.5) if pre_perf else 0.5
+    cur_wr = cur_perf.get("win_rate", 0.0)
+    cur_exp = cur_perf.get("expectancy", 0.0)
+    cur_pnl = cur_perf.get("pnl_total", 0.0)
+    cur_dd = cur_perf.get("max_drawdown", 0.0)
+    rb_exp = float(cfg.get("EVOLVER_ROLLBACK_IF_EXPECTANCY_BELOW", 0.0) or 0.0)
+    rb_pnl = float(cfg.get("EVOLVER_ROLLBACK_IF_PNL_BELOW", 0.0) or 0.0)
+    rb_wr = float(cfg.get("EVOLVER_ROLLBACK_IF_WIN_RATE_DROP_PCT", 0.15) or 0.15)
+    rb_dd = float(cfg.get("EVOLVER_ROLLBACK_IF_MAX_DRAWDOWN_ABOVE", 50.0) or 50.0)
+    reasons = []
+    if cur_exp < rb_exp:
+        reasons.append(f"exp={cur_exp}<{rb_exp}")
+    if cur_pnl < rb_pnl:
+        reasons.append(f"pnl={cur_pnl}<{rb_pnl}")
+    if pre_ver and pre_wr - cur_wr > rb_wr:
+        reasons.append(f"wr_drop={pre_wr-cur_wr:.2f}>{rb_wr}")
+    if cur_dd < -rb_dd:
+        reasons.append(f"dd={cur_dd:.1f}%<{-rb_dd}%")
+    if reasons:
+        return {"decision": "ROLLBACK", "reasons": reasons, "perf": cur_perf, "prev_perf": pre_perf}
+    elif cur_exp <= 0 or cur_pnl <= 0:
+        return {"decision": "ADJUST", "reasons": ["mediocre"], "perf": cur_perf, "prev_perf": pre_perf}
+    else:
+        return {"decision": "KEEP", "reasons": ["ok"], "perf": cur_perf, "prev_perf": pre_perf}
+
+
+def maybe_auto_rollback(trades=None):
+    result = {"event_type": "SKIP", "rolled_back": False, "reason": "", "new_version": ""}
+    cfg = config_manager.settings
+    if not cfg.get("EVOLVER_AUTO_ROLLBACK_ENABLED", True):
+        result["reason"] = "AUTO_ROLLBACK_DISABLED"; return result
+    state = _get_evolver_state()
+    now = time.time()
+    if now < state.get("freeze_until", 0.0):
+        result["reason"] = f"frozen_{state['freeze_until']-now:.0f}s"; return result
+    daily_max = int(cfg.get("EVOLVER_MAX_ROLLBACKS_PER_DAY", 3) or 3)
+    if now - state.get("last_daily_reset", 0.0) > 86400:
+        state["daily_rollback_count"] = 0; state["last_daily_reset"] = now
+    if state.get("daily_rollback_count", 0) >= daily_max:
+        result["reason"] = f"daily_limit_{daily_max}"; return result
+    ev = evaluate_current_policy(trades)
+    if ev.get("decision") != "ROLLBACK":
+        result["reason"] = f"decision={ev.get('decision')}"; return result
+    rb = rollback_last_policy()
+    if rb.get("status") != "success":
+        result["reason"] = f"rb_fail:{rb.get('message')}"; return result
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    new_ver = f"rollback-auto-{ts}"
+    state["previous_policy_version"] = state.get("current_policy_version", "")
+    state["current_policy_version"] = new_ver
+    state["current_config_hash"] = compute_config_hash()
+    state["rollback_count"] = state.get("rollback_count", 0) + 1
+    state["last_rollback_at"] = now
+    state["daily_rollback_count"] = state.get("daily_rollback_count", 0) + 1
+    state["trades_since_last_policy"] = 0
+    state["pending_evaluation"] = False
+    freeze_min = float(cfg.get("EVOLVER_FREEZE_AFTER_ROLLBACK_MINUTES", 120) or 120)
+    state["freeze_until"] = now + freeze_min * 60
+    config_manager.settings["POLICY_VERSION"] = new_ver
+    config_manager._persist()
+    _save_evolver_state(state)
+    evt = _build_evolver_event("ROLLBACK", state, {"reason": "; ".join(ev.get("reasons", [])), "perf": ev.get("perf")})
+    append_evolver_history(evt)
+    if ev.get("perf"):
+        try:
+            append_jsonl(POLICY_PERF_FILE, {**ev["perf"], "decision": "ROLLBACK", "reason": "; ".join(ev.get("reasons", []))})
+        except Exception:
+            pass
+    result["event_type"] = "ROLLBACK"; result["rolled_back"] = True
+    result["reason"] = "; ".join(ev.get("reasons", [])); result["new_version"] = new_ver
+    logger.warning("Evolver auto rollback: %s", result["reason"])
+    return result
+
+
+def _build_evolver_event(event_type, state, extra=None):
+    evt = {
+        "event_type": event_type,
+        "evolver_run_id": f"evo-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        "policy_version": state.get("current_policy_version", ""),
+        "previous_policy_version": state.get("previous_policy_version", ""),
+        "config_hash": state.get("current_config_hash", ""),
+        "previous_config_hash": state.get("previous_config_hash", ""),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "state_snapshot": {k: v for k, v in state.items() if k != "state_snapshot"},
+    }
+    if extra:
+        evt.update(extra)
+    return evt
+
+
+def run_evolution_auto():
+    """Enhanced trigger: checks state/pending/freeze before evolving."""
+    result = {"event_type": "SKIP", "reason": ""}
+    try:
+        cfg = config_manager.settings
+        if not cfg.get("EVOLVER_ENABLED", True):
+            result["reason"] = "disabled"; return result
+        state = _get_evolver_state()
+        now = time.time()
+        if now < state.get("freeze_until", 0.0):
+            result["reason"] = "frozen"; return result
+        daily_max = int(cfg.get("EVOLVER_MAX_ROLLBACKS_PER_DAY", 3) or 3)
+        if now - state.get("last_daily_reset", 0.0) > 86400:
+            state["daily_rollback_count"] = 0; state["last_daily_reset"] = now
+        if state.get("daily_rollback_count", 0) >= daily_max:
+            result["reason"] = "daily_limit"; return result
+        # Check pending evaluation
+        if state.get("pending_evaluation", False):
+            from strategy_evolver import load_trade_data as ltd
+            ev = evaluate_current_policy(ltd())
+            if ev.get("decision") == "ROLLBACK":
+                return maybe_auto_rollback(ltd())
+            elif ev.get("decision") == "KEEP":
+                state["pending_evaluation"] = False; _save_evolver_state(state)
+            else:
+                result["reason"] = f"pending:{ev.get('decision')}"; return result
+        # Cooldown
+        last_run = state.get("last_evolver_run_at", 0.0)
+        min_int = float(cfg.get("EVOLVER_MIN_MINUTES_BETWEEN_UPDATES", 60) or 60)
+        if now - last_run < min_int * 60:
+            result["reason"] = "cooldown"; return result
+        min_tr = int(cfg.get("EVOLVER_MIN_TRADES_BETWEEN_UPDATES", 30) or 30)
+        if state.get("trades_since_last_policy", 0) < min_tr:
+            result["reason"] = f"need_{min_tr}_trades"; return result
+        # Evolve
+        evo = run_evolution_once()
+        if evo.get("status") == "applied":
+            state["current_policy_version"] = evo.get("policy_version", "")
+            state["current_config_hash"] = compute_config_hash()
+            state["last_evolver_run_at"] = now
+            state["last_evolver_run_id"] = f"evo-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            state["trades_since_last_policy"] = 0
+            state["pending_evaluation"] = True
+            state["evaluation_started_at"] = now
+            _save_evolver_state(state)
+            result["event_type"] = "APPLY"
+            result["reason"] = evo.get("message", "")
+            result["applied_updates"] = evo.get("applied_updates", [])
+        else:
+            result["reason"] = evo.get("message", "no_changes")
+        return result
+    except Exception as e:
+        logger.error("Evolver auto error: %s", e, exc_info=True)
+        result["reason"] = f"exception:{e}"
+        return result

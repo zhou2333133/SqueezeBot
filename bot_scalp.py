@@ -77,6 +77,15 @@ def _make_signal_id(symbol: str, direction: str, entry_time: str, strategy_tag: 
         return "UNKNOWN"
 
 
+def _compute_cfg_hash(cfg: dict) -> str:
+    """快速配置哈希（轻量版）。"""
+    try:
+        from strategy_evolver import compute_config_hash
+        return compute_config_hash(cfg)
+    except Exception:
+        return "UNKNOWN"
+
+
 def _parse_time(time_str: str) -> float:
     """解析 "%Y-%m-%d %H:%M:%S" 为时间戳。失败返回 time.time()。"""
     from datetime import datetime
@@ -3301,7 +3310,9 @@ class BinanceScalpBot:
             "signal_id":    _make_signal_id(pos.symbol, pos.direction, pos.entry_time,
                                             pos.strategy_tag, pos.entry_price),
             "duration_sec":  round(hold_minutes * 60, 1),
-            "policy_version": str(self.cfg.get("CONFIG_PROFILE_VERSION", "UNKNOWN")),
+            "policy_version": str(self.cfg.get("POLICY_VERSION") or self.cfg.get("CONFIG_PROFILE_VERSION", "UNKNOWN")),
+            "config_hash": _compute_cfg_hash(self.cfg),
+            "evolver_run_id": str(self.cfg.get("EVOLVER_RUN_ID", "")),
             "order_plan": {
                 "side": pos.direction,
                 "entry_ref": round(pos.entry_price, 8),
@@ -3351,22 +3362,18 @@ class BinanceScalpBot:
             _record_strategy_trade(trade)
         except Exception as e:
             logger.debug("⚡ [%s] 写入策略统计失败: %s", pos.symbol, e)
-        # ── 自动进化触发 ─────────────────────────────────────────────────────
+        # ── 自动进化触发（增强版：state/pending/freeze/rollback）─────────────
         try:
+            from strategy_evolver import update_evolver_state_after_trade, run_evolution_auto
+            update_evolver_state_after_trade(trade)
+            _evolver_after = int(self.cfg.get("EVOLVER_RUN_AFTER_CLOSED_TRADES", 30) or 30)
             _evolver_trade_count = getattr(self, "_evolver_trade_count", 0) + 1
             self._evolver_trade_count = _evolver_trade_count
-            _evolver_last_run = getattr(self, "_evolver_last_run", 0.0)
-            _evolver_after = int(self.cfg.get("EVOLVER_RUN_AFTER_CLOSED_TRADES", 30) or 30)
-            _evolver_interval = float(self.cfg.get("EVOLVER_INTERVAL_MINUTES", 60) or 60)
-            if (self.cfg.get("EVOLVER_ENABLED", True)
-                    and _evolver_trade_count >= _evolver_after
-                    and time.time() - _evolver_last_run >= _evolver_interval * 60):
+            if _evolver_trade_count >= _evolver_after:
                 self._evolver_trade_count = 0
-                self._evolver_last_run = time.time()
-                from strategy_evolver import run_evolution_once
-                _evolver_result = run_evolution_once()
-                if _evolver_result.get("applied_updates"):
-                    logger.info("Evolver 已自动应用 %d 个参数修改", len(_evolver_result["applied_updates"]))
+                _auto_result = run_evolution_auto()
+                if _auto_result.get("event_type") in ("APPLY", "ROLLBACK"):
+                    logger.info("Evolver %s: %s", _auto_result["event_type"], _auto_result.get("reason", ""))
         except Exception as e:
             logger.debug("Evolver 触发异常 (不影响交易): %s", e)
 
