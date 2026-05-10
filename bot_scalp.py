@@ -2264,7 +2264,7 @@ class BinanceScalpBot:
                       else pos.trail_ref_price * (1 + trail_pct / 100))
 
         # 候选 SL = 取 EMA20-trail% 与 trail_ref-trail% 中"更紧"的那条
-        aggressive_runner = self.cfg.get("SCALP_TP3_AGGRESSIVE_RUNNER", True)
+        aggressive_runner = self.cfg.get("SCALP_TP3_AGGRESSIVE_RUNNER", False)
         soft_candidates = [c for c in (ema_trail, peak_trail) if c and c > 0]
         if not soft_candidates:
             return
@@ -3771,6 +3771,91 @@ class BinanceScalpBot:
             "paper": pos.paper,
         }
 
+    async def _orphan_scan_once(self) -> None:
+        """运行期孤儿仓位扫描：对比交易所真实仓位和本地记录。只对 LIVE 模式生效。"""
+        if not self.trader or not self.cfg.get("SCALP_AUTO_TRADE", False):
+            return
+        if self.cfg.get("SCALP_PAPER_TRADE", False):
+            return
+        try:
+            exchange_positions = await self.trader.get_open_positions()
+        except Exception as e:
+            logger.warning("孤儿仓位扫描异常: %s", e)
+            return
+        exchange_by_symbol = {
+            str(p.get("symbol", "")).upper(): p
+            for p in exchange_positions if p.get("symbol")
+        }
+        local_symbols = set(self.open_positions.keys())
+        exchange_symbols = set(exchange_by_symbol.keys())
+        auto_attach = self.cfg.get("ORPHAN_AUTO_ATTACH", True)
+        auto_protect = self.cfg.get("ORPHAN_AUTO_PROTECT", True)
+        auto_close = self.cfg.get("ORPHAN_AUTO_CLOSE_IF_PROTECT_FAIL", False)
+        sl_pct = float(self.cfg.get("SCALP_STOP_LOSS_PCT", 50.0) or 50.0)
+
+        # 孤儿仓位：交易所有，本地没有
+        orphaned = exchange_symbols - local_symbols
+        for sym in orphaned:
+            ep = exchange_by_symbol[sym]
+            amt = self._as_float(ep.get("positionAmt", 0))
+            mark_price = self._as_float(ep.get("markPrice", 0))
+            if abs(amt) <= 0 or mark_price <= 0:
+                continue
+            direction = "LONG" if amt > 0 else "SHORT"
+            exit_s = "SELL" if direction == "LONG" else "BUY"
+            qty = abs(amt)
+            logger.critical("发现孤儿仓位 %s %s %.6f @ %.6f，交易所持有但本地无记录", sym, direction, qty, mark_price)
+            if not auto_attach:
+                logger.critical("孤儿仓位 %s 未启用自动接管，请人工处理", sym)
+                continue
+            # 计算默认止损价
+            if direction == "LONG":
+                sl = mark_price * (1 - sl_pct / 100 / max(self.cfg.get("SCALP_LEVERAGE", 10), 1))
+            else:
+                sl = mark_price * (1 + sl_pct / 100 / max(self.cfg.get("SCALP_LEVERAGE", 10), 1))
+            sl_order_id = None
+            if auto_protect:
+                try:
+                    sl_resp = await self.trader.place_stop_loss_order(sym, exit_s, sl, qty, self._position_side(direction))
+                    if sl_resp and sl_resp.get("orderId"):
+                        sl_order_id = sl_resp["orderId"]
+                        logger.warning("孤儿仓位 %s 已补挂止损单 #%s", sym, sl_order_id)
+                except Exception as e:
+                    logger.critical("孤儿仓位 %s 止损单补挂失败: %s", sym, e)
+            if not sl_order_id and auto_close:
+                logger.critical("孤儿仓位 %s 保护失败，正在 reduceOnly 市价平仓", sym)
+                try:
+                    await self.trader.place_reduce_only_market_order(sym, exit_s, qty, self._position_side(direction))
+                except Exception as e:
+                    logger.critical("孤儿仓位 %s 紧急平仓也失败: %s，请人工处理", sym, e)
+            # 创建托管 ScalpPosition，纳入监控
+            pos = ScalpPosition(
+                symbol=sym, direction=direction,
+                entry_price=mark_price, quantity=qty,
+                quantity_remaining=qty, sl_price=sl,
+                tp1_price=mark_price, tp2_price=mark_price,
+                sl_order_id=sl_order_id, current_price=mark_price,
+                signal_label="ORPHAN", market_state="UNKNOWN",
+                paper=False, entry_context={},
+                protection_failed=(not sl_order_id and auto_protect),
+                protection_reason="orphan_protect_failed" if (not sl_order_id and auto_protect) else "",
+            )
+            self.open_positions[sym] = pos
+            _signals_mod.set_scalp_position(sym, pos.to_dict())
+            logger.warning("孤儿仓位 %s 已纳入本地管理", sym)
+
+        # 外部关闭：本地有记录但交易所已无仓
+        closed_externally = local_symbols - exchange_symbols
+        for sym in closed_externally:
+            pos = self.open_positions.get(sym)
+            if not pos or pos.paper:
+                continue
+            exit_price = self._latest_known_price(pos)
+            logger.warning("本地仓位 %s 交易所已无仓，标记为 CLOSED_EXTERNALLY @ %.6f", sym, exit_price)
+            self._record_scalp_trade(pos, exit_price, "EXCHANGE_SYNC_CLOSED")
+            del self.open_positions[sym]
+            _signals_mod.set_scalp_position(sym, None)
+
     async def _position_monitor_once(self) -> None:
         if not self.open_positions:
             return
@@ -3801,7 +3886,14 @@ class BinanceScalpBot:
                 logger.debug("⚡ 仓位同步异常 [%s]: %s", symbol, e)
 
     async def _position_monitor_loop(self) -> None:
+        _last_orphan_scan = 0.0
         while self.running:
             interval = float(self.cfg.get("SCALP_POSITION_CHECK_INTERVAL_SECONDS", 10) or 10)
             await asyncio.sleep(max(3.0, interval))
             await self._position_monitor_once()
+            # 孤儿仓位扫描（低频）
+            orphan_interval = float(self.cfg.get("ORPHAN_SCAN_INTERVAL_SEC", 60) or 60)
+            now = time.monotonic()
+            if self.cfg.get("ORPHAN_SCAN_ENABLED", True) and now - _last_orphan_scan >= orphan_interval:
+                _last_orphan_scan = now
+                await self._orphan_scan_once()

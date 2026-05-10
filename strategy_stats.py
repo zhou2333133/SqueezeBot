@@ -11,13 +11,13 @@
   get_dashboard(mode)    → 按 strategy_tag 聚合 Dashboard 数据（支持 mode=paper/live/all）
   get_trades(limit, mode) → 返回最近 N 条成交记录
 """
-import json
 import logging
 import os
 import time
 from collections import defaultdict
 
 from config import DATA_DIR
+from persistence import append_jsonl, read_jsonl
 
 logger = logging.getLogger(__name__)
 
@@ -124,22 +124,10 @@ def _accumulate(st: dict, trade: dict) -> None:
 
 
 def _load_trades(mode_filter: str = "all") -> list[dict]:
-    if not os.path.exists(TRADES_FILE):
-        return []
-    try:
-        trades = []
-        with open(TRADES_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                trade = json.loads(line)
-                if _mode_match(trade, mode_filter):
-                    trades.append(trade)
-        return trades
-    except Exception as e:
-        logger.warning("策略成交记录加载失败: %s", e)
-        return []
+    trades = read_jsonl(TRADES_FILE)
+    if mode_filter != "all":
+        trades = [t for t in trades if _mode_match(t, mode_filter)]
+    return trades
 
 
 def _mode_match(trade: dict, mode_filter: str) -> bool:
