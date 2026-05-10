@@ -23,6 +23,7 @@ OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY",     "")
 GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY",     "")
 ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY",  "")
 DEEPSEEK_API_KEY   = os.getenv("DEEPSEEK_API_KEY",   "")
+MINIMAX_API_KEY    = os.getenv("MINIMAX_API_KEY",    "")
 BINANCE_SQUARE_COOKIE      = os.getenv("BINANCE_SQUARE_COOKIE",      "")
 BINANCE_SQUARE_CSRF_TOKEN  = os.getenv("BINANCE_SQUARE_CSRF_TOKEN",  "")
 BINANCE_SQUARE_BNC_UUID    = os.getenv("BINANCE_SQUARE_BNC_UUID",    "")
@@ -156,6 +157,7 @@ def ai_credentials_status() -> dict:
         "gemini": _valid_secret(os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)),
         "anthropic": _valid_secret(os.getenv("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY)),
         "deepseek": _valid_secret(os.getenv("DEEPSEEK_API_KEY", DEEPSEEK_API_KEY)),
+        "minimax": _valid_secret(os.getenv("MINIMAX_API_KEY", MINIMAX_API_KEY)),
     }
     return {
         "enabled": any(providers.values()),
@@ -311,6 +313,7 @@ class ConfigManager:
         "YAOBI_AI_MODEL_GEMINI": "gemini-2.5-flash",
         "YAOBI_AI_MODEL_ANTHROPIC": "claude-3-5-haiku-latest",
         "YAOBI_AI_MODEL_DEEPSEEK": "deepseek-v4-flash",
+        "YAOBI_AI_MODEL_MINIMAX": "minimax-m1",
         "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
         "YAOBI_AI_TOP_OUTPUT": 6,
         "YAOBI_AI_FAILURE_FALLBACK_ENABLED": True,

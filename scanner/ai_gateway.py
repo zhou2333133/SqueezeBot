@@ -22,6 +22,7 @@ from config import (
     DATA_DIR,
     DEEPSEEK_API_KEY,
     GEMINI_API_KEY,
+    MINIMAX_API_KEY,
     OPENAI_API_KEY,
     ai_credentials_status,
     config_manager,
@@ -238,6 +239,7 @@ def provider_status() -> dict:
             "gemini": cfg.get("YAOBI_AI_MODEL_GEMINI", "gemini-2.5-flash"),
             "anthropic": cfg.get("YAOBI_AI_MODEL_ANTHROPIC", "claude-3-5-haiku-latest"),
             "deepseek": cfg.get("YAOBI_AI_MODEL_DEEPSEEK", "deepseek-v4-flash"),
+            "minimax": cfg.get("YAOBI_AI_MODEL_MINIMAX", "minimax-m1"),
         },
         "cache_ttl_min": cfg.get("YAOBI_AI_CACHE_TTL_MINUTES", 30),
         "min_interval_min": cfg.get("YAOBI_AI_MIN_INTERVAL_MINUTES", 15),
@@ -536,6 +538,8 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
                 text, token_count = await _call_anthropic(session, system_prompt, raw_payload, max_output)
             elif provider == "deepseek" and (os.getenv("DEEPSEEK_API_KEY") or DEEPSEEK_API_KEY):
                 text, token_count = await _call_deepseek(session, system_prompt, raw_payload, max_output)
+            elif provider == "minimax" and (os.getenv("MINIMAX_API_KEY") or MINIMAX_API_KEY):
+                text, token_count = await _call_minimax(session, system_prompt, raw_payload, max_output)
             else:
                 record_provider_skip(provider or "ai", _ENDPOINT, "provider_key_missing", items=len(rows))
                 continue
@@ -771,6 +775,34 @@ async def _call_deepseek(session: aiohttp.ClientSession, system_prompt: str, pay
                 tokens = int(usage.get("total_tokens") or (_estimate_tokens(payload) + _estimate_tokens(text)))
                 return text, tokens
     raise RuntimeError(last_error or "deepseek_model_unavailable")
+
+
+async def _call_minimax(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:
+    """调用 MiniMax M1 或更新模型（OpenAI 兼容接口）。"""
+    api_key = os.getenv("MINIMAX_API_KEY") or MINIMAX_API_KEY
+    model = str(config_manager.settings.get("YAOBI_AI_MODEL_MINIMAX", "minimax-m1") or "minimax-m1")
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": payload},
+        ],
+        "temperature": 0.1,
+        "max_tokens": max_output,
+    }
+    async with session.post(
+        "https://api.minimax.io/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json=body,
+        timeout=aiohttp.ClientTimeout(total=30),
+    ) as resp:
+        data = await resp.json(content_type=None)
+        if resp.status >= 300:
+            raise RuntimeError(f"minimax_http_{resp.status}[{model}]: {str(data)[:160]}")
+        text = data["choices"][0]["message"]["content"]
+        usage = data.get("usage") or {}
+        tokens = int(usage.get("total_tokens") or (_estimate_tokens(payload) + _estimate_tokens(text)))
+        return text, tokens
 
 
 def _deepseek_model_candidates() -> list[tuple[str, bool]]:
