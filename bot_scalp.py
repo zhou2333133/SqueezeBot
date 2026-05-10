@@ -3130,8 +3130,9 @@ class BinanceScalpBot:
             "tp2_hit":      pos.tp2_hit,
             "entry_context": pos.entry_context,
             "close_reason": close_reason,
-            "paper":        pos.paper,
-            "strategy_tag": pos.strategy_tag,
+            "paper":          pos.paper,
+            "execution_mode": "PAPER" if pos.paper else "LIVE",
+            "strategy_tag":   pos.strategy_tag,
             "leverage":     self.cfg.get("SCALP_LEVERAGE", 10),
             "quantity":     round(pos.quantity, 6),
         }

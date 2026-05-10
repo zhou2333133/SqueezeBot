@@ -1321,6 +1321,26 @@ async def ws_scalp_signals(websocket: WebSocket):
     await _ws_pump(websocket, scalp_signal_queue, sleep=0.3)
 
 
+# ─── 策略统计 API ──────────────────────────────────────────────────────────────
+
+@app.get("/api/strategy/stats")
+async def strategy_stats(mode: str = "all"):
+    try:
+        from strategy_stats import get_dashboard
+        return JSONResponse(get_dashboard(mode=mode))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/strategy/trades")
+async def strategy_trades(limit: int = 50, mode: str = "all"):
+    try:
+        from strategy_stats import get_trades
+        return JSONResponse(get_trades(limit=limit, mode=mode))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── 妖币扫描器 API ───────────────────────────────────────────────────────────
 
 @app.get("/api/yaobi/status")
