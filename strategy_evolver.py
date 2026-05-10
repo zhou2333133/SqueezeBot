@@ -549,7 +549,28 @@ def run_evolution_once() -> dict[str, Any]:
             result["message"] = f"所有 proposal 被拒绝 ({len(rejected)} rejected)"
             return result
 
-        # 6. 备份
+        # 6. 反事实验证
+        try:
+            from proposal_validator import counterfactual_validate_proposals, write_proposal_validation_history
+            cv_results = counterfactual_validate_proposals(valid, cfg)
+            cv_accepted = [r for r in cv_results if r.get("validation_action") in ("ACCEPT", "WEAK_ACCEPT")]
+            cv_rejected = [r for r in cv_results if r.get("validation_action") in ("REJECT", "NEED_MORE_DATA")]
+            # 只保留 ACCEPT / WEAK_ACCEPT
+            accepted_keys = {r["key"] for r in cv_accepted}
+            valid = [v for v in valid if v["key"] in accepted_keys]
+            for r in cv_rejected:
+                rejected.append({"key": r["key"], "rejected_reason": f"COUNTERFACTUAL_{r['validation_action']}",
+                                 "reason": r.get("reason", "")})
+            result["counterfactual_results"] = {"accepted": len(cv_accepted), "rejected": len(cv_rejected)}
+            try:
+                write_proposal_validation_history(
+                    result.get("evolver_run_id", ""), result.get("policy_version", ""), cv_results)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug("反事实验证异常 (不影响): %s", e)
+
+        # 7. 备份
         if cfg.get("EVOLVER_BACKUP_ENABLED", True):
             backup_path = backup_config()
             result["config_backup"] = backup_path
