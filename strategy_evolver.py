@@ -176,6 +176,43 @@ def propose_param_updates(metrics: dict[str, dict], patterns: list[dict], curren
     proposals: list[dict] = []
     cfg = current_config
 
+    # 策略权重/启停 proposals
+    for tag, m in metrics.items():
+        eng_key = _tag_key(tag)
+        weight_key = f"STRATEGY_WEIGHTS.{eng_key}"
+        enabled_key = f"STRATEGY_ENABLED.{eng_key}"
+        if m["total_trades"] < int(cfg.get("EVOLVER_MIN_TRADES_PER_STRATEGY", 20) or 20):
+            continue
+        wr = m["win_rate"]
+        exp = m["expectancy"]
+        disable_min = int(cfg.get("EVOLVER_DISABLE_STRATEGY_MIN_TRADES", 30) or 30)
+        disable_wr = float(cfg.get("EVOLVER_DISABLE_STRATEGY_WIN_RATE_BELOW", 0.30) or 0.30)
+        disable_exp = float(cfg.get("EVOLVER_DISABLE_STRATEGY_EXPECTANCY_BELOW", 0.0) or 0.0)
+        down_wr = float(cfg.get("EVOLVER_DOWN_WEIGHT_WIN_RATE_BELOW", 0.45) or 0.45)
+        down_exp = float(cfg.get("EVOLVER_DOWN_WEIGHT_EXPECTANCY_BELOW", 0.0) or 0.0)
+        up_wr = float(cfg.get("EVOLVER_UP_WEIGHT_WIN_RATE_ABOVE", 0.58) or 0.58)
+        up_exp = float(cfg.get("EVOLVER_UP_WEIGHT_EXPECTANCY_ABOVE", 0.0) or 0.0)
+        # 禁用
+        if m["total_trades"] >= disable_min and wr < disable_wr and exp < disable_exp:
+            if not _is_last_enabled_strategy(eng_key, cfg):
+                proposals.append({"key": enabled_key, "old": True, "new": False,
+                                  "reason": f"win_rate={wr:.2f}<{disable_wr} expectancy={exp:.2f}<{disable_exp}",
+                                  "strategy_tag": tag})
+        # 降权
+        elif wr < down_wr and exp < down_exp:
+            current_w = cfg.get(weight_key, 1.0)
+            new_w = max(0.1, float(current_w) - 0.2)
+            if abs(new_w - float(current_w)) > 0.01:
+                proposals.append({"key": weight_key, "old": current_w, "new": new_w,
+                                  "reason": f"win_rate={wr:.2f}<{down_wr} 降权", "strategy_tag": tag})
+        # 升权
+        elif wr >= up_wr and exp >= up_exp and eng_key != "UNKNOWN":
+            current_w = cfg.get(weight_key, 1.0)
+            new_w = min(2.0, float(current_w) + 0.2)
+            if abs(new_w - float(current_w)) > 0.01:
+                proposals.append({"key": weight_key, "old": current_w, "new": new_w,
+                                  "reason": f"win_rate={wr:.2f}>={up_wr} 升权", "strategy_tag": tag})
+
     for p in patterns:
         tag = p["strategy_tag"]
         pattern = p["pattern"]
@@ -282,6 +319,11 @@ def validate_param_updates(proposals: list[dict], current_config: dict) -> tuple
             rejected.append({**prop, "rejected_reason": "LOCKED_PARAM"})
             continue
 
+        # 检查 INEFFECTIVE_PARAMS
+        if hasattr(config_manager, "INEFFECTIVE_PARAMS") and key in config_manager.INEFFECTIVE_PARAMS:
+            rejected.append({**prop, "rejected_reason": "INEFFECTIVE_PARAM"})
+            continue
+
         # 检查 PARAM_BOUNDS
         if key not in bounds:
             rejected.append({**prop, "rejected_reason": "NO_BOUNDS"})
@@ -339,7 +381,6 @@ def apply_param_updates(valid_updates: list[dict]) -> list[dict]:
         new_val = update["new"]
         old_val = config_manager.settings.get(key)
         if old_val is not None:
-            # 类型转换（保留原类型）
             typ = type(old_val)
             try:
                 converted = typ(new_val)

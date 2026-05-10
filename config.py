@@ -170,9 +170,15 @@ class ConfigManager:
     PROFILE_VERSION = 2026050101
     # ── 进化策略锁定参数（Evolver 禁止修改）────────────────────────────────
     LOCKED_PARAMS = frozenset({
-        "SCALP_MAX_POSITIONS",       # 最大同时持仓数
-        "SCALP_POSITION_USDT",       # 单笔开仓金额
-        "SCALP_RISK_PER_TRADE_USDT", # 单笔风险金额
+        "SCALP_MAX_POSITIONS",
+        "SCALP_POSITION_USDT",
+        "SCALP_RISK_PER_TRADE_USDT",
+    })
+
+    # ── 无效进化参数（PARAM_BOUNDS 中定义但代码未读取，禁止 Evolver 修改）──
+    INEFFECTIVE_PARAMS = frozenset({
+        "STRATEGY_OI爆发_MIN_OI_CHANGE_15M",
+        "STRATEGY_静默建仓_MIN_OI_CHANGE_1H",
     })
 
     # ── 进化策略允许修改的参数边界 ─────────────────────────────────────────
@@ -237,6 +243,12 @@ class ConfigManager:
         "STRATEGY_早期启动_MAX_PRICE_CHANGE_24H":[5.0, 50.0],
         "STRATEGY_早期启动_MIN_VOL_RATIO":      [0.5,  5.0],
         "STRATEGY_早期启动_MIN_OI_CHANGE_15M":  [0.1,  5.0],
+                "STRATEGY_WEIGHTS.STARTUP":              [0.0,  2.0],
+        "STRATEGY_WEIGHTS.OI_EXPLOSION":         [0.0,  2.0],
+        "STRATEGY_WEIGHTS.QUIET_ACCUM":           [0.0,  2.0],
+        "STRATEGY_WEIGHTS.PRE_BREAKOUT":          [0.0,  2.0],
+        "STRATEGY_WEIGHTS.EARLY_START":           [0.0,  2.0],
+        "STRATEGY_WEIGHTS.UNKNOWN":               [0.0,  1.0],
     }
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。

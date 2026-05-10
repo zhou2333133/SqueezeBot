@@ -2802,6 +2802,37 @@ class BinanceScalpBot:
         )
         base_signal["strategy_tag"] = strategy_tag
 
+        # ── 策略策略（Evolver 控制启停/权重）────────────────────────────────────
+        _policy_result = None
+        try:
+            from strategy_policy import apply_strategy_policy
+            _policy_result = apply_strategy_policy(strategy_tag, base_signal, cfg)
+            base_signal["strategy_policy"] = _policy_result
+            if _policy_result.get("action") == "BLOCK":
+                reason = _policy_result.get("reason", "STRATEGY_DISABLED")
+                _policy_result["blocked_reason"] = reason
+                add_scalp_signal({**base_signal, "auto_traded": False,
+                                  "rejected_reason": reason})
+                try:
+                    from persistence import append_jsonl
+                    import os
+                    from config import DATA_DIR
+                    append_jsonl(os.path.join(DATA_DIR, "blocked_signals.jsonl"), {
+                        "signal_id": "", "symbol": symbol, "side": direction,
+                        "strategy_tag": strategy_tag, "blocked_reason": reason,
+                        "policy_version": str(cfg.get("POLICY_VERSION", "")),
+                        "decision_trace": {"strategy_policy": _policy_result},
+                        "timestamp": __import__("time").time(),
+                    })
+                except Exception:
+                    pass
+                logger.info("⚡ [%s] ❌ 策略 %s 已禁用，跳过开仓", symbol, strategy_tag)
+                return
+        except Exception as e:
+            logger.debug("⚡ [%s] 策略策略异常 (不影响交易): %s", symbol, e)
+            if _policy_result is None:
+                _policy_result = {"action": "ALLOW", "reason": "exception_fallback"}
+
         # ── 单币 AI 判单（统一 Gate，PAPER/LIVE 共用）─────────────────────────
         _judge_result = None
         if cfg.get("SINGLE_COIN_JUDGE_ENABLED", False):
