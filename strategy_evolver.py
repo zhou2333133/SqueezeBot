@@ -962,34 +962,53 @@ def _apply_shadow_to_proposals(proposals: list[dict], metrics: dict, cfg: dict) 
     if not shadow:
         return proposals
 
+    by_tag = shadow.get("by_tag", {})
     for tag_key in ["STARTUP", "OI_EXPLOSION", "QUIET_ACCUM", "PRE_BREAKOUT", "EARLY_START"]:
-        sdata = shadow.get(tag_key, {})
+        sdata = by_tag.get(tag_key, {})
         if sdata.get("shadow_closed", 0) < 5:
             continue
         swr = sdata.get("shadow_win_rate", 0.0)
         avg_pnl = sdata.get("avg_hypothetical_pnl_pct", 0.0)
+        sl_hit_rate = sdata.get("sl_hit_rate", 0.0)
+        tp1_hit = sdata.get("tp1_hit_rate", 0.0)
+        avg_mfe = sdata.get("avg_mfe_pct", 0.0)
+        avg_mae = sdata.get("avg_mae_pct", 0.0)
         wkey = f"STRATEGY_WEIGHTS.{tag_key}"
         ekey = f"STRATEGY_ENABLED.{tag_key}"
         current_w = float(cfg.get(wkey, 1.0))
 
-        # shadow 表现好 → 说明过度过滤 → 升权或重新启用
+        # 拦截正确：shadow 亏钱多
+        if swr < 0.35 and avg_pnl < 0:
+            if current_w > 0.5:
+                proposals.append({"key": wkey, "old": current_w, "new": max(0.3, current_w - 0.2),
+                                  "reason": f"shadow_swr={swr:.2f}_downweight", "strategy_tag": tag_key})
+            continue
+
+        # 过度过滤：shadow 赚钱多
         if swr > 0.55 and avg_pnl > 0:
-            # 当前禁用 → 重新启用
             if not cfg.get(ekey, True):
                 if not _is_last_enabled_strategy(tag_key, cfg):
                     proposals.append({"key": ekey, "old": False, "new": True,
                                       "reason": f"shadow_swr={swr:.2f}_reenable", "strategy_tag": tag_key})
-            # 当前权重低 → 升权
             elif current_w < 1.0:
-                new_w = min(1.5, current_w + 0.2)
-                proposals.append({"key": wkey, "old": current_w, "new": new_w,
+                proposals.append({"key": wkey, "old": current_w, "new": min(1.5, current_w + 0.2),
                                   "reason": f"shadow_swr={swr:.2f}_upweight", "strategy_tag": tag_key})
+            continue
 
-        # shadow 表现差 → 说明拦截正确 → 维持或加强过滤
-        elif swr < 0.35 and avg_pnl < 0:
-            if current_w > 0.5:
-                new_w = max(0.3, current_w - 0.2)
-                proposals.append({"key": wkey, "old": current_w, "new": new_w,
-                                  "reason": f"shadow_swr={swr:.2f}_downweight", "strategy_tag": tag_key})
+        # SL 率高但 MAE 小 → stop_too_tight → 适当放宽 SL
+        if sl_hit_rate > 0.5 and abs(avg_mae) < 1.0:
+            current_sl = float(cfg.get("SCALP_STOP_LOSS_PCT", 50.0))
+            if current_sl < 60.0:
+                proposals.append({"key": "SCALP_STOP_LOSS_PCT", "old": current_sl, "new": current_sl * 1.05,
+                                  "reason": f"shadow_sl={sl_hit_rate:.2f}_mae={avg_mae:.2f}_loosen_sl",
+                                  "strategy_tag": tag_key})
+
+        # TP1 命中率高但 timeout 多 → 快进快出
+        if tp1_hit > 0.3 and avg_mfe > 2.0:
+            current_confirm = int(cfg.get("SCALP_TP_CONFIRM_TICKS", 2))
+            if current_confirm > 1:
+                proposals.append({"key": "SCALP_TP_CONFIRM_TICKS", "old": current_confirm, "new": 1,
+                                  "reason": f"shadow_tp1={tp1_hit:.2f}_mfe={avg_mfe:.2f}_reduce_confirm",
+                                  "strategy_tag": tag_key})
 
     return proposals
