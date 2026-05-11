@@ -114,7 +114,7 @@
     <div class="hidden sm:flex items-center gap-3 text-xs">
       <template x-for="[k,lb] in [['scalpLog','超短线日志'],['scalpSig','超短线信号'],['yaobiCand','妖币扫描'],['yaobiOpp','机会队列']]" :key="k">
         <div class="flex items-center gap-1.5">
-          <span class="w-2 h-2 rounded-full flex-shrink-0" :class="wsStatus[k]==='open'?'bg-green-500 shadow-[0_0_5px_#22c55e]':'bg-gray-700'"></span>
+          <span class="w-2 h-2 rounded-full flex-shrink-0" :class="ws运行状态[k]==='open'?'bg-green-500 shadow-[0_0_5px_#22c55e]':'bg-gray-700'"></span>
           <span class="text-gray-600" x-text="lb"></span>
         </div>
       </template>
@@ -260,14 +260,14 @@
           <span class="text-gray-600 text-xs" x-text="scalpOpen?'▲':'▼'"></span>
         </button>
         <div x-show="scalpOpen" class="px-5 pb-5 space-y-4">
-          <form @submit.prevent="saveScalpConfig()" id="scalpForm">
+          <form @submit.pr事件="saveScalpConfig()" id="scalpForm">
 
             <p class="text-xs text-orange-800 uppercase tracking-widest pt-1">交易方向 & 执行模式</p>
             <div class="flex flex-wrap gap-4 mt-2">
               <template x-for="f in scalpToggles" :key="f.key">
                 <label class="flex items-center gap-2 cursor-pointer select-none">
                   <label class="toggle to-toggle">
-                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$event.target.checked">
+                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]" @change="cfg[f.key]=$事件.target.checked">
                     <span class="ttrack"></span>
                   </label>
                   <span class="text-sm" :class="f.color" x-text="f.label"></span>
@@ -297,7 +297,7 @@
             <div class="grid grid-cols-4 gap-3 mt-3">
               <label class="flex items-center gap-2 cursor-pointer select-none pt-5">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_USE_YAOBI_CONTEXT" :checked="cfg.SCALP_USE_YAOBI_CONTEXT!==false" @change="cfg.SCALP_USE_YAOBI_CONTEXT=$event.target.checked">
+                  <input type="checkbox" name="SCALP_USE_YAOBI_CONTEXT" :checked="cfg.SCALP_USE_YAOBI_CONTEXT!==false" @change="cfg.SCALP_USE_YAOBI_CONTEXT=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <div>
@@ -321,56 +321,56 @@
             <div class="flex flex-wrap gap-5 mt-3">
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_YAOBI_BLOCK_DECISION_BAN" :checked="cfg.SCALP_YAOBI_BLOCK_DECISION_BAN!==false" @change="cfg.SCALP_YAOBI_BLOCK_DECISION_BAN=$event.target.checked">
+                  <input type="checkbox" name="SCALP_YAOBI_BLOCK_DECISION_BAN" :checked="cfg.SCALP_YAOBI_BLOCK_DECISION_BAN!==false" @change="cfg.SCALP_YAOBI_BLOCK_DECISION_BAN=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-orange-300">妖币禁入拦截</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_YAOBI_BLOCK_WAIT_CONFIRM" :checked="cfg.SCALP_YAOBI_BLOCK_WAIT_CONFIRM!==false" @change="cfg.SCALP_YAOBI_BLOCK_WAIT_CONFIRM=$event.target.checked">
+                  <input type="checkbox" name="SCALP_YAOBI_BLOCK_WAIT_CONFIRM" :checked="cfg.SCALP_YAOBI_BLOCK_WAIT_CONFIRM!==false" @change="cfg.SCALP_YAOBI_BLOCK_WAIT_CONFIRM=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-orange-300">等待确认不交易</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_YAOBI_BLOCK_HIGH_RISK" :checked="cfg.SCALP_YAOBI_BLOCK_HIGH_RISK!==false" @change="cfg.SCALP_YAOBI_BLOCK_HIGH_RISK=$event.target.checked">
+                  <input type="checkbox" name="SCALP_YAOBI_BLOCK_HIGH_RISK" :checked="cfg.SCALP_YAOBI_BLOCK_HIGH_RISK!==false" @change="cfg.SCALP_YAOBI_BLOCK_HIGH_RISK=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-orange-300">OKX/Surf 高风险拦截</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_YAOBI_FUNDING_OI_GUARD" :checked="cfg.SCALP_YAOBI_FUNDING_OI_GUARD!==false" @change="cfg.SCALP_YAOBI_FUNDING_OI_GUARD=$event.target.checked">
+                  <input type="checkbox" name="SCALP_YAOBI_FUNDING_OI_GUARD" :checked="cfg.SCALP_YAOBI_FUNDING_OI_GUARD!==false" @change="cfg.SCALP_YAOBI_FUNDING_OI_GUARD=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-orange-300">OI/费率方向护栏</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_YAOBI_DIRECTION_GUARD" :checked="cfg.SCALP_YAOBI_DIRECTION_GUARD===true" @change="cfg.SCALP_YAOBI_DIRECTION_GUARD=$event.target.checked">
+                  <input type="checkbox" name="SCALP_YAOBI_DIRECTION_GUARD" :checked="cfg.SCALP_YAOBI_DIRECTION_GUARD===true" @change="cfg.SCALP_YAOBI_DIRECTION_GUARD=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">情绪方向硬过滤</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_OPPORTUNITY_GUARD_ENABLED" :checked="cfg.SCALP_OPPORTUNITY_GUARD_ENABLED!==false" @change="cfg.SCALP_OPPORTUNITY_GUARD_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="SCALP_OPPORTUNITY_GUARD_ENABLED" :checked="cfg.SCALP_OPPORTUNITY_GUARD_ENABLED!==false" @change="cfg.SCALP_OPPORTUNITY_GUARD_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-emerald-300">机会队列方向护栏</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_REQUIRE_OPPORTUNITY_QUEUE" :checked="cfg.SCALP_REQUIRE_OPPORTUNITY_QUEUE===true" @change="cfg.SCALP_REQUIRE_OPPORTUNITY_QUEUE=$event.target.checked">
+                  <input type="checkbox" name="SCALP_REQUIRE_OPPORTUNITY_QUEUE" :checked="cfg.SCALP_REQUIRE_OPPORTUNITY_QUEUE===true" @change="cfg.SCALP_REQUIRE_OPPORTUNITY_QUEUE=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">必须进入机会队列</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_REQUIRE_OPPORTUNITY_PERMISSION" :checked="cfg.SCALP_REQUIRE_OPPORTUNITY_PERMISSION!==false" @change="cfg.SCALP_REQUIRE_OPPORTUNITY_PERMISSION=$event.target.checked">
+                  <input type="checkbox" name="SCALP_REQUIRE_OPPORTUNITY_PERMISSION" :checked="cfg.SCALP_REQUIRE_OPPORTUNITY_PERMISSION!==false" @change="cfg.SCALP_REQUIRE_OPPORTUNITY_PERMISSION=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-emerald-300">只做WATCH信号</span>
@@ -422,7 +422,7 @@
               <div class="flex items-start pt-5">
                 <label class="flex items-center gap-2 cursor-pointer select-none">
                   <label class="toggle to-toggle">
-                    <input type="checkbox" name="SCALP_USE_DYNAMIC_SL" :checked="cfg.SCALP_USE_DYNAMIC_SL!==false" @change="cfg.SCALP_USE_DYNAMIC_SL=$event.target.checked">
+                    <input type="checkbox" name="SCALP_USE_DYNAMIC_SL" :checked="cfg.SCALP_USE_DYNAMIC_SL!==false" @change="cfg.SCALP_USE_DYNAMIC_SL=$事件.target.checked">
                     <span class="ttrack"></span>
                   </label>
                   <div>
@@ -550,7 +550,7 @@
                 <input class="inp inp-o" type="number" step="0.1" name="CONTINUATION_MAX_EMA20_DEVIATION_PCT_LONG" :value="cfg.CONTINUATION_MAX_EMA20_DEVIATION_PCT_LONG??2.50"></div>
               <label class="flex items-center gap-2 cursor-pointer select-none pt-6">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_BLOCK_TREND_LATE_ENTRY" :checked="cfg.SCALP_BLOCK_TREND_LATE_ENTRY!==false" @change="cfg.SCALP_BLOCK_TREND_LATE_ENTRY=$event.target.checked">
+                  <input type="checkbox" name="SCALP_BLOCK_TREND_LATE_ENTRY" :checked="cfg.SCALP_BLOCK_TREND_LATE_ENTRY!==false" @change="cfg.SCALP_BLOCK_TREND_LATE_ENTRY=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">阻止 TREND_LATE 新仓</span>
@@ -584,7 +584,7 @@
                 <input class="inp inp-o" type="number" step="0.1" name="SCALP_TP3_TRAIL_PCT" :value="cfg.SCALP_TP3_TRAIL_PCT"></div>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle to-toggle">
-                  <input type="checkbox" name="SCALP_SKIP_TP1_IN_STRONG_TREND" :checked="cfg.SCALP_SKIP_TP1_IN_STRONG_TREND===true" @change="cfg.SCALP_SKIP_TP1_IN_STRONG_TREND=$event.target.checked">
+                  <input type="checkbox" name="SCALP_SKIP_TP1_IN_STRONG_TREND" :checked="cfg.SCALP_SKIP_TP1_IN_STRONG_TREND===true" @change="cfg.SCALP_SKIP_TP1_IN_STRONG_TREND=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">强趋势跳过TP1</span>
@@ -604,7 +604,7 @@
             </div>
             <label class="flex items-center gap-2 cursor-pointer select-none mt-3">
               <label class="toggle to-toggle">
-                <input type="checkbox" name="SCALP_TP3_AGGRESSIVE_RUNNER" :checked="cfg.SCALP_TP3_AGGRESSIVE_RUNNER!==false" @change="cfg.SCALP_TP3_AGGRESSIVE_RUNNER=$event.target.checked">
+                <input type="checkbox" name="SCALP_TP3_AGGRESSIVE_RUNNER" :checked="cfg.SCALP_TP3_AGGRESSIVE_RUNNER!==false" @change="cfg.SCALP_TP3_AGGRESSIVE_RUNNER=$事件.target.checked">
                 <span class="ttrack"></span>
               </label>
               <span class="text-sm text-orange-300">TP3 Runner 激进止盈</span>
@@ -633,7 +633,7 @@
             </div>
             <label class="flex items-center gap-2 cursor-pointer select-none mt-3">
               <label class="toggle to-toggle">
-                <input type="checkbox" name="SCALP_ENABLED" :checked="cfg.SCALP_ENABLED" @change="cfg.SCALP_ENABLED=$event.target.checked">
+                <input type="checkbox" name="SCALP_ENABLED" :checked="cfg.SCALP_ENABLED" @change="cfg.SCALP_ENABLED=$事件.target.checked">
                 <span class="ttrack"></span>
               </label>
               <span class="text-sm text-gray-400">启动时自动开启超短线</span>
@@ -991,16 +991,16 @@
     <div class="flex items-center gap-3">
       <span class="w-2.5 h-2.5 rounded-full" :class="yaobiRunning?'bg-green-400 shadow-[0_0_8px_#4ade80] animate-pulse':'bg-gray-600'"></span>
       <span class="font-semibold" :class="yaobiRunning?'text-green-300':'text-gray-500'"
-        x-text="yaobiStatus.scanning?'⏳ 扫描中...':(yaobiRunning?'🔍 运行中':'● 已停止')"></span>
-      <span x-show="yaobiStatus.last_scan" class="text-xs text-gray-600"
-        x-text="'最后扫描: '+(yaobiStatus.last_scan||'—').slice(11,16)"></span>
-      <span x-show="yaobiStatus.scored>0"
+        x-text="yaobi运行状态.scanning?'⏳ 扫描中...':(yaobiRunning?'🔍 运行中':'● 已停止')"></span>
+      <span x-show="yaobi运行状态.last_scan" class="text-xs text-gray-600"
+        x-text="'最后扫描: '+(yaobi运行状态.last_scan||'—').slice(11,16)"></span>
+      <span x-show="yaobi运行状态.scored>0"
         class="px-2.5 py-0.5 rounded-lg text-xs font-bold"
         style="background:rgba(74,222,128,.15);color:#4ade80"
-        x-text="yaobiStatus.scored+' 个达标'"></span>
+        x-text="yaobi运行状态.scored+' 个达标'"></span>
     </div>
     <div class="flex items-center gap-2 ml-auto">
-      <button @click="yaobiScanNow()" :disabled="yaobiStatus.scanning"
+      <button @click="yaobiScanNow()" :disabled="yaobi运行状态.scanning"
         class="px-3 py-1.5 rounded-xl bg-[#0f2a1a] hover:bg-[#163d26] text-green-400 text-xs font-medium transition-colors disabled:opacity-40">
         ↻ 立即扫描
       </button>
@@ -1017,7 +1017,7 @@
     <div class="card p-4">
       <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">候选总数</div>
       <div class="text-2xl font-bold text-green-400" x-text="yaobiCandidates.length"></div>
-      <div class="text-xs text-gray-600 mt-0.5" x-text="'已扫描 '+(yaobiStatus.total_scanned||0)+' 个'"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="'已扫描 '+(yaobi运行状态.total_scanned||0)+' 个'"></div>
     </div>
     <div class="card p-4">
       <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">高分候选 (≥70)</div>
@@ -1029,8 +1029,8 @@
     </div>
     <div class="card p-4">
       <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">异常币雷达</div>
-      <div class="text-2xl font-bold text-orange-400" x-text="yaobiCandidates.filter(c=>(c.anomaly_score||0)>=(yaobiStatus.min_anomaly||35)).length"></div>
-      <div class="text-xs text-gray-600 mt-0.5" x-text="'阈值 '+(yaobiStatus.min_anomaly||cfg.YAOBI_MIN_ANOMALY_SCORE||35)"></div>
+      <div class="text-2xl font-bold text-orange-400" x-text="yaobiCandidates.filter(c=>(c.anomaly_score||0)>=(yaobi运行状态.min_anomaly||35)).length"></div>
+      <div class="text-xs text-gray-600 mt-0.5" x-text="'阈值 '+(yaobi运行状态.min_anomaly||cfg.YAOBI_MIN_ANOMALY_SCORE||35)"></div>
     </div>
     <div class="card p-4">
       <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">OI趋势 S/A</div>
@@ -1055,11 +1055,11 @@
         </div>
         <div class="mt-3 flex flex-wrap gap-2">
           <span class="intel-pill" :class="yaobiRunning?'intel-pill-ok':'intel-pill-warn'" x-text="yaobiRunning?'Scanner Ready':'Scanner Stopped'"></span>
-          <span class="intel-pill" :class="(yaobiStatus.sources?.binance_short_intel?.count||0)>0?'intel-pill-ok':'intel-pill-warn'"
-            x-text="'Binance 5m/15m '+((yaobiStatus.sources?.binance_short_intel?.count||0)>0?'Ready':'Waiting')"></span>
-          <span class="intel-pill" :class="(yaobiStatus.credentials?.okx?.enabled)?'intel-pill-ok':'intel-pill-warn'"
-            x-text="'OKX '+((yaobiStatus.credentials?.okx?.enabled)?'Ready':'No Key')"></span>
-          <span class="intel-pill" :class="(yaobiStatus.ai_status?.enabled && yaobiStatus.credentials?.ai?.enabled)?'intel-pill-ok':'intel-pill-warn'"
+          <span class="intel-pill" :class="(yaobi运行状态.sources?.binance_short_intel?.count||0)>0?'intel-pill-ok':'intel-pill-warn'"
+            x-text="'Binance 5m/15m '+((yaobi运行状态.sources?.binance_short_intel?.count||0)>0?'Ready':'Waiting')"></span>
+          <span class="intel-pill" :class="(yaobi运行状态.credentials?.okx?.enabled)?'intel-pill-ok':'intel-pill-warn'"
+            x-text="'OKX '+((yaobi运行状态.credentials?.okx?.enabled)?'Ready':'No Key')"></span>
+          <span class="intel-pill" :class="(yaobi运行状态.ai_status?.enabled && yaobi运行状态.credentials?.ai?.enabled)?'intel-pill-ok':'intel-pill-warn'"
             x-text="'AI '+aiStateText()"></span>
           <span class="intel-pill" x-text="'Knowledge '+(yaobiKnowledge.rows||0)+' trades'"></span>
         </div>
@@ -1072,8 +1072,8 @@
         </div>
         <div class="intel-stat">
           <div class="text-[10px] text-gray-500 uppercase tracking-wider">AI Calls</div>
-          <div class="text-2xl font-black text-white" x-text="yaobiStatus.ai_status?.usage?.calls||0"></div>
-          <div class="text-[11px] text-gray-600" x-text="'cap $'+(yaobiStatus.ai_status?.daily_cap_usd??cfg.YAOBI_AI_DAILY_USD_CAP??0)"></div>
+          <div class="text-2xl font-black text-white" x-text="yaobi运行状态.ai_status?.usage?.calls||0"></div>
+          <div class="text-[11px] text-gray-600" x-text="'cap $'+(yaobi运行状态.ai_status?.daily_cap_usd??cfg.YAOBI_AI_DAILY_USD_CAP??0)"></div>
         </div>
         <div class="intel-stat">
           <div class="text-[10px] text-gray-500 uppercase tracking-wider">强平热度</div>
@@ -1174,7 +1174,7 @@
 
   <div class="grid grid-cols-12 gap-5">
 
-    <!-- Left: Settings + Source Status -->
+    <!-- Left: Settings + Source 运行状态 -->
     <div class="col-span-12 lg:col-span-4 space-y-4">
 
       <!-- Scanner Settings -->
@@ -1184,7 +1184,7 @@
           <span class="text-gray-600 text-xs" x-text="yaobiOpen?'▲':'▼'"></span>
         </button>
         <div x-show="yaobiOpen" class="px-5 pb-5 space-y-4">
-          <form @submit.prevent="saveYaobiConfig()" id="yaobiForm">
+          <form @submit.pr事件="saveYaobiConfig()" id="yaobiForm">
             <p class="text-xs text-green-900 uppercase tracking-widest pt-1">基本设置</p>
             <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
               <div><label class="text-xs text-gray-500">扫描间隔 (min)</label>
@@ -1197,7 +1197,7 @@
             <div class="grid grid-cols-2 gap-3 mt-3">
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle">
-                  <input type="checkbox" name="YAOBI_SQUARE_ENABLED" :checked="cfg.YAOBI_SQUARE_ENABLED!==false" @change="cfg.YAOBI_SQUARE_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_SQUARE_ENABLED" :checked="cfg.YAOBI_SQUARE_ENABLED!==false" @change="cfg.YAOBI_SQUARE_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">启用币安广场</span>
@@ -1209,14 +1209,14 @@
             <div class="grid grid-cols-2 gap-3 mt-2">
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#22c55e">
-                  <input type="checkbox" name="YAOBI_OKX_ENABLED" :checked="cfg.YAOBI_OKX_ENABLED!==false" @change="cfg.YAOBI_OKX_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_OKX_ENABLED" :checked="cfg.YAOBI_OKX_ENABLED!==false" @change="cfg.YAOBI_OKX_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">启用 OKX 补全</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#22c55e">
-                  <input type="checkbox" name="YAOBI_OKX_HOT_ENABLED" :checked="cfg.YAOBI_OKX_HOT_ENABLED!==false" @change="cfg.YAOBI_OKX_HOT_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_OKX_HOT_ENABLED" :checked="cfg.YAOBI_OKX_HOT_ENABLED!==false" @change="cfg.YAOBI_OKX_HOT_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">OKX 热门榜</span>
@@ -1236,14 +1236,14 @@
             <div class="grid grid-cols-2 gap-3 mt-2">
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#22c55e">
-                  <input type="checkbox" name="YAOBI_BINANCE_SHORT_INTEL_ENABLED" :checked="cfg.YAOBI_BINANCE_SHORT_INTEL_ENABLED!==false" @change="cfg.YAOBI_BINANCE_SHORT_INTEL_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_BINANCE_SHORT_INTEL_ENABLED" :checked="cfg.YAOBI_BINANCE_SHORT_INTEL_ENABLED!==false" @change="cfg.YAOBI_BINANCE_SHORT_INTEL_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">5m/15m OI 情报</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#22c55e">
-                  <input type="checkbox" name="YAOBI_BINANCE_LIQUIDATION_WS_ENABLED" :checked="cfg.YAOBI_BINANCE_LIQUIDATION_WS_ENABLED!==false" @change="cfg.YAOBI_BINANCE_LIQUIDATION_WS_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_BINANCE_LIQUIDATION_WS_ENABLED" :checked="cfg.YAOBI_BINANCE_LIQUIDATION_WS_ENABLED!==false" @change="cfg.YAOBI_BINANCE_LIQUIDATION_WS_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">强平流热度</span>
@@ -1257,7 +1257,7 @@
             <div class="grid grid-cols-2 gap-3 mt-2">
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#a78bfa">
-                  <input type="checkbox" name="YAOBI_AI_ENABLED" :checked="cfg.YAOBI_AI_ENABLED===true" @change="cfg.YAOBI_AI_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_AI_ENABLED" :checked="cfg.YAOBI_AI_ENABLED===true" @change="cfg.YAOBI_AI_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">启用 AI 队列审查</span>
@@ -1267,7 +1267,7 @@
               <div class="col-span-2"><label class="text-xs text-gray-500">AI Provider</label>
                 <select class="inp mt-1" name="YAOBI_AI_PROVIDER_PRIORITY"
                   :value="(cfg.YAOBI_AI_PROVIDER_PRIORITY||'gemini').split(',')[0]||'gemini'"
-                  @change="cfg.YAOBI_AI_PROVIDER_PRIORITY=$event.target.value"
+                  @change="cfg.YAOBI_AI_PROVIDER_PRIORITY=$事件.target.value"
                   style="border-color:#1a3a2a">
                   <option value="gemini">Gemini</option>
                   <option value="deepseek">DeepSeek</option>
@@ -1277,7 +1277,7 @@
                 </select></div>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#a78bfa">
-                  <input type="checkbox" name="YAOBI_AI_REQUIRED_FOR_PERMISSION" :checked="cfg.YAOBI_AI_REQUIRED_FOR_PERMISSION!==false" @change="cfg.YAOBI_AI_REQUIRED_FOR_PERMISSION=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_AI_REQUIRED_FOR_PERMISSION" :checked="cfg.YAOBI_AI_REQUIRED_FOR_PERMISSION!==false" @change="cfg.YAOBI_AI_REQUIRED_FOR_PERMISSION=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">AI 必须给方向许可</span>
@@ -1319,14 +1319,14 @@
             <div class="grid grid-cols-2 gap-3 mt-2">
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#ec4899">
-                  <input type="checkbox" name="YAOBI_SURF_NEWS_ENABLED" :checked="cfg.YAOBI_SURF_NEWS_ENABLED===true" @change="cfg.YAOBI_SURF_NEWS_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_SURF_NEWS_ENABLED" :checked="cfg.YAOBI_SURF_NEWS_ENABLED===true" @change="cfg.YAOBI_SURF_NEWS_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">Surf 新闻过滤</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#ec4899">
-                  <input type="checkbox" name="YAOBI_SURF_AI_ENABLED" :checked="cfg.YAOBI_SURF_AI_ENABLED===true" @change="cfg.YAOBI_SURF_AI_ENABLED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_SURF_AI_ENABLED" :checked="cfg.YAOBI_SURF_AI_ENABLED===true" @change="cfg.YAOBI_SURF_AI_ENABLED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">Surf AI 终审</span>
@@ -1345,7 +1345,7 @@
                 </select></div>
               <label class="flex items-center gap-2 cursor-pointer select-none">
                 <label class="toggle" style="--t:#ec4899">
-                  <input type="checkbox" name="YAOBI_DUAL_AI_CONSENSUS_REQUIRED" :checked="cfg.YAOBI_DUAL_AI_CONSENSUS_REQUIRED!==false" @change="cfg.YAOBI_DUAL_AI_CONSENSUS_REQUIRED=$event.target.checked">
+                  <input type="checkbox" name="YAOBI_DUAL_AI_CONSENSUS_REQUIRED" :checked="cfg.YAOBI_DUAL_AI_CONSENSUS_REQUIRED!==false" @change="cfg.YAOBI_DUAL_AI_CONSENSUS_REQUIRED=$事件.target.checked">
                   <span class="ttrack"></span>
                 </label>
                 <span class="text-sm text-gray-400">Surf 方向也必须同向</span>
@@ -1369,11 +1369,11 @@
             <div class="mt-2 space-y-2">
               <div><label class="text-xs text-gray-500">OKX API Key</label>
                 <input class="inp mt-1 text-xs" type="text"
-                  :value="(yaobiStatus.credentials?.okx?.enabled?'已配置 ':'未配置 ')+(yaobiStatus.credentials?.okx?.key_count||0)+' 个 key'"
+                  :value="(yaobi运行状态.credentials?.okx?.enabled?'已配置 ':'未配置 ')+(yaobi运行状态.credentials?.okx?.key_count||0)+' 个 key'"
                   disabled title="在 .env 或环境变量中设置 OKX_API_KEY / OKX_API_KEY_2 等"></div>
               <div><label class="text-xs text-gray-500">Surf API Key</label>
                 <input class="inp mt-1 text-xs" type="text"
-                  :value="(yaobiStatus.credentials?.surf?.enabled?'已配置 ':'未配置 ')+(yaobiStatus.credentials?.surf?.key_count||0)+' 个 key'"
+                  :value="(yaobi运行状态.credentials?.surf?.enabled?'已配置 ':'未配置 ')+(yaobi运行状态.credentials?.surf?.key_count||0)+' 个 key'"
                   disabled title="在 .env 或环境变量中设置 SURF_API_KEY / SURF_API_KEYS / SURF_API_KEY_2 等"></div>
               <div><label class="text-xs text-gray-500">Coinglass API Key (可选)</label>
                 <input class="inp mt-1 text-xs" type="text" name="COINGLASS_API_KEY" :value="cfg.COINGLASS_API_KEY||''" placeholder="留空则跳过" style="border-color:#1a3a2a"></div>
@@ -1381,7 +1381,7 @@
 
             <label class="flex items-center gap-2 cursor-pointer select-none mt-4">
               <label class="toggle" style="--t:#4ade80">
-                <input type="checkbox" name="YAOBI_ENABLED" :checked="cfg.YAOBI_ENABLED" @change="cfg.YAOBI_ENABLED=$event.target.checked">
+                <input type="checkbox" name="YAOBI_ENABLED" :checked="cfg.YAOBI_ENABLED" @change="cfg.YAOBI_ENABLED=$事件.target.checked">
                 <span class="ttrack" style=""></span>
               </label>
               <span class="text-sm text-gray-400">启动时自动开启扫描</span>
@@ -1395,11 +1395,11 @@
         </div>
       </div>
 
-      <!-- Source Status -->
+      <!-- Source 运行状态 -->
       <div class="card p-4" style="border-color:rgba(74,222,128,.15)">
         <div class="text-xs font-semibold text-green-400 mb-3 uppercase tracking-wider">📡 数据源状态</div>
         <div class="space-y-2">
-          <template x-for="[name,info] in Object.entries(yaobiStatus.sources||{})" :key="name">
+          <template x-for="[name,info] in Object.entries(yaobi运行状态.sources||{})" :key="name">
             <div class="flex items-center justify-between text-xs">
               <div class="flex items-center gap-2">
                 <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
@@ -1408,11 +1408,11 @@
               <span class="text-gray-600" x-text="(info.count||0)+'条 '+info.last_run"></span>
             </div>
           </template>
-          <div x-show="!Object.keys(yaobiStatus.sources||{}).length" class="text-gray-700 text-xs text-center py-2">等待首次扫描...</div>
+          <div x-show="!Object.keys(yaobi运行状态.sources||{}).length" class="text-gray-700 text-xs text-center py-2">等待首次扫描...</div>
         </div>
         <div class="mt-4 pt-3 border-t border-[#11251b] space-y-2">
           <div class="text-[10px] text-gray-700 uppercase tracking-wider">API 调用统计</div>
-          <template x-for="[name,m] in Object.entries(yaobiStatus.provider_metrics||{})" :key="name">
+          <template x-for="[name,m] in Object.entries(yaobi运行状态.provider_metrics||{})" :key="name">
             <div class="text-xs">
               <div class="flex items-center justify-between">
                 <span class="text-gray-400" x-text="name"></span>
@@ -1422,7 +1422,7 @@
                 x-text="(m.last_endpoint||'')+' '+(m.last_status||'')+' '+(m.last_reason||m.last_error||'')"></div>
             </div>
           </template>
-          <div x-show="!Object.keys(yaobiStatus.provider_metrics||{}).length" class="text-gray-700 text-xs text-center py-2">暂无 API 调用记录</div>
+          <div x-show="!Object.keys(yaobi运行状态.provider_metrics||{}).length" class="text-gray-700 text-xs text-center py-2">暂无 API 调用记录</div>
         </div>
       </div>
 
@@ -1432,7 +1432,7 @@
           <div class="text-xs font-semibold text-blue-300 uppercase tracking-wider">我的关注</div>
           <span class="text-xs text-gray-600" x-text="watchlist.length+' 个'"></span>
         </div>
-        <form @submit.prevent="addWatch(watchForm.symbol, watchForm.status, watchForm.reason)" class="grid grid-cols-5 gap-2">
+        <form @submit.pr事件="addWatch(watchForm.symbol, watchForm.status, watchForm.reason)" class="grid grid-cols-5 gap-2">
           <input class="inp col-span-2 text-xs" x-model="watchForm.symbol" placeholder="BAS / BTCUSDT">
           <select class="inp col-span-2 text-xs" x-model="watchForm.status">
             <option value="观察">观察</option>
@@ -1453,7 +1453,7 @@
                 <button @click="removeWatch(item.symbol)" class="text-xs text-gray-600 hover:text-red-400">移除</button>
               </div>
               <div class="mt-1 flex items-center gap-1.5 flex-wrap">
-                <select class="inp text-[11px] py-1 w-auto min-w-[92px]" x-model="item.status" @change="updateWatchStatus(item)">
+                <select class="inp text-[11px] py-1 w-auto min-w-[92px]" x-model="item.status" @change="updateWatch运行状态(item)">
                   <option value="观察">观察</option>
                   <option value="等待确认">等待确认</option>
                   <option value="允许交易">允许交易</option>
@@ -1475,22 +1475,22 @@
         </div>
       </div>
 
-      <!-- Obsidian Status -->
+      <!-- Obsidian 运行状态 -->
       <div class="card p-4" style="border-color:rgba(74,222,128,.15)">
         <div class="text-xs font-semibold text-green-400 mb-3 uppercase tracking-wider">📝 Obsidian Vault</div>
         <div class="text-xs space-y-1.5">
           <div class="flex justify-between">
             <span class="text-gray-600">路径</span>
-            <span class="text-gray-400 font-mono text-[10px]" x-text="(obsidianStatus.vault_path||'—').slice(-20)"></span>
+            <span class="text-gray-400 font-mono text-[10px]" x-text="(obsidian运行状态.vault_path||'—').slice(-20)"></span>
           </div>
           <div class="flex justify-between">
             <span class="text-gray-600">状态</span>
-            <span :class="obsidianStatus.exists?'text-green-400':'text-red-400'"
-              x-text="obsidianStatus.exists?'✓ 已挂载':'✗ 未找到'"></span>
+            <span :class="obsidian运行状态.exists?'text-green-400':'text-red-400'"
+              x-text="obsidian运行状态.exists?'✓ 已挂载':'✗ 未找到'"></span>
           </div>
           <div class="flex justify-between">
             <span class="text-gray-600">文件数</span>
-            <span class="text-gray-300" x-text="obsidianStatus.file_count||0"></span>
+            <span class="text-gray-300" x-text="obsidian运行状态.file_count||0"></span>
           </div>
         </div>
       </div>
@@ -2103,49 +2103,49 @@
   <div class="card px-5 py-4 flex flex-wrap items-center gap-4" style="border-color:rgba(168,85,247,.2)">
     <div class="flex items-center gap-2.5">
       <span class="text-lg">🤖</span>
-      <span class="font-semibold text-purple-300">Evolver 📡</span>
+      <span class="font-semibold text-purple-300">Evolver 自动进化</span>
     </div>
     <div class="flex items-center gap-2 ml-auto">
-      <button @click="runEvolverOnce()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs">▶ Run Once</button>
-      <button @click="pauseEvolver()" class="px-3 py-1.5 rounded-xl bg-red-900/30 hover:bg-red-900/50 text-red-400 text-xs">⏸ Pause</button>
-      <button @click="resumeEvolver()" class="px-3 py-1.5 rounded-xl bg-green-900/30 hover:bg-green-900/50 text-green-400 text-xs">▶ Resume</button>
-      <button @click="rollbackEvolver()" class="px-3 py-1.5 rounded-xl bg-orange-900/30 hover:bg-orange-900/50 text-orange-400 text-xs">↩ Rollback</button>
-      <button @click="loadEvolverStatus();loadEvolverHistory()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs">↻ Refresh</button>
+      <button @click="runEvolverOnce()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs">▶ 运行一次</button>
+      <button @click="pauseEvolver()" class="px-3 py-1.5 rounded-xl bg-red-900/30 hover:bg-red-900/50 text-red-400 text-xs">⏸ 暂停</button>
+      <button @click="resumeEvolver()" class="px-3 py-1.5 rounded-xl bg-green-900/30 hover:bg-green-900/50 text-green-400 text-xs">▶ 恢复</button>
+      <button @click="rollbackEvolver()" class="px-3 py-1.5 rounded-xl bg-orange-900/30 hover:bg-orange-900/50 text-orange-400 text-xs">↩ 回滚</button>
+      <button @click="loadEvolver运行状态();loadEvolverHistory()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs">↻ 刷新</button>
     </div>
   </div>
 
-  <template x-if="evolverStatus">
+  <template x-if="evolver运行状态">
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
       <div class="card p-3">
-        <div class="text-xs text-gray-500 uppercase">Status</div>
-        <div class="text-lg font-bold mt-1" :class="evolverStatus.runtime_status==='IDLE'?'text-green-400':evolverStatus.frozen?'text-red-400':'text-yellow-400'"
-          x-text="evolverStatus.frozen?'FROZEN':evolverStatus.runtime_status"></div>
-        <div class="text-xs text-gray-600" x-show="evolverStatus.enabled" x-text="'auto_apply='+evolverStatus.auto_apply"></div>
-        <div class="text-xs text-red-400" x-show="!evolverStatus.enabled">DISABLED</div>
+        <div class="text-xs text-gray-500 uppercase">运行状态</div>
+        <div class="text-lg font-bold mt-1" :class="evolver运行状态.runtime_status==='IDLE'?'text-green-400':evolver运行状态.frozen?'text-red-400':'text-yellow-400'"
+          x-text="evolver运行状态.frozen?'FROZEN':evolver运行状态.runtime_status"></div>
+        <div class="text-xs text-gray-600" x-show="evolver运行状态.enabled" x-text="'自动应用='+evolver运行状态.auto_apply"></div>
+        <div class="text-xs text-red-400" x-show="!evolver运行状态.enabled">DISABLED</div>
       </div>
       <div class="card p-3">
-        <div class="text-xs text-gray-500 uppercase">Policy</div>
-        <div class="text-xs font-mono mt-1 text-purple-300" x-text="evolverStatus.current_policy_version||'-'"></div>
-        <div class="text-xs text-gray-600" x-text="'hash='+(evolverStatus.current_config_hash||'-')"></div>
-        <div class="text-xs text-yellow-400" x-show="evolverStatus.pending_evaluation">pending eval</div>
+        <div class="text-xs text-gray-500 uppercase">策略版本</div>
+        <div class="text-xs font-mono mt-1 text-purple-300" x-text="evolver运行状态.current_policy_version||'-'"></div>
+        <div class="text-xs text-gray-600" x-text="'哈希='+(evolver运行状态.current_config_hash||'-')"></div>
+        <div class="text-xs text-yellow-400" x-show="evolver运行状态.pending_evaluation">等待评估中</div>
       </div>
       <div class="card p-3">
-        <div class="text-xs text-gray-500 uppercase">Rollbacks</div>
-        <div class="text-lg font-bold mt-1 text-orange-400" x-text="evolverStatus.rollback_count||0"></div>
-        <div class="text-xs text-gray-600" x-text="'daily: '+(evolverStatus.daily_rollback_count||0)"></div>
-        <div class="text-xs text-gray-600" x-text="'errors: '+(evolverStatus.consecutive_errors||0)"></div>
+        <div class="text-xs text-gray-500 uppercase">回滚次数</div>
+        <div class="text-lg font-bold mt-1 text-orange-400" x-text="evolver运行状态.rollback_count||0"></div>
+        <div class="text-xs text-gray-600" x-text="'今日: '+(evolver运行状态.daily_rollback_count||0)"></div>
+        <div class="text-xs text-gray-600" x-text="'错误: '+(evolver运行状态.consecutive_errors||0)"></div>
       </div>
       <div class="card p-3">
-        <div class="text-xs text-gray-500 uppercase">Last Run</div>
-        <div class="text-xs mt-1" :class="evolverStatus.last_success?'text-green-400':'text-red-400'" x-text="evolverStatus.last_success?'OK':'ERROR'"></div>
-        <div class="text-xs text-gray-600" x-text="evolverStatus.last_error?'err: '+evolverStatus.last_error:''"></div>
+        <div class="text-xs text-gray-500 uppercase">上次运行</div>
+        <div class="text-xs mt-1" :class="evolver运行状态.last_success?'text-green-400':'text-red-400'" x-text="evolver运行状态.last_success?'OK':'ERROR'"></div>
+        <div class="text-xs text-gray-600" x-text="evolver运行状态.last_error?'err: '+evolver运行状态.last_error:''"></div>
       </div>
     </div>
   </template>
 
   <template x-if="evolverPatches&&evolverPatches.length>0">
     <div class="card p-3 mb-3">
-      <div class="text-xs text-gray-500 uppercase mb-2">Parameter Patches</div>
+      <div class="text-xs text-gray-500 uppercase mb-2">参数修改记录</div>
       <table class="w-full text-xs">
         <thead><tr class="text-gray-600"><th class="text-left p-1">key</th><th class="text-left p-1">old</th><th class="text-left p-1">new</th><th class="text-left p-1">status</th><th class="text-left p-1">reason</th></tr></thead>
         <tbody>
@@ -2166,7 +2166,7 @@
   <template x-if="evolverHealth">
     <div class="card p-3 mb-3">
       <div class="flex items-center gap-2 mb-2">
-        <span class="text-xs text-gray-500 uppercase">Health Check</span>
+        <span class="text-xs text-gray-500 uppercase">健康检查</span>
         <span :class="evolverHealth.ok?'text-green-400':'text-red-400'" x-text="evolverHealth.ok?'OK':'ISSUES'"></span>
       </div>
       <template x-for="w in (evolverHealth.warnings||[])" :key="w">
@@ -2180,16 +2180,16 @@
 
   <template x-if="evolverHistory&&evolverHistory.length>0">
     <div class="card p-3">
-      <div class="text-xs text-gray-500 uppercase mb-2">Recent History</div>
+      <div class="text-xs text-gray-500 uppercase mb-2">最近进化历史</div>
       <table class="w-full text-xs">
-        <thead><tr class="text-gray-600"><th class="text-left p-1">event</th><th class="text-left p-1">policy</th><th class="text-left p-1">updates</th></tr></thead>
+        <thead><tr class="text-gray-600"><th class="text-left p-1">事件</th><th class="text-left p-1">policy</th><th class="text-left p-1">修改数</th></tr></thead>
         <tbody>
           <template x-for="h in evolverHistory.slice(0,15)" :key="h.evolver_run_id||h.timestamp">
             <tr class="border-t border-[#1c1c38]">
-              <td class="p-1" :class="h.event_type==='ROLLBACK'?'text-orange-400':h.event_type==='APPLY'||h.event_type==='SUCCESS'?'text-green-400':'text-gray-400'"
-                x-text="h.event_type||''"></td>
+              <td class="p-1" :class="h.事件_type==='ROLLBACK'?'text-orange-400':h.事件_type==='APPLY'||h.事件_type==='SUCCESS'?'text-green-400':'text-gray-400'"
+                x-text="h.事件_type||''"></td>
               <td class="p-1 font-mono text-xs text-purple-300" x-text="(h.policy_version||'').slice(0,25)"></td>
-              <td class="p-1" x-text="(h.applied_updates||[]).length||(h.updates||'')"></td>
+              <td class="p-1" x-text="(h.applied_修改数||[]).length||(h.修改数||'')"></td>
             </tr>
           </template>
         </tbody>
@@ -2204,7 +2204,7 @@
 <!-- Panel Auth -->
 <div x-show="auth.required && !auth.ok"
   class="fixed inset-0 z-[70] bg-[#050608]/95 flex items-center justify-center px-4">
-  <form @submit.prevent="unlockPanel()"
+  <form @submit.pr事件="unlockPanel()"
     class="w-full max-w-sm border border-orange-500/25 bg-[#0b0b12] rounded-lg p-5 shadow-2xl">
     <div class="text-base font-bold text-white">面板验证</div>
     <div class="text-xs text-gray-500 mt-1">输入本机面板 Token 后继续。</div>
@@ -2243,7 +2243,7 @@ function app() {
     },
     cfg: {{ config | tojson }},
     balance: { balance: null, availableBalance: null, unrealizedProfit: null },
-    wsStatus: { scalpLog:'closed', scalpSig:'closed', yaobiCand:'closed', yaobiOpp:'closed' },
+    ws运行状态: { scalpLog:'closed', scalpSig:'closed', yaobiCand:'closed', yaobiOpp:'closed' },
     _ws: {},
     _booted: false,
 
@@ -2264,15 +2264,15 @@ function app() {
 
     yaobiCandidates: [], yaobiOpportunities: [], yaobiKnowledge: { rows:0, symbols:0 }, yaobiRunning: false, yaobiOpen: true,
     yaobiTiers: { l1_main:{count:0,items:[],subtypes:{}}, l2_ambush:{count:0,items:[],subtypes:{}}, risk_avoid:{count:0,items:[],subtypes:{}}, neutral_count:0 },
-    yaobiStatus: { last_scan:null, scanning:false, total_scanned:0, scored:0, anomalies:0, min_anomaly:35, sources:{}, provider_metrics:{}, credentials:{}, errors:[] },
-    obsidianStatus: { vault_path:'', exists:false, file_count:0 },
+    yaobi运行状态: { last_scan:null, scanning:false, total_scanned:0, scored:0, anomalies:0, min_anomaly:35, sources:{}, provider_metrics:{}, credentials:{}, 错误:[] },
+    obsidian运行状态: { vault_path:'', exists:false, file_count:0 },
     yaobiFilter: { minScore:0, chain:'', source:'' },
     yaobiSort: 'score',
     yaobiPage: 1,
     filteredCandidates: [],
 
     strategyStats: { strategies: {} },
-    evolverStatus: null,
+    evolver运行状态: null,
     evolverHistory: [],
     evolverPatches: [],
     evolverHealth: null,
@@ -2303,19 +2303,19 @@ function app() {
       this.loadScalpEquity()
       this.loadWatchlist()
       this.loadCsvSymbols()
-      this.pollScalpStatus()
-      this.pollYaobiStatus()
+      this.pollScalp运行状态()
+      this.pollYaobi运行状态()
       this.loadStrategyStats()
       this.loadYaobiCandidates()
       this.loadYaobiOpportunities()
       this.loadYaobiTiers()
-      this.loadObsidianStatus()
+      this.loadObsidian运行状态()
       setInterval(() => this.loadScalpPositions(), 2000)
       setInterval(() => this.loadScalpTrades(), 10000)
       setInterval(() => this.loadScalpEquity(), 10000)
       setInterval(() => this.loadWatchlist(), 15000)
-      setInterval(() => this.pollScalpStatus(), 5000)
-      setInterval(() => this.pollYaobiStatus(), 8000)
+      setInterval(() => this.pollScalp运行状态(), 5000)
+      setInterval(() => this.pollYaobi运行状态(), 8000)
       setInterval(() => this.loadYaobiOpportunities(), 10000)
       setInterval(() => this.loadYaobiTiers(), 12000)
       setInterval(() => this.loadScalpFilterStats(), 30000)
@@ -2386,9 +2386,9 @@ function app() {
       const token = this.auth.required ? `?token=${encodeURIComponent(this.auth.token)}` : ''
       const ws = new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}${path}${token}`)
       this._ws[key] = ws
-      ws.onopen  = () => { this.wsStatus[key] = 'open' }
-      ws.onclose = () => { this.wsStatus[key] = 'closed'; setTimeout(()=>this.connectWs(key,path), 3000) }
-      ws.onerror = () => { this.wsStatus[key] = 'error' }
+      ws.onopen  = () => { this.ws运行状态[key] = 'open' }
+      ws.onclose = () => { this.ws运行状态[key] = 'closed'; setTimeout(()=>this.connectWs(key,path), 3000) }
+      ws.onerror = () => { this.ws运行状态[key] = 'error' }
       ws.onmessage = (e) => this.handleWsMsg(key, e.data)
     },
 
@@ -2415,8 +2415,8 @@ function app() {
       }
     },
 
-    async loadEvolverStatus() {
-      try { const r = await this.apiFetch('/api/evolver/status'); if (r.ok) this.evolverStatus = await r.json(); } catch(e) {}
+    async loadEvolver运行状态() {
+      try { const r = await this.apiFetch('/api/evolver/status'); if (r.ok) this.evolver运行状态 = await r.json(); } catch(e) {}
     },
     async loadEvolverHistory() {
       try { const r = await this.apiFetch('/api/evolver/history?limit=10'); if (r.ok) this.evolverHistory = await r.json(); } catch(e) {}
@@ -2427,10 +2427,10 @@ function app() {
     async loadEvolverHealth() {
       try { const r = await this.apiFetch('/api/evolver/health'); if (r.ok) this.evolverHealth = await r.json(); } catch(e) {}
     },
-    async runEvolverOnce() { try { await this.apiFetch('/api/evolver/run-once', {method:'POST'}); this.loadEvolverStatus(); } catch(e) {} },
-    async pauseEvolver() { try { await this.apiFetch('/api/evolver/pause', {method:'POST'}); this.loadEvolverStatus(); } catch(e) {} },
-    async resumeEvolver() { try { await this.apiFetch('/api/evolver/resume', {method:'POST'}); this.loadEvolverStatus(); } catch(e) {} },
-    async rollbackEvolver() { if (!confirm('Confirm rollback to last version?')) return; try { await this.apiFetch('/api/evolver/rollback-last', {method:'POST'}); this.loadEvolverStatus(); } catch(e) {} },
+    async runEvolverOnce() { try { await this.apiFetch('/api/evolver/run-once', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) {} },
+    async pauseEvolver() { try { await this.apiFetch('/api/evolver/pause', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) {} },
+    async resumeEvolver() { try { await this.apiFetch('/api/evolver/resume', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) {} },
+    async rollbackEvolver() { if (!confirm('确认回滚到上一版本？')) return; try { await this.apiFetch('/api/evolver/rollback-last', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) {} },
     async loadBalance() {
       try { const d=await(await this.apiFetch('/api/account/balance')).json(); if(d.asset) this.balance=d } catch{}
     },
@@ -2523,7 +2523,7 @@ function app() {
       catch(e){ this.showToast('❌ 下单异常: '+e,'error') }
     },
 
-    async pollScalpStatus() {
+    async pollScalp运行状态() {
       try { const d=await(await this.apiFetch('/api/scalp/status')).json(); this.scalpRunning=d.running; this.scalpSymbolCount=d.symbols_count } catch{}
     },
     async loadScalpSignals() {
@@ -2580,7 +2580,7 @@ function app() {
         await this.loadWatchlist()
       } catch(e){ this.showToast('❌ 关注池保存失败: '+e,'error') }
     },
-    async updateWatchStatus(item) {
+    async updateWatch运行状态(item) {
       const fd=new FormData()
       fd.set('symbol', item.symbol)
       fd.set('status', item.status)
@@ -2640,7 +2640,7 @@ function app() {
       try {
         const d=await(await this.apiFetch('/api/scalp/start',{method:'POST'})).json()
         this.showToast(d.message, d.status==='started'||d.status==='already_running'?'success':'error')
-        await this.pollScalpStatus()
+        await this.pollScalp运行状态()
       } catch(e){ this.showToast('❌ 启动失败: '+e,'error') }
     },
     async stopScalp() {
@@ -2654,14 +2654,14 @@ function app() {
       try {
         const d=await(await this.apiFetch('/api/scalp/refresh',{method:'POST'})).json()
         this.showToast(d.message, d.status==='success'?'success':'error')
-        await this.pollScalpStatus()
+        await this.pollScalp运行状态()
       } catch{}
     },
 
-    async pollYaobiStatus() {
+    async pollYaobi运行状态() {
       try {
         const d=await(await this.apiFetch('/api/yaobi/status')).json()
-        this.yaobiRunning=d.running; this.yaobiStatus=d
+        this.yaobiRunning=d.running; this.yaobi运行状态=d
       } catch{}
     },
     async loadYaobiCandidates() {
@@ -2678,7 +2678,7 @@ function app() {
         const d=await(await this.apiFetch('/api/yaobi/opportunities?limit=30')).json()
         this.yaobiOpportunities=(d.opportunities||[]).map(c=>({...c,_open:false}))
         this.yaobiKnowledge=d.knowledge||this.yaobiKnowledge
-        if(d.ai_status) this.yaobiStatus.ai_status=d.ai_status
+        if(d.ai_status) this.yaobi运行状态.ai_status=d.ai_status
       } catch{}
     },
     async loadYaobiTiers() {
@@ -2694,7 +2694,7 @@ function app() {
       try {
         const d=await(await this.apiFetch('/api/yaobi/start',{method:'POST'})).json()
         this.showToast(d.message,d.status==='started'||d.status==='already_running'?'success':'error')
-        await this.pollYaobiStatus()
+        await this.pollYaobi运行状态()
       } catch(e){ this.showToast('❌ 启动失败: '+e,'error') }
     },
     async stopYaobi() {
@@ -2707,11 +2707,11 @@ function app() {
       try {
         const d=await(await this.apiFetch('/api/yaobi/scan',{method:'POST'})).json()
         this.showToast(d.message,d.status==='started'?'success':'error')
-        setTimeout(()=>this.pollYaobiStatus(), 2000)
+        setTimeout(()=>this.pollYaobi运行状态(), 2000)
       } catch(e){ this.showToast('❌ 扫描失败: '+e,'error') }
     },
-    async loadObsidianStatus() {
-      try { const d=await(await this.apiFetch('/api/yaobi/obsidian/status')).json(); this.obsidianStatus=d } catch{}
+    async loadObsidian运行状态() {
+      try { const d=await(await this.apiFetch('/api/yaobi/obsidian/status')).json(); this.obsidian运行状态=d } catch{}
     },
     async saveYaobiConfig() {
       const fd=new FormData(document.getElementById('yaobiForm'))
@@ -2759,8 +2759,8 @@ function app() {
       return this.yaobiOpportunities.reduce((s,o)=>s+Number(o.liquidation_15m_usd||0),0)
     },
     aiStateText() {
-      const enabled=this.yaobiStatus.ai_status?.enabled || this.cfg.YAOBI_AI_ENABLED
-      const hasKey=this.yaobiStatus.credentials?.ai?.enabled
+      const enabled=this.yaobi运行状态.ai_status?.enabled || this.cfg.YAOBI_AI_ENABLED
+      const hasKey=this.yaobi运行状态.credentials?.ai?.enabled
       if(!enabled) return 'Off'
       return hasKey ? 'Ready' : 'No Key'
     },
