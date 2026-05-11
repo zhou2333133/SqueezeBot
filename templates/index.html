@@ -102,6 +102,10 @@
         class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
         📊 策略统计
       </button>
+      <button @click="mode='evolver'" :class="mode==='evolver'?'tab-sc-on':'tab-off'"
+        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
+        🤖 Evolver
+      </button>
     </div>
 
     <div class="flex-1"></div>
@@ -2090,6 +2094,111 @@
 
 </div><!-- /strategy -->
 
+
+</div><!-- /strategy -->
+
+<!-- EVOLVER TAB -->
+<div x-show="mode==='evolver'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
+
+  <div class="card px-5 py-4 flex flex-wrap items-center gap-4" style="border-color:rgba(168,85,247,.2)">
+    <div class="flex items-center gap-2.5">
+      <span class="text-lg">🤖</span>
+      <span class="font-semibold text-purple-300">Evolver 📡</span>
+    </div>
+    <div class="flex items-center gap-2 ml-auto">
+      <button @click="runEvolverOnce()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs">▶ Run Once</button>
+      <button @click="pauseEvolver()" class="px-3 py-1.5 rounded-xl bg-red-900/30 hover:bg-red-900/50 text-red-400 text-xs">⏸ Pause</button>
+      <button @click="resumeEvolver()" class="px-3 py-1.5 rounded-xl bg-green-900/30 hover:bg-green-900/50 text-green-400 text-xs">▶ Resume</button>
+      <button @click="rollbackEvolver()" class="px-3 py-1.5 rounded-xl bg-orange-900/30 hover:bg-orange-900/50 text-orange-400 text-xs">↩ Rollback</button>
+      <button @click="loadEvolverStatus();loadEvolverHistory()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs">↻ Refresh</button>
+    </div>
+  </div>
+
+  <template x-if="evolverStatus">
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+      <div class="card p-3">
+        <div class="text-xs text-gray-500 uppercase">Status</div>
+        <div class="text-lg font-bold mt-1" :class="evolverStatus.runtime_status==='IDLE'?'text-green-400':evolverStatus.frozen?'text-red-400':'text-yellow-400'"
+          x-text="evolverStatus.frozen?'FROZEN':evolverStatus.runtime_status"></div>
+        <div class="text-xs text-gray-600" x-show="evolverStatus.enabled" x-text="'auto_apply='+evolverStatus.auto_apply"></div>
+        <div class="text-xs text-red-400" x-show="!evolverStatus.enabled">DISABLED</div>
+      </div>
+      <div class="card p-3">
+        <div class="text-xs text-gray-500 uppercase">Policy</div>
+        <div class="text-xs font-mono mt-1 text-purple-300" x-text="evolverStatus.current_policy_version||'-'"></div>
+        <div class="text-xs text-gray-600" x-text="'hash='+(evolverStatus.current_config_hash||'-')"></div>
+        <div class="text-xs text-yellow-400" x-show="evolverStatus.pending_evaluation">pending eval</div>
+      </div>
+      <div class="card p-3">
+        <div class="text-xs text-gray-500 uppercase">Rollbacks</div>
+        <div class="text-lg font-bold mt-1 text-orange-400" x-text="evolverStatus.rollback_count||0"></div>
+        <div class="text-xs text-gray-600" x-text="'daily: '+(evolverStatus.daily_rollback_count||0)"></div>
+        <div class="text-xs text-gray-600" x-text="'errors: '+(evolverStatus.consecutive_errors||0)"></div>
+      </div>
+      <div class="card p-3">
+        <div class="text-xs text-gray-500 uppercase">Last Run</div>
+        <div class="text-xs mt-1" :class="evolverStatus.last_success?'text-green-400':'text-red-400'" x-text="evolverStatus.last_success?'OK':'ERROR'"></div>
+        <div class="text-xs text-gray-600" x-text="evolverStatus.last_error?'err: '+evolverStatus.last_error:''"></div>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="evolverPatches&&evolverPatches.length>0">
+    <div class="card p-3 mb-3">
+      <div class="text-xs text-gray-500 uppercase mb-2">Parameter Patches</div>
+      <table class="w-full text-xs">
+        <thead><tr class="text-gray-600"><th class="text-left p-1">key</th><th class="text-left p-1">old</th><th class="text-left p-1">new</th><th class="text-left p-1">status</th><th class="text-left p-1">reason</th></tr></thead>
+        <tbody>
+          <template x-for="p in evolverPatches.slice(0,20)" :key="p.param_patch_id">
+            <tr class="border-t border-[#1c1c38]">
+              <td class="p-1 text-xs" x-text="p.key"></td>
+              <td class="p-1 text-gray-500" x-text="p.old"></td>
+              <td class="p-1 text-green-400" x-text="p.new"></td>
+              <td class="p-1" :class="p.status==='ACTIVE'?'text-green-400':'text-gray-500'" x-text="p.status||''"></td>
+              <td class="p-1 text-gray-500" x-text="(p.reason||'').slice(0,30)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </template>
+
+  <template x-if="evolverHealth">
+    <div class="card p-3 mb-3">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs text-gray-500 uppercase">Health Check</span>
+        <span :class="evolverHealth.ok?'text-green-400':'text-red-400'" x-text="evolverHealth.ok?'OK':'ISSUES'"></span>
+      </div>
+      <template x-for="w in (evolverHealth.warnings||[])" :key="w">
+        <div class="text-xs text-yellow-400">⚠ <span x-text="w"></span></div>
+      </template>
+      <template x-for="e in (evolverHealth.errors||[])" :key="e">
+        <div class="text-xs text-red-400">✖ <span x-text="e"></span></div>
+      </template>
+    </div>
+  </template>
+
+  <template x-if="evolverHistory&&evolverHistory.length>0">
+    <div class="card p-3">
+      <div class="text-xs text-gray-500 uppercase mb-2">Recent History</div>
+      <table class="w-full text-xs">
+        <thead><tr class="text-gray-600"><th class="text-left p-1">event</th><th class="text-left p-1">policy</th><th class="text-left p-1">updates</th></tr></thead>
+        <tbody>
+          <template x-for="h in evolverHistory.slice(0,15)" :key="h.evolver_run_id||h.timestamp">
+            <tr class="border-t border-[#1c1c38]">
+              <td class="p-1" :class="h.event_type==='ROLLBACK'?'text-orange-400':h.event_type==='APPLY'||h.event_type==='SUCCESS'?'text-green-400':'text-gray-400'"
+                x-text="h.event_type||''"></td>
+              <td class="p-1 font-mono text-xs text-purple-300" x-text="(h.policy_version||'').slice(0,25)"></td>
+              <td class="p-1" x-text="(h.applied_updates||[]).length||(h.updates||'')"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </template>
+
+</div><!-- /evolver -->
+
 </main>
 
 <!-- Panel Auth -->
@@ -2163,6 +2272,10 @@ function app() {
     filteredCandidates: [],
 
     strategyStats: { strategies: {} },
+    evolverStatus: null,
+    evolverHistory: [],
+    evolverPatches: [],
+    evolverHealth: null,
     strategyMode: 'all',
 
     scalpToggles: [
@@ -2302,6 +2415,22 @@ function app() {
       }
     },
 
+    async loadEvolverStatus() {
+      try { const r = await this.apiFetch('/api/evolver/status'); if (r.ok) this.evolverStatus = await r.json(); } catch(e) {}
+    },
+    async loadEvolverHistory() {
+      try { const r = await this.apiFetch('/api/evolver/history?limit=10'); if (r.ok) this.evolverHistory = await r.json(); } catch(e) {}
+    },
+    async loadEvolverPatches() {
+      try { const r = await this.apiFetch('/api/evolver/patches?limit=20'); if (r.ok) this.evolverPatches = await r.json(); } catch(e) {}
+    },
+    async loadEvolverHealth() {
+      try { const r = await this.apiFetch('/api/evolver/health'); if (r.ok) this.evolverHealth = await r.json(); } catch(e) {}
+    },
+    async runEvolverOnce() { try { await this.apiFetch('/api/evolver/run-once', {method:'POST'}); this.loadEvolverStatus(); } catch(e) {} },
+    async pauseEvolver() { try { await this.apiFetch('/api/evolver/pause', {method:'POST'}); this.loadEvolverStatus(); } catch(e) {} },
+    async resumeEvolver() { try { await this.apiFetch('/api/evolver/resume', {method:'POST'}); this.loadEvolverStatus(); } catch(e) {} },
+    async rollbackEvolver() { if (!confirm('Confirm rollback to last version?')) return; try { await this.apiFetch('/api/evolver/rollback-last', {method:'POST'}); this.loadEvolverStatus(); } catch(e) {} },
     async loadBalance() {
       try { const d=await(await this.apiFetch('/api/account/balance')).json(); if(d.asset) this.balance=d } catch{}
     },

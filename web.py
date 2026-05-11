@@ -1341,6 +1341,157 @@ async def strategy_trades(limit: int = 50, mode: str = "all"):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ─── Evolver 状态 API ──────────────────────────────────────────────────────────
+
+@app.get("/api/evolver/status")
+async def evolver_status():
+    try:
+        from evolver_status import get_evolver_status, get_locked_params_status
+        return JSONResponse({**get_evolver_status(), "locked_params": get_locked_params_status()})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/evolver/history")
+async def evolver_history(limit: int = 20):
+    try:
+        from evolver_status import get_recent_evolver_history
+        return JSONResponse(get_recent_evolver_history(limit=limit))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/evolver/patches")
+async def evolver_patches(limit: int = 50):
+    try:
+        from evolver_status import get_recent_param_patches
+        return JSONResponse(get_recent_param_patches(limit=limit))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/evolver/performance")
+async def evolver_performance(limit: int = 20):
+    try:
+        from evolver_status import get_recent_policy_performance
+        return JSONResponse(get_recent_policy_performance(limit=limit))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/evolver/shadow")
+async def evolver_shadow():
+    try:
+        from evolver_status import get_recent_shadow_summary
+        return JSONResponse(get_recent_shadow_summary())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/evolver/validations")
+async def evolver_validations(limit: int = 20):
+    try:
+        from evolver_status import get_recent_proposal_validations
+        return JSONResponse(get_recent_proposal_validations(limit=limit))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/evolver/health")
+async def evolver_health():
+    try:
+        from evolver_status import run_evolver_health_check
+        return JSONResponse(run_evolver_health_check())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/evolver/run-once")
+async def evolver_run_once():
+    try:
+        from evolver_runtime import run_evolver_job
+        result = run_evolver_job()
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/evolver/pause")
+async def evolver_pause():
+    try:
+        config_manager.settings["EVOLVER_ENABLED"] = False
+        config_manager._persist()
+        try:
+            from evolver_runtime import _write_event, _get_state
+            _write_event("PAUSED", _get_state(), reason="api_pause")
+        except Exception:
+            pass
+        return JSONResponse({"status": "paused", "EVOLVER_ENABLED": False})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/evolver/resume")
+async def evolver_resume():
+    try:
+        config_manager.settings["EVOLVER_ENABLED"] = True
+        config_manager._persist()
+        try:
+            from evolver_runtime import _write_event, _get_state
+            _write_event("RESUMED", _get_state(), reason="api_resume")
+        except Exception:
+            pass
+        return JSONResponse({"status": "resumed", "EVOLVER_ENABLED": True})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/evolver/rollback-last")
+async def evolver_rollback():
+    try:
+        from strategy_evolver import rollback_last_policy
+        result = rollback_last_policy()
+        if result.get("status") == "success":
+            try:
+                from evolver_runtime import _write_event, _get_state
+                _write_event("ROLLBACK", _get_state(), reason="api_rollback")
+            except Exception:
+                pass
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/evolver/freeze")
+async def evolver_freeze():
+    try:
+        from evolver_runtime import _get_state, _save_state
+        state = _get_state()
+        state["status"] = "FROZEN"
+        import time
+        state["frozen_until"] = time.time() + 86400 * 365
+        state["freeze_reason"] = "api_freeze"
+        _save_state(state)
+        return JSONResponse({"status": "frozen"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/evolver/unfreeze")
+async def evolver_unfreeze():
+    try:
+        from evolver_runtime import _get_state, _save_state
+        state = _get_state()
+        state["status"] = "IDLE"
+        state["frozen_until"] = 0.0
+        state["freeze_reason"] = ""
+        state["consecutive_errors"] = 0
+        _save_state(state)
+        return JSONResponse({"status": "unfrozen"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── 妖币扫描器 API ───────────────────────────────────────────────────────────
 
 @app.get("/api/yaobi/status")

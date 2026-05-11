@@ -517,6 +517,9 @@ class ConfigManager:
         "EVOLVER_DATA_MIN_PNL_COVERAGE": 0.95,
         "EVOLVER_DATA_MIN_STRATEGY_TAG_COVERAGE": 0.95,
         "EVOLVER_DATA_MIN_POLICY_VERSION_COVERAGE": 0.90,
+                "EVOLVER_LOG_RETENTION_DAYS": 30,
+        "EVOLVER_MAX_HISTORY_LINES": 10000,
+        "EVOLVER_MAX_BACKUPS": 50,
         # 策略权重（0.0 = 禁用，1.0 = 正常，>1.0 = 增强）
         "STRATEGY_WEIGHT_启动型": 1.0,
         "STRATEGY_WEIGHT_OI爆发": 1.0,
