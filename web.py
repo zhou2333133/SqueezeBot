@@ -1492,6 +1492,75 @@ async def evolver_unfreeze():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ─── Autopilot Guard API ────────────────────────────────────────────────────
+
+@app.get("/api/autopilot/status")
+async def autopilot_status():
+    try:
+        from autopilot_guard import (
+            load_locked_param_snapshot, get_current_locked_param_values,
+            get_guard_events, load_e2e_status, check_config_integrity
+        )
+        snapshot = load_locked_param_snapshot()
+        current = get_current_locked_param_values()
+        events = get_guard_events(limit=10)
+        e2e = load_e2e_status()
+        integrity = check_config_integrity()
+        return JSONResponse({
+            "guard_enabled": True,
+            "snapshot": snapshot,
+            "current_locked": current,
+            "locked_params_ok": integrity.get("ok", True),
+            "locked_issues": integrity.get("issues", []),
+            "e2e": e2e,
+            "recent_events": events,
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/autopilot/events")
+async def autopilot_events(limit: int = 50):
+    try:
+        from autopilot_guard import get_guard_events
+        return JSONResponse(get_guard_events(limit=limit))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/autopilot/run-guard")
+async def autopilot_run_guard():
+    try:
+        from autopilot_guard import run_periodic_guard
+        result = run_periodic_guard()
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/autopilot/reset-locked-snapshot")
+async def autopilot_reset_snapshot():
+    try:
+        from autopilot_guard import save_locked_param_snapshot, write_guard_event
+        snapshot = save_locked_param_snapshot()
+        write_guard_event("MANUAL_SNAPSHOT_RESET", "CRITICAL",
+                          "locked params snapshot manually reset",
+                          {"snapshot": snapshot})
+        return JSONResponse({"status": "snapshot_reset", "snapshot": snapshot})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/autopilot/unfreeze")
+async def autopilot_unfreeze():
+    try:
+        from autopilot_guard import unfreeze_evolver_if_safe
+        ok = unfreeze_evolver_if_safe()
+        return JSONResponse({"unfrozen": ok})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── 妖币扫描器 API ───────────────────────────────────────────────────────────
 
 @app.get("/api/yaobi/status")

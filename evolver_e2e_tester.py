@@ -551,6 +551,7 @@ def main():
     result = {
         "passed": len(FAILURES) == 0,
         "cases": RESULTS,
+        "cases": RESULTS,
         "failed_cases": FAILURES,
         "skipped_cases": [n for n, v in RESULTS.items() if v == SKIP],
         "locked_params_unchanged": True,
@@ -564,6 +565,11 @@ def main():
     shutil.rmtree(data_dir, ignore_errors=True)
     print(f"\n测试数据已清理: {data_dir}")
 
+    try:
+        from autopilot_guard import save_e2e_status
+        save_e2e_status(result)
+    except Exception:
+        pass
     return 0 if result["passed"] else 1
 
 

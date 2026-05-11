@@ -188,6 +188,13 @@ class BinanceScalpBot:
         # ── Evolver 触发状态 ───────────────────────────────────────────────
         self._evolver_trade_count: int = 0
         self._evolver_last_run: float = 0.0
+        # ── Autopilot: startup guard ─────────────────────────────────────────
+        self._guard_last_run: float = 0.0
+        try:
+            from autopilot_guard import run_startup_guard
+            run_startup_guard(self.cfg)
+        except Exception as e:
+            logger.debug("Startup guard exception: %s", e)
 
     @property
     def cfg(self) -> dict:
@@ -4046,6 +4053,15 @@ class BinanceScalpBot:
         _last_orphan_scan = 0.0
         _last_shadow_update = 0.0
         while self.running:
+            # Autopilot periodic guard
+            try:
+                _guard_interval = float(self.cfg.get("AUTOPILOT_GUARD_INTERVAL_SEC", 300) or 300)
+                if self.cfg.get("AUTOPILOT_GUARD_ENABLED", True) and time.monotonic() - self._guard_last_run >= _guard_interval:
+                    self._guard_last_run = time.monotonic()
+                    from autopilot_guard import run_periodic_guard
+                    run_periodic_guard(self.cfg)
+            except Exception as e:
+                logger.debug("Periodic guard exception: %s", e)
             interval = float(self.cfg.get("SCALP_POSITION_CHECK_INTERVAL_SECONDS", 10) or 10)
             await asyncio.sleep(max(3.0, interval))
             await self._position_monitor_once()

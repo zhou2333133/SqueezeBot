@@ -518,6 +518,13 @@ class ConfigManager:
         "EVOLVER_DATA_MIN_STRATEGY_TAG_COVERAGE": 0.95,
         "EVOLVER_DATA_MIN_POLICY_VERSION_COVERAGE": 0.90,
                 "EVOLVER_LOG_RETENTION_DAYS": 30,
+                # ── Autopilot Guard ─────────────────────────────────────────────────────
+        "AUTOPILOT_GUARD_ENABLED": True,
+        "AUTOPILOT_GUARD_INTERVAL_SEC": 300,
+        "AUTOPILOT_FREEZE_EVOLVER_ON_GUARD_FAIL": True,
+        "AUTOPILOT_REQUIRE_E2E_PASS": True,
+        "AUTOPILOT_E2E_MAX_AGE_HOURS": 24,
+        "AUTOPILOT_LOCKED_PARAM_AUTO_RESTORE": True,
         "EVOLVER_MAX_HISTORY_LINES": 10000,
         "EVOLVER_MAX_BACKUPS": 50,
         # 策略权重（0.0 = 禁用，1.0 = 正常，>1.0 = 增强）
