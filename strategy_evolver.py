@@ -298,9 +298,12 @@ def propose_param_updates(metrics: dict[str, dict], patterns: list[dict], curren
 
 
 def _tag_key(tag: str) -> str:
-    """策略标签 → 配置 key 前缀。"""
-    mapping = {"启动型": "启动型", "OI爆发": "OI爆发", "静默建仓": "静默建仓",
-               "突破前夜": "突破前夜", "早期启动": "早期启动"}
+    """策略标签 → 配置 key 前缀（统一英文）。"""
+    mapping = {"启动型": "STARTUP", "OI爆发": "OI_EXPLOSION", "静默建仓": "QUIET_ACCUM",
+               "突破前夜": "PRE_BREAKOUT", "早期启动": "EARLY_START"}
+    tag_up = tag.upper().strip()
+    if tag_up in ("STARTUP", "OI_EXPLOSION", "QUIET_ACCUM", "PRE_BREAKOUT", "EARLY_START", "UNKNOWN"):
+        return tag_up
     return mapping.get(tag, tag)
 
 
@@ -627,6 +630,17 @@ def run_evolution_once() -> dict[str, Any]:
 # ══════════════════════════════════════════════════════════════════════════════
 # 工具函数
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _is_last_enabled_strategy(eng_key: str, cfg: dict) -> bool:
+    """检查是否只剩这一个启用策略。"""
+    try:
+        from strategy_policy import get_enabled_strategies
+        enabled = get_enabled_strategies(cfg)
+        return len(enabled) == 1 and eng_key in enabled
+    except Exception:
+        return False
+
+
 def _f(v) -> float:
     try:
         return float(v) if v is not None else 0.0

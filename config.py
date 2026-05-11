@@ -244,6 +244,11 @@ class ConfigManager:
         "STRATEGY_WEIGHTS.PRE_BREAKOUT":          [0.0,  2.0],
         "STRATEGY_WEIGHTS.EARLY_START":           [0.0,  2.0],
         "STRATEGY_WEIGHTS.UNKNOWN":               [0.0,  1.0],
+        "STRATEGY_ENABLED.STARTUP":              [0.0,  1.0],
+        "STRATEGY_ENABLED.OI_EXPLOSION":         [0.0,  1.0],
+        "STRATEGY_ENABLED.QUIET_ACCUM":           [0.0,  1.0],
+        "STRATEGY_ENABLED.PRE_BREAKOUT":          [0.0,  1.0],
+        "STRATEGY_ENABLED.EARLY_START":           [0.0,  1.0],
     }
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
