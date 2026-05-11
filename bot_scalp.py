@@ -3420,20 +3420,16 @@ class BinanceScalpBot:
             _record_strategy_trade(trade)
         except Exception as e:
             logger.debug("⚡ [%s] 写入策略统计失败: %s", pos.symbol, e)
-        # ── 自动进化触发（增强版：state/pending/freeze/rollback）─────────────
+        # ── Evolver Runtime 调度（非阻塞）─────────────────────────────────
         try:
-            from strategy_evolver import update_evolver_state_after_trade, run_evolution_auto
-            update_evolver_state_after_trade(trade)
-            _evolver_after = int(self.cfg.get("EVOLVER_RUN_AFTER_CLOSED_TRADES", 30) or 30)
-            _evolver_trade_count = getattr(self, "_evolver_trade_count", 0) + 1
-            self._evolver_trade_count = _evolver_trade_count
-            if _evolver_trade_count >= _evolver_after:
-                self._evolver_trade_count = 0
-                _auto_result = run_evolution_auto()
-                if _auto_result.get("event_type") in ("APPLY", "ROLLBACK"):
-                    logger.info("Evolver %s: %s", _auto_result["event_type"], _auto_result.get("reason", ""))
+            from evolver_runtime import mark_trade_closed, maybe_schedule_evolver_job
+            mark_trade_closed()
+            _evo_result = maybe_schedule_evolver_job(self.cfg)
+            if _evo_result.get("scheduled") and _evo_result.get("job_result", {}).get("status") == "SUCCESS":
+                _jr = _evo_result["job_result"]
+                logger.info("Evolver job SUCCESS: %s", _jr.get("policy_version", ""))
         except Exception as e:
-            logger.debug("Evolver 触发异常 (不影响交易): %s", e)
+            logger.debug("Evolver 调度异常 (不影响交易): %s", e)
 
     async def _check_tp_sl(self, symbol: str, price: float) -> None:
         pos = self.open_positions.get(symbol)

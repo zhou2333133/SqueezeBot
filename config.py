@@ -502,6 +502,16 @@ class ConfigManager:
         "EVOLVER_COUNTERFACTUAL_ACCEPT_MIN_CONFIDENCE": 0.55,
         "EVOLVER_COUNTERFACTUAL_ALLOW_WEAK_ACCEPT": True,
         "EVOLVER_COUNTERFACTUAL_MAX_MISSING_FIELDS_RATIO": 0.5,
+                # ── Evolver Runtime ────────────────────────────────────────────────────
+        "EVOLVER_RUNTIME_ENABLED": True,
+        "EVOLVER_LOCK_TIMEOUT_SEC": 900,
+        "EVOLVER_MAX_RUNTIME_SEC": 600,
+        "EVOLVER_FREEZE_ON_ERROR_COUNT": 3,
+        "EVOLVER_ERROR_FREEZE_MINUTES": 120,
+        "EVOLVER_DATA_MIN_FIELD_COVERAGE": 0.70,
+        "EVOLVER_DATA_MIN_PNL_COVERAGE": 0.95,
+        "EVOLVER_DATA_MIN_STRATEGY_TAG_COVERAGE": 0.95,
+        "EVOLVER_DATA_MIN_POLICY_VERSION_COVERAGE": 0.90,
         # 策略权重（0.0 = 禁用，1.0 = 正常，>1.0 = 增强）
         "STRATEGY_WEIGHT_启动型": 1.0,
         "STRATEGY_WEIGHT_OI爆发": 1.0,
