@@ -1,0 +1,17 @@
+{
+  "status": "IDLE",
+  "current_job_id": null,
+  "last_job_id": null,
+  "last_started_at": 0.0,
+  "last_finished_at": 0.0,
+  "last_error": "",
+  "last_success": true,
+  "consecutive_errors": 0,
+  "frozen_until": 0.0,
+  "freeze_reason": "",
+  "running_lock": false,
+  "lock_owner": "",
+  "lock_created_at": 0,
+  "last_policy_version": "",
+  "last_config_hash": ""
+}

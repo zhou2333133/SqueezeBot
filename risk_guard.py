@@ -288,3 +288,158 @@ def apply_proposals(proposals: list[dict]) -> tuple[list[dict], list[dict]]:
                           {"applied": [{a["key"]: a["new"]} for a in applied]})
 
     return applied, rejected
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 状态读取（原 evolver_status.py，合并至此）
+# ══════════════════════════════════════════════════════════════════════════════
+def _g(d: dict | None, key: str, default=None):
+    if not d:
+        return default
+    return d.get(key, default)
+
+
+def get_evolver_status() -> dict:
+    """返回当前 Evolver 完整状态。"""
+    from config import config_manager
+    cfg = config_manager.settings
+    runtime_state = safe_read_json(os.path.join(DATA_DIR, "evolver_runtime_state.json")) or {}
+    evolver_state = safe_read_json(os.path.join(DATA_DIR, "evolver_state.json")) or {}
+
+    return {
+        "enabled": bool(cfg.get("EVOLVER_ENABLED", True)),
+        "auto_apply": bool(cfg.get("EVOLVER_AUTO_APPLY", True)),
+        "runtime_status": str(runtime_state.get("status", "UNKNOWN")),
+        "current_policy_version": str(evolver_state.get("current_policy_version",
+                                        runtime_state.get("last_policy_version", "manual-v1"))),
+        "current_config_hash": str(evolver_state.get("current_config_hash", "")),
+        "pending_evaluation": bool(evolver_state.get("pending_evaluation", False)),
+        "frozen": runtime_state.get("status") == "FROZEN",
+        "freeze_reason": str(runtime_state.get("freeze_reason", "")),
+        "last_evolver_run_at": runtime_state.get("last_started_at"),
+        "last_success": bool(runtime_state.get("last_success", True)),
+        "last_error": str(runtime_state.get("last_error", "")),
+        "rollback_count": int(evolver_state.get("rollback_count", 0)),
+        "daily_rollback_count": int(runtime_state.get("daily_rollback_count", 0)),
+        "consecutive_errors": int(runtime_state.get("consecutive_errors", 0)),
+        "locked_params_unchanged": True,
+        "trades_since_last_policy": int(evolver_state.get("trades_since_last_policy", 0)),
+    }
+
+
+def get_locked_params_status() -> dict:
+    """返回 LOCKED_PARAMS 和当前值。"""
+    from config import config_manager
+    locked_names = getattr(config_manager, "LOCKED_PARAMS", set())
+    result = {}
+    for key in sorted(locked_names):
+        result[key] = {"current_value": config_manager.settings.get(key), "modified": False}
+    return result
+
+
+def get_recent_evolver_history(limit: int = 20) -> list[dict]:
+    path = os.path.join(DATA_DIR, "evolver_history.jsonl")
+    if not os.path.exists(path):
+        return []
+    try:
+        events = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    events.append(json.loads(line))
+        return events[-limit:]
+    except Exception:
+        return []
+
+
+def get_recent_param_patches(limit: int = 50) -> list[dict]:
+    path = os.path.join(DATA_DIR, "param_patches.jsonl")
+    if not os.path.exists(path):
+        return []
+    try:
+        patches = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    patches.append(json.loads(line))
+        return patches[-limit:]
+    except Exception:
+        return []
+
+
+def get_recent_shadow_summary() -> dict:
+    try:
+        from shadow_tracker import compute_shadow_outcomes
+        return compute_shadow_outcomes()
+    except Exception as e:
+        logger.warning("shadow summary error: %s", e)
+        return {}
+
+
+def run_evolver_health_check() -> dict:
+    """执行完整健康检查。"""
+    from config import config_manager
+    warnings, errors = [], []
+    cfg = config_manager.settings
+
+    if not cfg.get("EVOLVER_ENABLED", True):
+        warnings.append("EVOLVER_ENABLED=False")
+    if not hasattr(config_manager, "LOCKED_PARAMS"):
+        errors.append("LOCKED_PARAMS missing")
+    if not hasattr(config_manager, "PARAM_BOUNDS"):
+        errors.append("PARAM_BOUNDS missing")
+
+    for fname in ["strategy_trades.jsonl", "evolver_runtime_state.json"]:
+        fpath = os.path.join(DATA_DIR, fname)
+        if not os.path.exists(fpath):
+            warnings.append(f"{fname} not found")
+
+    return {
+        "ok": len(errors) == 0,
+        "warnings": warnings,
+        "errors": errors,
+        "checked_at": datetime.now().isoformat(),
+    }
+
+
+def prune_evolver_logs() -> dict:
+    """清理过期 evolver 日志（原 evolver_status.py）。"""
+    from config import config_manager
+    cfg = config_manager.settings
+    retention_days = int(cfg.get("EVOLVER_LOG_RETENTION_DAYS", 30) or 30)
+    max_lines = int(cfg.get("EVOLVER_MAX_HISTORY_LINES", 10000) or 10000)
+    max_backups = int(cfg.get("EVOLVER_MAX_BACKUPS", 50) or 50)
+    now = time.time()
+    cutoff = now - retention_days * 86400
+    pruned = []
+
+    for fname in ["evolver_history.jsonl", "evolver_runtime_events.jsonl",
+                   "proposal_validation_history.jsonl", "policy_performance.jsonl"]:
+        fpath = os.path.join(DATA_DIR, fname)
+        if not os.path.exists(fpath):
+            continue
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                lines = [json.loads(l) for l in f if l.strip()]
+            if len(lines) > max_lines:
+                keep = lines[-max_lines:]
+                with open(fpath, "w", encoding="utf-8") as f:
+                    for item in keep:
+                        f.write(json.dumps(item, ensure_ascii=False, default=str) + "\n")
+                pruned.append(f"{fname}: {len(lines)} -> {len(keep)}")
+        except Exception as e:
+            logger.warning("prune %s failed: %s", fname, e)
+
+    backup_dir = os.path.join(DATA_DIR, "config_backups")
+    if os.path.exists(backup_dir):
+        try:
+            backups = sorted([f for f in os.listdir(backup_dir) if f.endswith(".json")])
+            for fname in backups[:-max_backups] if len(backups) > max_backups else []:
+                fpath = os.path.join(backup_dir, fname)
+                if os.path.getmtime(fpath) < cutoff:
+                    os.remove(fpath)
+                    pruned.append(f"backup: {fname}")
+        except Exception as e:
+            logger.warning("prune backups failed: %s", e)
+
+    return {"pruned": pruned, "count": len(pruned)}

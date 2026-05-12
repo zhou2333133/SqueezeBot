@@ -1346,7 +1346,7 @@ async def strategy_trades(limit: int = 50, mode: str = "all"):
 @app.get("/api/evolver/status")
 async def evolver_status():
     try:
-        from evolver_status import get_evolver_status, get_locked_params_status
+        from risk_guard import get_evolver_status, get_locked_params_status
         return JSONResponse({**get_evolver_status(), "locked_params": get_locked_params_status()})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1355,7 +1355,7 @@ async def evolver_status():
 @app.get("/api/evolver/history")
 async def evolver_history(limit: int = 20):
     try:
-        from evolver_status import get_recent_evolver_history
+        from risk_guard import get_recent_evolver_history
         return JSONResponse(get_recent_evolver_history(limit=limit))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1364,7 +1364,7 @@ async def evolver_history(limit: int = 20):
 @app.get("/api/evolver/patches")
 async def evolver_patches(limit: int = 50):
     try:
-        from evolver_status import get_recent_param_patches
+        from risk_guard import get_recent_param_patches
         return JSONResponse(get_recent_param_patches(limit=limit))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1373,7 +1373,7 @@ async def evolver_patches(limit: int = 50):
 @app.get("/api/evolver/performance")
 async def evolver_performance(limit: int = 20):
     try:
-        from evolver_status import get_recent_policy_performance
+        from risk_guard import get_recent_shadow_summary
         return JSONResponse(get_recent_policy_performance(limit=limit))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1382,7 +1382,7 @@ async def evolver_performance(limit: int = 20):
 @app.get("/api/evolver/shadow")
 async def evolver_shadow():
     try:
-        from evolver_status import get_recent_shadow_summary
+        from risk_guard import get_recent_shadow_summary
         return JSONResponse(get_recent_shadow_summary())
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1391,8 +1391,8 @@ async def evolver_shadow():
 @app.get("/api/evolver/validations")
 async def evolver_validations(limit: int = 20):
     try:
-        from evolver_status import get_recent_proposal_validations
-        return JSONResponse(get_recent_proposal_validations(limit=limit))
+        from risk_guard import get_guard_events
+        return JSONResponse(get_guard_events(limit=limit))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1400,7 +1400,7 @@ async def evolver_validations(limit: int = 20):
 @app.get("/api/evolver/health")
 async def evolver_health():
     try:
-        from evolver_status import run_evolver_health_check
+        from risk_guard import run_evolver_health_check
         return JSONResponse(run_evolver_health_check())
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

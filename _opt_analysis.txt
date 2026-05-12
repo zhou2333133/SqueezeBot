@@ -1,0 +1,79 @@
+我现在对这个机器人有了全面的理解。以下是完整的分析：
+
+---
+
+## SqueezeBot 全貌分析
+
+### 架构概览
+
+这是一个**三层架构**的加密货币合约交易机器人：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  妖币扫描器 (Yaobi Scanner)               │
+│  GeckoTerminal → DEX Screener → 币安广场 → Surf AI      │
+│  → OKX链验证 → 币安OI/资金费 → 打分 → AI终审 → Obsidian │
+│  输出: candidates_map (80+ 字段/币)                      │
+└──────────────────────┬──────────────────────────────────┘
+                       ↓ candidates_map
+┌──────────────────────┼──────────────────────────────────┐
+│     超短线 Scalp Bot (V3.0)   │  闪崩 Flash Bot (V4AF)  │
+│  Squeeze Hunter (爆仓反向)    │  妖币暴涨后回落做空      │
+│  Trend Breakout (动能突破)     │  4H衰竭+1H lower high   │
+│  顺势回踩接力                 │  智能时间止损(8H续期)    │
+│  TP1/TP2/TP3+trailing        │  trail+宽硬SL            │
+├──────────────────────────────┴──────────────────────────┤
+│              MarketHub (全局市场数据缓存)                 │
+│  Taker买卖比/散户大户多空比/基差/跨所OI                   │
+├──────────────────────────────────────────────────────────┤
+│                  Web 面板 (FastAPI)                       │
+│  实时状态/复盘包(JSON+MD)/控制台/WS推送                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 核心策略
+
+1. **Squeeze Hunter (轧空/轧多猎杀)**: OI暴跌 + Taker急剧反方向 → 爆仓后的反向行情
+2. **Trend Breakout (动能突破)**: MA5>MA10>MA20 + 突破前高 + Taker确认
+3. **顺势回踩 (Continuation)**: 突破后回踩EMA20 + Taker再次确认
+4. **V4AF 闪崩做空**: 24h涨>15% + 4H多头衰竭 + 1H lower high
+
+### 关键里程
+- 2900+ 行 `bot_scalp.py`，策略参数 100+ 个
+- 52 笔复盘驱动调参，`PROFILE_VERSION` 到 `2026050101`
+- 占用 11 个数据源，5 个 AI 提供商
+
+---
+
+### 优化建议
+
+按重要性排序：
+
+| # | 问题 | 位置 | 优化建议 |
+|---|------|------|----------|
+| 1 | **bot_scalp.py 2900 行** | bot_scalp.py | 拆分成 3-4 个模块：信号检测、持仓管理、WS管理、风控。当前一个文件做所有事，难测试难维护 |
+| 2 | **配置双写风险** | config.py:182-363 vs 505-715 | `PROFILE_MIGRATION_DEFAULTS` 和 `default_settings` 是两份几乎相同的 dict，改参数必须同步两处。应合并为一份 + 增量 override |
+| 3 | **全内存状态，重启即失** | signals.py, candidates.py | 所有信号/持仓/成交/候选内存用 list/dict。虽有 `_persist_ledger` 但只存部分。建议引入 SQLite（单文件，零依赖）持久化 |
+| 4 | **启动对账只查持仓不查挂单** | bot_scalp.py `_startup_reconcile_positions` | 重启后如果有未成交的 SL/TP 挂单，本地无记录。建议启动时也查 openOrders 做对账 |
+| 5 | **无跨机器人总体风控** | 各 bot 独立 | Scalp 亏 200U + Flash 亏 100U 各自认为 OK，但总亏 300U 可能超限。应加全局每日亏损限制 |
+| 6 | **OI 缓存窗口浪费** | bot_scalp.py `_poll_oi_loop` | 每次 `_oi_poll_symbols()` 变化时新币暖机 60s，但旧币的缓存 deque 一直在追加。候选池每 5min 刷新，暖机频繁重置 |
+| 7 | **Entry block log 无持久化** | bot_scalp.py `_entry_block_log` | 重启后不知道"为什么没开仓"，复盘包缺少历史拦截记录。应跟 ledger 一起持久化 |
+| 8 | **AI 提供商 fallback 链低效** | scanner/ai_gateway.py | OpenAI→Gemini→Anthropic→DeepSeek 顺序 fallback，每次失败时间长。建议改为并发尝试最快响应，或用预检判断 |
+| 9 | **信号冷却不区分方向** | bot_scalp.py `_signal_cooldown` | 同一币 30s 冷却期不分多/空，错过两面开仓机会。应改为 `(symbol, direction)` 独立冷却 |
+| 10 | **TP/SL 检查在 WS 消息循环里同步做** | bot_scalp.py `_on_message` | `_check_tp_sl` 是同步操作但里面可能有 REST 调用，阻塞 WS 处理。应丢队列异步处理 |
+| 11 | **Surf AI entry check 非缓存** | bot_scalp.py `_surf_entry_check` | 每笔开仓都调一次 Surf AI（极端行情下），相同币种短时间内重复。应加 TTL 缓存 |
+| 12 | **`_breakout_fired` 锁只按 K 线收盘** | bot_scalp.py `_breakout_fired` | 突破信号每个 K 线重置一次，但开盘瞬间可能重复触发多次。建议加 tick 级别的一次性标记 |
+| 13 | **候选池 Age 守卫逻辑偏宽松** | bot_scalp.py `_yaobi_entry_guard` | 候选超过 `SCALP_MAX_CANDIDATE_AGE_MINUTES` 但 op_setup 是 ARMED/HOT 就放行。AI 剧本可能过时但状态没更新 |
+| 14 | **无全局熔断（circuit breaker）** | 整体 | Binance API 连续失败（-1021, 429, 5xx）时，目前每个模块独立退避。应有全局 API 熔断器 |
+| 15 | **测试覆盖率偏低** | tests/ | 14 个测试文件 vs 40+ 源文件。缺少：WS 重连测试、OI 缓存测试、多机器人竞争测试、复盘包 slim 兼容测试 |
+
+### 低风险快速优化项（可马上改）
+
+- `config.py` 合并 `PROFILE_MIGRATION_DEFAULTS` 和 `default_settings` 为一份
+- `bot_scalp.py` 添加 `(symbol, direction)` 信号冷却而非 `symbol` 单维度
+- `market_hub.py` 加 OI/taker 更新时间的 Prometheus 风格健康检查
+- `signals.py` 加 `_persist_entry_blocks()` 把拦截日志写 ledger
+- 修复 `signals.py:58-67` `_persist_ledger` 中没有包含 `flash_review_log`
+- `web.py` 复盘包 slim 模式的 `entry_context` 裁剪增加 age 字段（便于判断拦截时效）
+
+需要我跟进其中哪些项出具体方案或直接改代码吗？
