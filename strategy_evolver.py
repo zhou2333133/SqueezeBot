@@ -536,11 +536,13 @@ def run_evolution_once() -> dict[str, Any]:
             result["message"] = "无参数修改建议"
             return result
 
-        # 5. 校验
-        valid, rejected = validate_param_updates(proposals, current_config)
+        # 5. risk_guard 审核 + 写入（Evolver 只提案，Guard 批准）
+        from risk_guard import apply_proposals
+        applied, rejected = apply_proposals(proposals)
         result["rejected_updates"] = rejected
+        result["applied_updates"] = applied
 
-        if not valid:
+        if not applied:
             result["message"] = f"所有 proposal 被拒绝 ({len(rejected)} rejected)"
             return result
 
@@ -565,15 +567,13 @@ def run_evolution_once() -> dict[str, Any]:
         except Exception as e:
             logger.debug("反事实验证异常 (不影响): %s", e)
 
-        # 7. 备份
+        # 6. 备份
         if cfg.get("EVOLVER_BACKUP_ENABLED", True):
             backup_path = backup_config()
             result["config_backup"] = backup_path
 
-        # 7. 应用
-        if auto_apply:
-            applied = apply_param_updates(valid)
-            result["applied_updates"] = applied
+        # 7. 应用（已由 risk_guard 在第5步写入，此处仅记录）
+        if auto_apply and applied:
             result["auto_applied"] = True
 
             # 8. 更新 policy_version

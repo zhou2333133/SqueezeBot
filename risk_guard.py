@@ -218,3 +218,73 @@ def get_guard_events(limit: int = 50) -> list[dict]:
         return events[-limit:]
     except Exception:
         return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 审核通过后写入
+# ══════════════════════════════════════════════════════════════════════════════
+def apply_proposals(proposals: list[dict]) -> tuple[list[dict], list[dict]]:
+    """审核提案，通过的写入 config_manager.settings，拒绝的返回。
+    
+    这是 risk_guard 作为"裁判"的核心入口：
+      Evolver 提案 → risk_guard 审核 → risk_guard 写入
+      不允许 Evolver 直接写配置。
+    """
+    valid, rejected = check_proposals(proposals)
+
+    # 额外检查 PARAM_BOUNDS
+    bounds = getattr(config_manager, "PARAM_BOUNDS", {})
+    max_change_pct = float(config_manager.settings.get("EVOLVER_MAX_PARAM_CHANGE_PCT", 0.30) or 0.30)
+    max_updates = int(config_manager.settings.get("EVOLVER_MAX_UPDATES_PER_RUN", 5) or 5)
+    filtered = []
+
+    for prop in valid:
+        key = prop["key"]
+        old_v = prop["old"]
+        new_v = prop["new"]
+
+        # INEFFECTIVE_PARAMS
+        if hasattr(config_manager, "INEFFECTIVE_PARAMS") and key in config_manager.INEFFECTIVE_PARAMS:
+            rejected.append({**prop, "rejected_reason": "INEFFECTIVE_PARAM"})
+            continue
+        # PARAM_BOUNDS
+        if key not in bounds:
+            rejected.append({**prop, "rejected_reason": "NO_BOUNDS"})
+            continue
+        lo, hi = bounds[key]
+        pct_change = abs(new_v - old_v) / abs(old_v) if old_v != 0 else 1.0
+        if pct_change > max_change_pct:
+            max_delta = abs(old_v) * max_change_pct
+            new_v = old_v + max_delta if new_v > old_v else old_v - max_delta
+            prop["new"] = new_v
+            prop["clamped"] = True
+        new_v = max(lo, min(hi, new_v))
+        prop["new"] = new_v
+        if abs(new_v - old_v) < 0.001:
+            continue
+        filtered.append(prop)
+
+    # 限制每轮修改数量
+    filtered = filtered[:max_updates]
+
+    # 审核通过的写入配置
+    applied = []
+    for prop in filtered:
+        key = prop["key"]
+        new_val = prop["new"]
+        old_val = config_manager.settings.get(key)
+        if old_val is not None:
+            typ = type(old_val)
+            try:
+                converted = typ(new_val)
+            except (ValueError, TypeError):
+                converted = new_val
+            config_manager.settings[key] = converted
+            applied.append({**prop, "new": converted})
+
+    if applied:
+        config_manager._persist()
+        write_guard_event("PARAMS_APPLIED", "INFO", f"{len(applied)} params updated",
+                          {"applied": [{a["key"]: a["new"]} for a in applied]})
+
+    return applied, rejected
