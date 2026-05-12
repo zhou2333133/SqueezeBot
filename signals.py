@@ -40,7 +40,6 @@ def _load_ledger() -> None:
     except Exception:
         return
     scalp_positions.update(data.get("scalp_positions") or {})
-    scalp_trade_history.extend((data.get("scalp_trade_history") or [])[-MAX_TRADES:])
     scalp_entry_block_log.extend((data.get("scalp_entry_block_log") or [])[-MAX_ENTRY_BLOCKS:])
 
 
@@ -50,7 +49,6 @@ def _persist_ledger() -> None:
         payload = {
             "updated_at": time.time(),
             "scalp_positions": scalp_positions,
-            "scalp_trade_history": scalp_trade_history[-MAX_TRADES:],
             "scalp_entry_block_log": scalp_entry_block_log[-MAX_ENTRY_BLOCKS:],
         }
         tmp = LEDGER_FILE + ".tmp"
