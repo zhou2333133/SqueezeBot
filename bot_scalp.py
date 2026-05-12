@@ -287,63 +287,43 @@ class BinanceScalpBot:
                           leverage: int, pos_side: str, intended_risk_usdt: float,
                           base_signal: dict, entry_context: dict,
                           is_paper: bool, **kwargs) -> _ExecResult:
-        """统一开仓执行。PAPER：虚拟成交；LIVE：杠杆+IOC+SL+保护处理。"""
-        if is_paper:
-            return _ExecResult(success=True, backend="PAPER", status="filled",
-                               filled_qty=quantity, avg_price=entry_price,
-                               requested_qty=quantity, requested_price=entry_price)
-
-        # ── LIVE 路径 ──────────────────────────────────────────────────────
-        if not self.trader:
-            return _ExecResult(success=False, backend="LIVE", error="trader_uninitialized")
-        hedge_mode = await self.trader.is_hedge_mode()
-        if hedge_mode is None:
-            return _ExecResult(success=False, backend="LIVE", error="cannot_check_position_mode")
-        if hedge_mode:
-            logger.info("⚡ [%s] Hedge Mode → positionSide=%s", symbol, pos_side)
-
-        lev_resp = await self.trader.set_leverage(symbol, leverage)
-        if lev_resp is None and leverage > 5:
-            logger.warning("⚡ [%s] 杠杆%.0fx失败，降级到5x", symbol, leverage)
-            lev_resp = await self.trader.set_leverage(symbol, 5)
-            if lev_resp and "leverage" in lev_resp:
-                leverage = 5
-        if not lev_resp or "leverage" not in lev_resp:
-            return _ExecResult(success=False, backend="LIVE", error="leverage_set_failed")
-
-        ioc_price = entry_price * 1.003 if direction == "LONG" else entry_price * 0.997
-        trade_resp = await self.trader.place_limit_ioc_order(symbol, side, quantity, ioc_price, pos_side)
-        if not trade_resp:
-            return _ExecResult(success=False, backend="LIVE", error="ioc_order_failed")
-        filled_qty = self._as_float(trade_resp.get("executedQty", 0))
-        if filled_qty <= 0:
-            return _ExecResult(success=False, backend="LIVE", error="ioc_no_fill",
-                               status="rejected")
-        actual_entry = self._as_float(trade_resp.get("avgPrice") or entry_price)
-
-        sl_resp = await self.trader.place_stop_loss_order(symbol, exit_s, sl_price, filled_qty, pos_side)
-        sl_order_id = sl_resp.get("orderId") if sl_resp else None
-        protection_failed = False
-        protection_reason = ""
-        if not sl_order_id:
-            logger.critical("⚡ [%s] 止损单挂单失败，立即 reduceOnly 市价撤出", symbol)
-            emergency = await self.trader.place_reduce_only_market_order(symbol, exit_s, filled_qty, pos_side)
-            if emergency:
-                return _ExecResult(success=False, backend="LIVE", error="stop_loss_order_failed_emergency_closed",
-                                   status="protection_failed", fill_resp=emergency)
-            protection_failed = True
-            protection_reason = "stop_loss_order_failed_emergency_failed"
-            self._suspend_live_trading(f"{symbol}: {protection_reason}")
-            logger.critical("⚡ [%s] 紧急撤出失败，请人工检查交易所持仓", symbol)
-
-        return _ExecResult(success=True, backend="LIVE", status="filled",
-                           filled_qty=filled_qty, avg_price=actual_entry,
-                           order_id=trade_resp.get("orderId"),
-                           sl_order_id=sl_order_id,
-                           protection_failed=protection_failed,
-                           protection_reason=protection_reason,
-                           fill_resp=trade_resp,
-                           requested_qty=quantity, requested_price=entry_price)
+        """统一开仓执行。委托 execution_router.execute() 路由 PAPER/LIVE。"""
+        import execution_router as _router
+        order_intent = {
+            "action": "open",
+            "symbol": symbol,
+            "direction": direction,
+            "side": side,
+            "exit_s": exit_s,
+            "entry_price": entry_price,
+            "sl_price": sl_price,
+            "quantity": quantity,
+            "leverage": leverage,
+            "pos_side": pos_side,
+            "is_paper": is_paper,
+            "intended_risk_usdt": intended_risk_usdt,
+        }
+        r = await _router.execute(order_intent, self.trader, self.cfg)
+        # 保护失败（SL挂单失败或紧急撤出失败）→ 调用 bot 的暂停机制
+        if r.get("protection_failed"):
+            self._suspend_live_trading(f"{symbol}: {r.get('protection_reason', 'unknown')}")
+        return _ExecResult(
+            success=r.get("success", False),
+            backend=r.get("mode", "PAPER"),
+            status="filled" if r.get("success") else
+                   "protection_failed" if r.get("protection_failed") else
+                   "rejected" if r.get("error") else "",
+            error=r.get("error", ""),
+            filled_qty=float(r.get("qty", 0)),
+            avg_price=float(r.get("price", entry_price)),
+            order_id=r.get("order_id"),
+            sl_order_id=r.get("sl_order_id"),
+            protection_failed=r.get("protection_failed", False),
+            protection_reason=r.get("protection_reason", ""),
+            fill_resp=r.get("raw_response"),
+            requested_qty=quantity,
+            requested_price=entry_price,
+        )
 
     def _record_api_result(self, success: bool) -> None:
         """全局 API 熔断器：追踪连续失败次数，超过阈值暂停真实开仓。"""
@@ -2833,6 +2813,14 @@ class BinanceScalpBot:
         )
         base_signal["strategy_tag"] = strategy_tag
         self._pending_entries += 1
+        _pending_released = False
+
+        def _release_pending():
+            """统一释放 _pending_entries，防止泄漏。可安全重复调用。"""
+            nonlocal _pending_released
+            if not _pending_released:
+                self._pending_entries = max(0, self._pending_entries - 1)
+                _pending_released = True
 
         # ── 策略策略（Evolver 控制启停/权重）────────────────────────────────────
         _policy_result = None
@@ -2846,6 +2834,7 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": reason})
                 logger.info("⚡ [%s] ❌ 策略 %s 已禁用，跳过开仓", symbol, strategy_tag)
+                _release_pending()
                 return
             # 权重准入检查
             _weight_result = apply_strategy_weight_to_signal(base_signal, strategy_tag, cfg)
@@ -2857,10 +2846,10 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": _wreason})
                 logger.info("⚡ [%s] ❌ 权重准入拦截 %s: %s", symbol, strategy_tag, _wreason)
+                _release_pending()
                 return
         except Exception as e:
             logger.debug("⚡ [%s] 策略策略异常 (不影响交易): %s", symbol, e)
-            self._pending_entries = max(0, self._pending_entries - 1)
             if _policy_result is None:
                 _policy_result = {"action": "ALLOW", "reason": "exception_fallback"}
 
@@ -2879,9 +2868,14 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": _reason})
                 logger.info("⚡ [%s] ❌ Risk Guard 拦截: %s", symbol, _reason)
+                _release_pending()
                 return
         except Exception as e:
-            logger.debug("⚡ [%s] Risk Guard 异常 (不拦截): %s", symbol, e)
+            logger.error("⚡ [%s] ❌ Risk Guard 异常，禁止开仓: %s", symbol, e, exc_info=True)
+            add_scalp_signal({**base_signal, "auto_traded": False,
+                              "rejected_reason": "risk_guard_error"})
+            _release_pending()
+            return
 
         # ── 单币 AI 判单（已废弃，功能由 evolver 覆盖）────────────────────────
         _judge_result = None
@@ -2893,6 +2887,7 @@ class BinanceScalpBot:
         if not cfg.get("SCALP_AUTO_TRADE", False) and not paper_mode:
             add_scalp_signal({**base_signal, "auto_traded": False, "paper": False})
             logger.info("⚡ [%s] 信号发出 (自动交易关闭)", symbol)
+            _release_pending()
             return
 
         if cfg.get("SCALP_AUTO_TRADE", False) and not paper_mode and self._live_trading_suspended:
@@ -2901,6 +2896,7 @@ class BinanceScalpBot:
                               "rejected_reason": "live_trading_suspended",
                               "suspended_reason": reason})
             logger.critical("⚡ [%s] 真实开仓跳过：自动开仓已暂停 (%s)", symbol, reason)
+            _release_pending()
             return
 
         side   = "BUY"  if direction == "LONG" else "SELL"
@@ -2908,69 +2904,72 @@ class BinanceScalpBot:
         pos_side = self._position_side(direction)
 
         # ── 统一执行（PAPER/LIVE 通过 execution_router 路由）─────────────
-        result = await self._exec_open(
-            symbol, direction, side, exit_s, entry_price, sl_price,
-            quantity, leverage, pos_side, intended_risk_usdt,
-            base_signal, entry_context,
-            is_paper=paper_mode,
-            tp1_ratio=tp1_ratio, tp2_ratio=tp2_ratio,
-            trail_pct=cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
-            structure_trail_bars=int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
-            time_stop_minutes=time_stop_minutes,
-            tp2_timeout_minutes=tp2_timeout_minutes,
-            actual_risk_usdt=actual_risk_usdt,
-            strategy_tag=strategy_tag,
-        )
-        # execution_router 验证执行结果是否违反边界
+        # try/finally 确保即使 _exec_open 抛出异常也释放 _pending_entries
         try:
-            import execution_router as _er
-            _er.verify_execution(result, symbol, direction, quantity, cfg)
-        except Exception:
-            pass
-        if not result.success:
-            # 保护失败且已市价撤出：记录信号但不建仓
-            if result.status == "protection_failed" and result.fill_resp:
-                add_scalp_signal({**base_signal, "auto_traded": False, "paper": paper_mode,
-                                  "rejected_reason": result.error})
-            return
+            result = await self._exec_open(
+                symbol, direction, side, exit_s, entry_price, sl_price,
+                quantity, leverage, pos_side, intended_risk_usdt,
+                base_signal, entry_context,
+                is_paper=paper_mode,
+                tp1_ratio=tp1_ratio, tp2_ratio=tp2_ratio,
+                trail_pct=cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
+                structure_trail_bars=int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
+                time_stop_minutes=time_stop_minutes,
+                tp2_timeout_minutes=tp2_timeout_minutes,
+                actual_risk_usdt=actual_risk_usdt,
+                strategy_tag=strategy_tag,
+            )
+            # execution_router 验证执行结果是否违反边界
+            try:
+                import execution_router as _er
+                _er.verify_execution(result, symbol, direction, quantity, cfg)
+            except Exception:
+                pass
+            if not result.success:
+                # 保护失败且已市价撤出：记录信号但不建仓
+                if result.status == "protection_failed" and result.fill_resp:
+                    add_scalp_signal({**base_signal, "auto_traded": False, "paper": paper_mode,
+                                      "rejected_reason": result.error})
+                return
 
-        # ── 统一后处理 ────────────────────────────────────────────────────
-        actual_entry = result.avg_price or entry_price
-        actual_qty   = result.filled_qty or quantity
-        sl_dist = abs(actual_entry - sl_price) / actual_entry * 100 if actual_entry > 0 else sl_distance_pct
-        t1 = sl_dist * cfg.get("SCALP_TP1_RR", 1.2)
-        t2 = sl_dist * cfg.get("SCALP_TP2_RR", 3.0)
-        if direction == "LONG":
-            tp1 = actual_entry * (1 + t1 / 100)
-            tp2 = actual_entry * (1 + t2 / 100)
-        else:
-            tp1 = actual_entry * (1 - t1 / 100)
-            tp2 = actual_entry * (1 - t2 / 100)
-        actual_risk = actual_entry * actual_qty * sl_dist / 100 if sl_dist > 0 else intended_risk_usdt
+            # ── 统一后处理 ────────────────────────────────────────────────
+            actual_entry = result.avg_price or entry_price
+            actual_qty   = result.filled_qty or quantity
+            sl_dist = abs(actual_entry - sl_price) / actual_entry * 100 if actual_entry > 0 else sl_distance_pct
+            t1 = sl_dist * cfg.get("SCALP_TP1_RR", 1.2)
+            t2 = sl_dist * cfg.get("SCALP_TP2_RR", 3.0)
+            if direction == "LONG":
+                tp1 = actual_entry * (1 + t1 / 100)
+                tp2 = actual_entry * (1 + t2 / 100)
+            else:
+                tp1 = actual_entry * (1 - t1 / 100)
+                tp2 = actual_entry * (1 - t2 / 100)
+            actual_risk = actual_entry * actual_qty * sl_dist / 100 if sl_dist > 0 else intended_risk_usdt
 
-        pos = ScalpPosition(
-            symbol=symbol, direction=direction,
-            entry_price=actual_entry, quantity=actual_qty,
-            quantity_remaining=actual_qty,
-            sl_price=sl_price, tp1_price=tp1, tp2_price=tp2,
-            sl_order_id=result.sl_order_id,
-            current_price=actual_entry,
-            signal_label=signal_label, market_state=market_state,
-            tp1_ratio=tp1_ratio, tp2_ratio=tp2_ratio,
-            trail_pct=cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
-            structure_trail_bars=int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
-            time_stop_minutes=time_stop_minutes,
-            tp2_timeout_minutes=tp2_timeout_minutes,
-            risk_usdt=actual_risk,
-            paper=paper_mode,
-            entry_context=entry_context,
-            protection_failed=result.protection_failed,
-            protection_reason=result.protection_reason,
-            strategy_tag=strategy_tag,
-        )
-        self._pending_entries = max(0, self._pending_entries - 1)
-        self.open_positions[symbol] = pos
-        set_scalp_position(symbol, pos.to_dict())
+            pos = ScalpPosition(
+                symbol=symbol, direction=direction,
+                entry_price=actual_entry, quantity=actual_qty,
+                quantity_remaining=actual_qty,
+                sl_price=sl_price, tp1_price=tp1, tp2_price=tp2,
+                sl_order_id=result.sl_order_id,
+                current_price=actual_entry,
+                signal_label=signal_label, market_state=market_state,
+                tp1_ratio=tp1_ratio, tp2_ratio=tp2_ratio,
+                trail_pct=cfg.get("SCALP_TP3_TRAIL_PCT", 8.0),
+                structure_trail_bars=int(cfg.get("SCALP_STRUCTURE_TRAIL_BARS", 5)),
+                time_stop_minutes=time_stop_minutes,
+                tp2_timeout_minutes=tp2_timeout_minutes,
+                risk_usdt=actual_risk,
+                paper=paper_mode,
+                entry_context=entry_context,
+                protection_failed=result.protection_failed,
+                protection_reason=result.protection_reason,
+                strategy_tag=strategy_tag,
+            )
+            self.open_positions[symbol] = pos
+            set_scalp_position(symbol, pos.to_dict())
+        finally:
+            _release_pending()
 
         signal_payload = {**base_signal, "auto_traded": True, "paper": paper_mode,
                           "quantity": round(actual_qty, 6), "leverage": leverage,
@@ -3371,6 +3370,24 @@ class BinanceScalpBot:
         }
         self._start_post_exit_watch(trade, pos, exit_price)
         apply_trade_diagnosis(trade)
+        # ── 交易画像 + 学习记忆 ────────────────────────────────────────────
+        try:
+            from trade_context import extract_features
+            features = extract_features(trade.get("entry_context", {}))
+            trade["_features"] = features
+            trade["kline_pattern"] = features.get("patterns", [])
+        except Exception as e:
+            logger.debug("trade_context error: %s", e)
+        try:
+            from learning_memory import record_trade
+            record_trade(trade)
+        except Exception as e:
+            logger.debug("learning_memory error: %s", e)
+        try:
+            from param_attribution import feed_trade
+            feed_trade(trade)
+        except Exception as e:
+            logger.debug("param_attribution feed_trade error: %s", e)
         # failure_tags 从 diagnosis_tags 提取
         diag_tags = trade.get("diagnosis_tags") or trade.get("failure_tags") or []
         if not trade.get("failure_tags"):

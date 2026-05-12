@@ -373,28 +373,20 @@ def backup_config() -> str:
 # 7. 应用参数修改
 # ══════════════════════════════════════════════════════════════════════════════
 def apply_param_updates(valid_updates: list[dict]) -> list[dict]:
-    """自动写入新配置。"""
-    applied: list[dict] = []
-    for update in valid_updates:
-        key = update["key"]
-        new_val = update["new"]
-        old_val = config_manager.settings.get(key)
-        if old_val is not None:
-            typ = type(old_val)
-            try:
-                converted = typ(new_val)
-            except (ValueError, TypeError):
-                converted = new_val
-            config_manager.settings[key] = converted
-            applied.append({
-                "key": key, "old": old_val, "new": converted,
-                "reason": update.get("reason", ""),
-                "change_pct": round(abs(converted - old_val) / abs(old_val), 4) if old_val != 0 else None,
-            })
-    if applied:
-        config_manager._persist()
-        logger.info("Evolver 自动应用了 %d 个参数修改", len(applied))
-    return applied
+    """已弃用：请使用 risk_guard.apply_proposals()。
+
+    此函数直接写 config_manager.settings + _persist()，绕过 risk_guard 风控。
+    保留仅用于向后兼容，新代码必须走 risk_guard。
+    """
+    logger.warning("⚠️ apply_param_updates 已弃用，调用方应改用 risk_guard.apply_proposals()")
+    try:
+        from risk_guard import apply_proposals
+        applied, _ = apply_proposals(valid_updates)
+        return applied
+    except Exception as e:
+        logger.error("apply_param_updates 委托 risk_guard 失败: %s", e)
+        # 兜底：不允许绕过风险直接写（安全失败）
+        return []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -575,11 +567,17 @@ def run_evolution_once() -> dict[str, Any]:
 
         # 9. 创建参数补丁
         try:
-            from param_attribution import create_param_patches
+            from param_attribution import create_param_patches, start_tracking
             applied = result.get("applied_updates", [])
             version = result.get("policy_version", "")
             pid_list = create_param_patches(applied, version, result.get("evolver_run_id", ""))
             result["param_patches_created"] = len(pid_list)
+            # 因果回溯：追踪每个补丁后续交易表现
+            for i, update in enumerate(applied):
+                if i < len(pid_list):
+                    start_tracking(pid_list[i], update.get("key", ""),
+                                   update.get("old"), update.get("new"),
+                                   update.get("strategy_tag", ""))
         except Exception as e:
             logger.debug("创建 param_patches 失败: %s", e)
         # 参数补丁回滚标记

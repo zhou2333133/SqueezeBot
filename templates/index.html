@@ -102,10 +102,6 @@
         class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
         📊 策略统计
       </button>
-      <button @click="mode='evolver'" :class="mode==='evolver'?'tab-sc-on':'tab-off'"
-        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
-        🤖 Evolver
-      </button>
     </div>
 
     <div class="flex-1"></div>
@@ -284,7 +280,134 @@
               </template>
             </div>
 
-            mt-4 pt-1">监控列表</p>
+            <!-- Risk Control Parameters -->
+            <div class="mt-4 pt-3 border-t border-[#1c1c38] space-y-3">
+              <p class="text-xs text-orange-700 uppercase tracking-widest">风控参数</p>
+
+              <!-- Row 1: 仓位 -->
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label class="text-xs text-gray-500">单笔开仓金额 (USDT)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_POSITION_USDT"
+                    :value="cfg.SCALP_POSITION_USDT" step="1" min="1">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">同时持仓 (最大仓位数)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_MAX_POSITIONS"
+                    :value="cfg.SCALP_MAX_POSITIONS" step="1" min="1" max="20">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">杠杆倍数</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_LEVERAGE"
+                    :value="cfg.SCALP_LEVERAGE" step="1" min="1" max="125">
+                </div>
+              </div>
+
+              <!-- Row 2: 止损/风险 -->
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label class="text-xs text-gray-500">止损百分比 (%)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_STOP_LOSS_PCT"
+                    :value="cfg.SCALP_STOP_LOSS_PCT" step="0.1" min="0.1" max="50">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">每笔风险金额 (USDT)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_RISK_PER_TRADE_USDT"
+                    :value="cfg.SCALP_RISK_PER_TRADE_USDT" step="0.5" min="1">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">每日最大亏损 (USDT)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_MAX_DAILY_LOSS_USDT"
+                    :value="cfg.SCALP_MAX_DAILY_LOSS_USDT" step="5" min="1">
+                </div>
+              </div>
+
+              <!-- Row 3: TP -->
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label class="text-xs text-gray-500">TP1 止盈 (R倍数)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_TP1_RR"
+                    :value="cfg.SCALP_TP1_RR" step="0.1" min="0.5" max="5">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">TP2 止盈 (R倍数)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_TP2_RR"
+                    :value="cfg.SCALP_TP2_RR" step="0.1" min="0.5" max="8">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">TP3 追踪止损 (%)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_TP3_TRAIL_PCT"
+                    :value="cfg.SCALP_TP3_TRAIL_PCT" step="0.1" min="0.2" max="10">
+                </div>
+              </div>
+
+              <!-- Row 4: 比例/限制 -->
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label class="text-xs text-gray-500">TP1 仓位比例</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_TP1_RATIO"
+                    :value="cfg.SCALP_TP1_RATIO" step="0.05" min="0.1" max="0.6">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">TP2 仓位比例</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_TP2_RATIO"
+                    :value="cfg.SCALP_TP2_RATIO" step="0.05" min="0.1" max="0.5">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">候选币种上限</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_CANDIDATE_LIMIT"
+                    :value="cfg.SCALP_CANDIDATE_LIMIT" step="5" min="20" max="500">
+                </div>
+              </div>
+
+              <!-- Row 5: 时间控制 -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="text-xs text-gray-500">持仓超时 (分钟)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_TIME_STOP_MINUTES"
+                    :value="cfg.SCALP_TIME_STOP_MINUTES" step="5" min="5" max="360">
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500">TP2 超时 (分钟)</label>
+                  <input class="inp inp-o mt-1 text-xs" type="number" name="SCALP_TP2_TIMEOUT_MINUTES"
+                    :value="cfg.SCALP_TP2_TIMEOUT_MINUTES" step="5" min="5" max="360">
+                </div>
+              </div>
+
+              <!-- Toggles: advanced scalp options -->
+              <div class="flex flex-wrap gap-4 mt-2 pt-2 border-t border-[#1c1c38]">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle to-toggle">
+                    <input type="checkbox" name="SCALP_USE_DYNAMIC_SL" :checked="cfg.SCALP_USE_DYNAMIC_SL!==false" @change="cfg.SCALP_USE_DYNAMIC_SL=$事件.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <span class="text-sm text-gray-400">动态止损</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle to-toggle">
+                    <input type="checkbox" name="SCALP_BLOCK_TREND_LATE_ENTRY" :checked="cfg.SCALP_BLOCK_TREND_LATE_ENTRY" @change="cfg.SCALP_BLOCK_TREND_LATE_ENTRY=$事件.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <span class="text-sm text-gray-400">禁止趋势末期入场</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle to-toggle">
+                    <input type="checkbox" name="SCALP_TP3_AGGRESSIVE_RUNNER" :checked="cfg.SCALP_TP3_AGGRESSIVE_RUNNER" @change="cfg.SCALP_TP3_AGGRESSIVE_RUNNER=$事件.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <span class="text-sm text-gray-400">TP3 激进追踪</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle to-toggle">
+                    <input type="checkbox" name="SCALP_SKIP_TP1_IN_STRONG_TREND" :checked="cfg.SCALP_SKIP_TP1_IN_STRONG_TREND" @change="cfg.SCALP_SKIP_TP1_IN_STRONG_TREND=$事件.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <span class="text-sm text-gray-400">强趋势跳过TP1</span>
+                </label>
+              </div>
+            </div>
+
+            <p class="text-xs text-gray-500 mt-4 pt-1">监控列表</p>
             <div class="mt-2">
               <label class="text-xs text-gray-500">自定义币种 (逗号分隔；留空 = 全部USDT永续合约)</label>
               <textarea class="inp inp-o mt-1 h-20 resize-none text-xs" name="SCALP_WATCHLIST"
@@ -437,7 +560,7 @@
                   <option value="100">100%</option>
                 </select>
                 <button @click="closeScalpPosition(sym, closePctBySymbol['scalp:'+sym]||25)"
-                  class="text-xs px-3 py-1 rounded-lg bg-red-900/50 hover:bg-red-800/60 text-red-200 transition-colors">平仓</button>
+                  class="text-xs px-3 py-1 rounded-lg bg-red-900/50 hover:bg-red-800/60 text-red-200 transition-colors">手动平仓</button>
               </div>
             </div>
           </template>
@@ -497,7 +620,7 @@
                   <option value="100">100%</option>
                 </select>
                 <button @click="closeScalpPosition(sym, closePctBySymbol['scalp:'+sym]||25)"
-                  class="text-xs px-3 py-1 rounded-lg bg-red-900/50 hover:bg-red-800/60 text-red-200 transition-colors">平仓</button>
+                  class="text-xs px-3 py-1 rounded-lg bg-red-900/50 hover:bg-red-800/60 text-red-200 transition-colors">手动平仓</button>
               </div>
             </div>
           </template>
@@ -583,7 +706,7 @@
             <th class="text-center px-4 py-2 font-medium">原因</th>
             <th class="text-right px-4 py-2 font-medium">MFE/后续</th>
             <th class="text-center px-4 py-2 font-medium">状态</th>
-            <th class="text-center px-4 py-2 font-medium">类型</th>
+            <th class="text-center px-4 py-2 font-medium">执行模式</th>
           </tr>
         </thead>
         <tbody>
@@ -615,8 +738,9 @@
                   x-text="t.market_state||'UNKNOWN'"></span>
               </td>
               <td class="px-4 py-2 text-center">
-                <span class="text-xs px-1.5 py-0.5 rounded" :class="t.paper?'bg-gray-700 text-gray-400':'bg-orange-900/40 text-orange-400'"
-                  x-text="t.paper?'模拟':'真实'"></span>
+                <span class="text-xs px-1.5 py-0.5 rounded"
+                  :class="(t.execution_mode||(t.paper?'PAPER':'LIVE'))==='PAPER'?'bg-gray-700 text-gray-400':'bg-orange-900/40 text-orange-400'"
+                  x-text="t.execution_mode||(t.paper?'PAPER':'LIVE')"></span>
               </td>
             </tr>
           </template>
@@ -1689,6 +1813,81 @@
     </div>
   </div>
 
+  <!-- AI 今日复盘 -->
+  <div class="card p-4 mb-3" style="border-color:rgba(168,85,247,.2)">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">🤖</span>
+        <span class="font-semibold text-purple-300 text-sm">AI 今日复盘</span>
+        <template x-if="aiReport?.generated_at">
+          <span class="text-[10px] text-gray-600" x-text="'更新: '+new Date(aiReport.generated_at).toLocaleString('zh-CN')"></span>
+        </template>
+      </div>
+      <button @click="generateAiReport()" :disabled="aiReportLoading"
+        class="px-3 py-1.5 rounded-xl text-xs font-medium"
+        :class="aiReportLoading?'bg-purple-900/30 text-purple-500':'bg-[#1a1a30] hover:bg-[#22223a] text-gray-400'">
+        <span x-text="aiReportLoading?'生成中...':'✦ 生成复盘'"></span>
+      </button>
+    </div>
+
+    <!-- Empty state -->
+    <template x-if="!aiReport?.summary">
+      <div class="text-center py-6 text-gray-500 text-sm">
+        暂无复盘报告 — 点击「生成复盘」让 AI 分析今日交易
+      </div>
+    </template>
+
+    <!-- Report content -->
+    <template x-if="aiReport?.summary">
+      <div class="space-y-2.5 text-sm">
+        <!-- 整体概览 -->
+        <div class="bg-[#08081c] rounded-lg p-3 border border-[#1c1c38]">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs text-gray-500">📋 整体概览</span>
+            <span class="text-[10px] text-gray-700" x-text="aiReport.total_trades+'笔交易 | '+(aiReport.total_pnl>=0?'+':'')+aiReport.total_pnl+'USD'"></span>
+          </div>
+          <div class="text-gray-300 text-xs leading-relaxed" x-text="aiReport.summary"></div>
+        </div>
+
+        <!-- 2-column layout for analysis -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div class="bg-[#08081c] rounded-lg p-3 border border-[#1c1c38]" x-show="aiReport.weak_analysis">
+            <div class="text-xs text-red-400 mb-1">⚠️ 弱势币种分析</div>
+            <div class="text-gray-400 text-xs leading-relaxed" x-text="aiReport.weak_analysis"></div>
+          </div>
+          <div class="bg-[#08081c] rounded-lg p-3 border border-[#1c1c38]" x-show="aiReport.strong_analysis">
+            <div class="text-xs text-green-400 mb-1">📈 强势策略分析</div>
+            <div class="text-gray-400 text-xs leading-relaxed" x-text="aiReport.strong_analysis"></div>
+          </div>
+        </div>
+
+        <!-- K线模式洞察 -->
+        <div class="bg-[#08081c] rounded-lg p-3 border border-[#1c1c38]" x-show="aiReport.pattern_insights">
+          <div class="text-xs text-blue-400 mb-1">🔍 K线模式洞察</div>
+          <div class="text-gray-400 text-xs leading-relaxed" x-text="aiReport.pattern_insights"></div>
+        </div>
+
+        <!-- 参数修改总结 -->
+        <div class="bg-[#08081c] rounded-lg p-3 border border-[#1c1c38]" x-show="aiReport.param_changes">
+          <div class="text-xs text-yellow-400 mb-1">⚙️ 参数修改总结</div>
+          <div class="text-gray-400 text-xs leading-relaxed" x-text="aiReport.param_changes"></div>
+        </div>
+
+        <!-- 风险提示 + 改进建议 2-column -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div class="bg-[#08081c] rounded-lg p-3 border border-[#1c1c38]" x-show="aiReport.risk_warning">
+            <div class="text-xs text-orange-400 mb-1">🚨 风险提示</div>
+            <div class="text-gray-400 text-xs leading-relaxed" x-text="aiReport.risk_warning"></div>
+          </div>
+          <div class="bg-[#08081c] rounded-lg p-3 border border-[#1c1c38]" x-show="aiReport.improvement">
+            <div class="text-xs text-cyan-400 mb-1">💡 改进建议</div>
+            <div class="text-gray-400 text-xs leading-relaxed" x-text="aiReport.improvement"></div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
   <template x-if="Object.keys(strategyStats.strategies||{}).length===0">
     <div class="card p-6 text-center text-gray-500 text-sm">暂无策略成交记录</div>
   </template>
@@ -1846,16 +2045,10 @@ function app() {
     filteredCandidates: [],
 
     strategyStats: { strategies: {} },
+    aiReport: null,
+    aiReportLoading: false,
     evolver运行状态: null,
-    evolverHistory: [],
-    evolverPatches: [],
-    evolverHealth: null,
     strategyMode: 'all',
-    cockpitPage: 'run',
-    cockpitLogs: [],
-    cockpitGuardEvents: [],
-    cockpitLoading: false,
-    cockpitError: '',
 
     evolverToggles: [
       { key:'EVOLVER_ENABLED', label:'自动进化', color:'text-purple-400' },
@@ -1906,9 +2099,7 @@ function app() {
       this.loadScalpFilterStats()
       this.loadBalance()
       setInterval(() => this.loadStrategyStats(), 15000)
-      setInterval(() => this.loadFlashTrades(), 15000)
-      setInterval(() => this.loadFlashReviews(), 15000)
-      setInterval(() => this.loadFlashCandidates(), 30000)
+      setInterval(() => this.loadAiReport(), 30000)
     },
 
     async unlockPanel(silent=false) {
@@ -1999,21 +2190,11 @@ function app() {
     },
 
     async loadEvolver运行状态() {
-      try { const r = await this.apiFetch('/api/evolver/status'); if (r.ok) this.evolver运行状态 = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false }
+      try { const r = await this.apiFetch('/api/evolver/status'); if (r.ok) this.evolver运行状态 = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') }
     },
-    async loadEvolverHistory() {
-      try { const r = await this.apiFetch('/api/evolver/history?limit=10'); if (r.ok) this.evolverHistory = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false }
-    },
-    async loadEvolverPatches() {
-      try { const r = await this.apiFetch('/api/evolver/patches?limit=20'); if (r.ok) this.evolverPatches = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false }
-    },
-    async loadEvolverHealth() {
-      try { const r = await this.apiFetch('/api/evolver/health'); if (r.ok) this.evolverHealth = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false }
-    },
-    async runEvolverOnce() { try { await this.apiFetch('/api/evolver/run-once', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false } },
-    async pauseEvolver() { try { await this.apiFetch('/api/evolver/pause', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false } },
-    async resumeEvolver() { try { await this.apiFetch('/api/evolver/resume', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false } },
-    async rollbackEvolver() { if (!confirm('确认回滚到上一版本？')) return; try { await this.apiFetch('/api/evolver/rollback-last', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false } },
+    async runEvolverOnce() { try { await this.apiFetch('/api/evolver/run-once', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } },
+    async pauseEvolver() { try { await this.apiFetch('/api/evolver/pause', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } },
+    async resumeEvolver() { try { await this.apiFetch('/api/evolver/resume', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } },
     async loadBalance() {
       try { const d=await(await this.apiFetch('/api/account/balance')).json(); if(d.asset) this.balance=d } catch{}
     },
@@ -2023,6 +2204,21 @@ function app() {
         const resp = await this.apiFetch(`/api/strategy/stats?mode=${this.strategyMode}`)
         if (resp.ok) this.strategyStats = await resp.json()
       } catch(e) { /* ignore */ }
+    },
+
+    async loadAiReport() {
+      try {
+        const resp = await this.apiFetch('/api/ai-report/latest')
+        if (resp.ok) this.aiReport = await resp.json()
+      } catch(e) { /* ignore */ }
+    },
+    async generateAiReport() {
+      this.aiReportLoading = true
+      try {
+        const resp = await this.apiFetch('/api/ai-report/generate', {method:'POST'})
+        if (resp.ok) this.aiReport = await resp.json()
+      } catch(e) { /* ignore */ }
+      this.aiReportLoading = false
     },
 
     async copyScalpReport() {

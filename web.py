@@ -1341,6 +1341,46 @@ async def strategy_trades(limit: int = 50, mode: str = "all"):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ─── AI 复盘日报 API ─────────────────────────────────────────────────────────────
+
+@app.get("/api/ai-report/latest")
+async def ai_report_latest():
+    """返回最新 AI 复盘报告。"""
+    try:
+        from ai_reporter import get_latest_report
+        report = get_latest_report()
+        if report is None:
+            return JSONResponse({"error": "暂无报告"}, status_code=404)
+        return JSONResponse(report)
+    except Exception as e:
+        logger.error("ai-report/latest 失败: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/ai-report/list")
+async def ai_report_list(limit: int = 10):
+    """返回最近 N 条 AI 复盘报告。"""
+    try:
+        from ai_reporter import get_recent_reports
+        reports = get_recent_reports(limit=limit)
+        return JSONResponse({"reports": reports, "total": len(reports)})
+    except Exception as e:
+        logger.error("ai-report/list 失败: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/ai-report/generate")
+async def ai_report_generate():
+    """触发 AI 生成一篇新的复盘报告。"""
+    try:
+        from ai_reporter import generate_report
+        report = await generate_report()
+        return JSONResponse(report)
+    except Exception as e:
+        logger.error("ai-report/generate 失败: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── Evolver 状态 API ──────────────────────────────────────────────────────────
 
 @app.get("/api/evolver/status")
@@ -1373,8 +1413,8 @@ async def evolver_patches(limit: int = 50):
 @app.get("/api/evolver/performance")
 async def evolver_performance(limit: int = 20):
     try:
-        from risk_guard import get_recent_shadow_summary
-        return JSONResponse(get_recent_policy_performance(limit=limit))
+        from risk_guard import get_recent_evolver_history
+        return JSONResponse(get_recent_evolver_history(limit=limit))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

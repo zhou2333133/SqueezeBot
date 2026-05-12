@@ -477,7 +477,11 @@ def _setup_data_dir(data_dir: str, base_cfg: dict) -> None:
 
 def _cleanup_cache() -> None:
     """Clean cached module state between scenes."""
-    pass
+    try:
+        from persistence import clear_jsonl_cache
+        clear_jsonl_cache()
+    except ImportError:
+        pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -544,9 +548,9 @@ def main():
         for f in FAILURES:
             print(f"  - {f}")
 
-    print(f"\n总计: {len(RESULTS)} 场景 | ✅ {sum(1 for v in RESULTS.values() if v == PASS)} | "
-          f"[FAIL] {sum(1 for v in RESULTS.values() if v == FAIL)} | "
-          f"[SKIP] {sum(1 for v in RESULTS.values() if v == SKIP)}")
+    print(f"\n总计: {len(RESULTS)} 场景 | PASS {sum(1 for v in RESULTS.values() if v == PASS)} | "
+          f"FAIL {sum(1 for v in RESULTS.values() if v == FAIL)} | "
+          f"SKIP {sum(1 for v in RESULTS.values() if v == SKIP)}")
 
     result = {
         "passed": len(FAILURES) == 0,

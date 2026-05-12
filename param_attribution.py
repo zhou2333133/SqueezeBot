@@ -377,3 +377,115 @@ def mark_patches_reverted_by_policy(policy_version: str, rollback_version: str) 
     if count:
         _persist_patches(patches)
     return count
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 因果回溯 — 追踪参数修改后 N 笔交易的效果
+# ══════════════════════════════════════════════════════════════════════════════
+_TRACKING: dict[str, dict] = {}
+_TRACK_WINDOW = 15  # 追踪后续 N 笔
+
+
+def start_tracking(patch_id: str, key: str, old_val, new_val, strategy_tag: str = "") -> None:
+    """开始追踪一次参数修改的效果。"""
+    _TRACKING[patch_id] = {
+        "patch_id": patch_id,
+        "key": key,
+        "old_val": old_val,
+        "new_val": new_val,
+        "strategy_tag": strategy_tag,
+        "trades_after": 0,
+        "wins": 0,
+        "losses": 0,
+        "pnl": 0.0,
+        "complete": False,
+    }
+
+
+def feed_trade(trade: dict) -> None:
+    """每次平仓时调用，喂给追踪中的 patches。"""
+    if not _TRACKING:
+        return
+    tag = str(trade.get("strategy_tag", ""))
+    pnl = float(trade.get("pnl_usdt", 0) or 0)
+    for pid, t in list(_TRACKING.items()):
+        if t.get("complete"):
+            continue
+        # 只追踪同策略的交易
+        if t.get("strategy_tag") and t["strategy_tag"] != tag:
+            continue
+        t["trades_after"] += 1
+        if pnl >= 0:
+            t["wins"] += 1
+        else:
+            t["losses"] += 1
+        t["pnl"] += pnl
+        if t["trades_after"] >= _TRACK_WINDOW:
+            t["complete"] = True
+            # 写回 param_patches 标记效果
+            _record_verdict(t)
+
+
+def get_active_tracking() -> list[dict]:
+    return [t for t in _TRACKING.values() if not t.get("complete")]
+
+
+def get_completed_tracking() -> list[dict]:
+    return [t for t in _TRACKING.values() if t.get("complete")]
+
+
+def _record_verdict(t: dict) -> None:
+    """判断修改效果并记录。"""
+    n = t["trades_after"]
+    wr = t["wins"] / n if n > 0 else 0.0
+    exp = t["pnl"] / n if n > 0 else 0.0
+
+    if wr >= 0.55 and exp > 0:
+        verdict = "useful"
+    elif wr < 0.4 and exp < 0:
+        verdict = "harmful"
+    else:
+        verdict = "neutral"
+
+    t["verdict"] = verdict
+    t["win_rate"] = round(wr, 2)
+    t["expectancy"] = round(exp, 2)
+
+    try:
+        patches = _read_patches()
+        for p in patches:
+            if p.get("param_patch_id") == t["patch_id"]:
+                p["_verdict"] = verdict
+                p["_trades_after"] = n
+                p["_win_rate_after"] = round(wr, 2)
+                break
+        _write_patches(patches)
+    except Exception as e:
+        logger.warning("record_verdict write failed: %s", e)
+
+
+def _read_patches() -> list[dict]:
+    """读取 param_patches.jsonl。"""
+    import os
+    if not os.path.exists(PATCHES_FILE):
+        return []
+    try:
+        result = []
+        with open(PATCHES_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    result.append(json.loads(line))
+        return result
+    except Exception:
+        return []
+
+
+def _write_patches(patches: list[dict]) -> None:
+    """写回 param_patches.jsonl。"""
+    try:
+        ensure_parent_dir(PATCHES_FILE)
+        with open(PATCHES_FILE, "w", encoding="utf-8") as f:
+            for p in patches:
+                f.write(json.dumps(p, ensure_ascii=False, default=str) + "\n")
+    except Exception as e:
+        logger.warning("write patches failed: %s", e)

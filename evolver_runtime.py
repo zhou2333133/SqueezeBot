@@ -89,6 +89,15 @@ def recover_evolver_runtime_state() -> dict:
     state = _get_state()
     changed = False
 
+    # 安全上限：frozen_until 超过 24 小时视为异常，自动缩短
+    MAX_FREEZE_SEC = 86400  # 24 小时
+    frozen_until = state.get("frozen_until", 0.0)
+    if frozen_until > time.time() + MAX_FREEZE_SEC:
+        logger.warning("Evolver 状态修复: frozen_until=%s 超过24小时上限，重置为 %d 秒",
+                       frozen_until, MAX_FREEZE_SEC)
+        state["frozen_until"] = time.time() + MAX_FREEZE_SEC
+        changed = True
+
     if state.get("status") == "RUNNING":
         lock_timeout = float(config_manager.settings.get("EVOLVER_LOCK_TIMEOUT_SEC", 900) or 900)
         lock_ts = state.get("lock_created_at", 0.0)
@@ -331,7 +340,9 @@ def run_evolver_job() -> dict:
         freeze_min = float(config_manager.settings.get("EVOLVER_ERROR_FREEZE_MINUTES", 120) or 120)
         if state["consecutive_errors"] >= freeze_count:
             state["status"] = "FROZEN"
-            state["frozen_until"] = time.time() + freeze_min * 60
+            # 保护：frozen_until 最多 24 小时，防止配置异常导致永久冻结
+            freeze_sec = min(freeze_min * 60, 86400)
+            state["frozen_until"] = time.time() + freeze_sec
             state["freeze_reason"] = f"{state['consecutive_errors']} consecutive errors"
             logger.critical("Evolver 已冻结 %d 分钟", freeze_min)
         _save_state(state)

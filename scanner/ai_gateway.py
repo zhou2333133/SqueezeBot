@@ -778,7 +778,11 @@ async def _call_deepseek(session: aiohttp.ClientSession, system_prompt: str, pay
 
 
 async def _call_minimax(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:
-    """调用 MiniMax M2.7（OpenAI 兼容接口）。"""
+    """调用 MiniMax M2.7（OpenAI 兼容接口）。
+
+    MiniMax M2.7 内置 thinking 模式，会输出 <think>...</think> 推理过程。
+    函数自动剥离 think 标签并提取 JSON。
+    """
     api_key = os.getenv("MINIMAX_API_KEY") or MINIMAX_API_KEY
     model = str(config_manager.settings.get("YAOBI_AI_MODEL_MINIMAX", "MiniMax-M2.7") or "MiniMax-M2.7")
     body = {
@@ -801,9 +805,30 @@ async def _call_minimax(session: aiohttp.ClientSession, system_prompt: str, payl
         if resp.status >= 300:
             raise RuntimeError(f"minimax_http_{resp.status}[{model}]: {str(data)[:160]}")
         text = data["choices"][0]["message"]["content"]
-        usage = data.get("usage") or {}
-        tokens = int(usage.get("total_tokens") or (_estimate_tokens(payload) + _estimate_tokens(text)))
-        return text, tokens
+
+    # MiniMax M2.7 内置 thinking，剥离 <think> 标签
+    if "<think>" in text:
+        import re
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    # 剥离 markdown 代码围栏
+    if text.startswith("```"):
+        text = re.sub(r'^```\w*\n?', '', text)
+        text = re.sub(r'\n?```$', '', text)
+        text = text.strip()
+    # 极端情况：think 标签未闭合导致 JSON 外还有文本 — 只保留最外层 JSON
+    first_brace = text.find("{")
+    last_brace = text.rfind("}")
+    if first_brace >= 0 and last_brace > first_brace:
+        candidate = text[first_brace:last_brace + 1]
+        try:
+            json.loads(candidate)
+            text = candidate
+        except json.JSONDecodeError:
+            pass  # 非标准 JSON，保留原文本
+
+    usage = data.get("usage") or {}
+    tokens = int(usage.get("total_tokens") or (_estimate_tokens(payload) + _estimate_tokens(text)))
+    return text, tokens
 
 
 def _deepseek_model_candidates() -> list[tuple[str, bool]]:
