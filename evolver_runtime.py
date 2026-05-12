@@ -236,7 +236,7 @@ def preflight_evolver_check() -> tuple[bool, str]:
 
     try:
         from strategy_evolver import run_evolution_once
-        from proposal_validator import counterfactual_validate_proposals
+        from deprecated.proposal_validator import counterfactual_validate_proposals
         from param_attribution import create_param_patches
         from shadow_tracker import create_shadow_trade
     except ImportError as e:

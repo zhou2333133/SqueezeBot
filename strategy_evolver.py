@@ -546,7 +546,7 @@ def run_evolution_once() -> dict[str, Any]:
 
         # 6. 反事实验证
         try:
-            from proposal_validator import counterfactual_validate_proposals, write_proposal_validation_history
+            from deprecated.proposal_validator import counterfactual_validate_proposals, write_proposal_validation_history
             cv_results = counterfactual_validate_proposals(valid, cfg)
             cv_accepted = [r for r in cv_results if r.get("validation_action") in ("ACCEPT", "WEAK_ACCEPT")]
             cv_rejected = [r for r in cv_results if r.get("validation_action") in ("REJECT", "NEED_MORE_DATA")]

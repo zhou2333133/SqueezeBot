@@ -311,7 +311,7 @@ def run_scene_counterfactual_reject(data_dir: str, base_cfg: dict) -> None:
     _write_jsonl(os.path.join(data_dir, "strategy_trades.jsonl"), trades)
 
     # Direct proposal validation
-    from proposal_validator import counterfactual_validate_proposals
+    from deprecated.proposal_validator import counterfactual_validate_proposals
     proposals = [{"key": "STRATEGY_WEIGHTS.STARTUP", "old": 1.0, "new": 0.5, "reason": "test"}]
     results = counterfactual_validate_proposals(proposals, base_cfg)
     if results and results[0].get("validation_action") == "REJECT":
@@ -444,7 +444,7 @@ def _setup_data_dir(data_dir: str, base_cfg: dict) -> None:
     import evolver_runtime as er
     import param_attribution as pa
     import shadow_tracker as st
-    import proposal_validator as pv
+    from deprecated import proposal_validator as pv
     import persistence as ps
     import os
     for mod in [se, er, pa, st, pv, ps]:

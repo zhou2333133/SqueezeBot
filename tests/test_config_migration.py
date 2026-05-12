@@ -109,7 +109,7 @@ class TestConfigMigration(unittest.TestCase):
                 self.assertTrue(manager.settings["YAOBI_AI_REQUIRED_FOR_PERMISSION"])
                 self.assertFalse(manager.settings["YAOBI_DUAL_AI_CONSENSUS_REQUIRED"])
                 self.assertEqual(manager.settings["YAOBI_SURF_DIRECTION_MIN_CONFIDENCE"], 55)
-                self.assertEqual(manager.settings["YAOBI_AI_PROVIDER_PRIORITY"], "gemini")
+                self.assertEqual(manager.settings["YAOBI_AI_PROVIDER_PRIORITY"], "minimax")
                 self.assertEqual(manager.settings["YAOBI_AI_MODEL_GEMINI"], "gemini-2.5-flash")
                 self.assertEqual(manager.settings["YAOBI_AI_MODEL_DEEPSEEK"], "deepseek-v4-flash")
                 self.assertEqual(manager.settings["YAOBI_AI_MAX_SYMBOLS_PER_RUN"], 6)

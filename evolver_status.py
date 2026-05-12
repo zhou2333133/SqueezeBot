@@ -178,7 +178,7 @@ def run_evolver_health_check() -> dict:
             warnings.append(f"{fname} not found")
 
     # 5. Module imports
-    for mod_name in ["strategy_evolver", "proposal_validator", "param_attribution", "shadow_tracker"]:
+    for mod_name in ["strategy_evolver", "deprecated.proposal_validator", "param_attribution", "shadow_tracker"]:
         try:
             __import__(mod_name)
         except ImportError as e:

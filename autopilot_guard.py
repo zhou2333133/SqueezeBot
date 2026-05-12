@@ -118,7 +118,7 @@ def run_startup_guard(cfg: dict | None = None) -> dict:
         errors.append("PARAM_BOUNDS missing")
 
     # 5. Module imports
-    for mod_name in ["strategy_evolver", "evolver_runtime", "proposal_validator",
+    for mod_name in ["strategy_evolver", "evolver_runtime", "deprecated.proposal_validator",
                       "param_attribution", "shadow_tracker", "strategy_policy"]:
         try:
             __import__(mod_name)
