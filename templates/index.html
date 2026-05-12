@@ -2285,7 +2285,9 @@
   <div x-show="cockpitPage==='logs'" class="space-y-3">
     <div class="card p-4">
       <div class="text-xs text-gray-500 uppercase mb-2">Evolver History</div>
-      <div x-show="cockpitLogs.length===0" class="text-xs text-gray-600 py-2">No records yet</div>
+      <div x-show="cockpitLoading" class="text-xs text-gray-600 py-2 animate-pulse">Loading...</div>
+      <div x-show="cockpitError" class="text-xs text-red-400 py-2" x-text="'Error: '+cockpitError"></div>
+      <div x-show="!cockpitLoading && !cockpitError && cockpitLogs.length===0" class="text-xs text-gray-600 py-2">No records yet</div>
       <template x-for="h in cockpitLogs.slice(0,15)" :key="h.evolver_run_id||h.timestamp">
         <div class="flex gap-3 py-1.5 border-t border-[#1c1c38] text-xs">
           <span :class="h.event_type==='ROLLBACK'?'text-orange-400':'text-green-400'" x-text="h.event_type||''"></span>
@@ -2390,6 +2392,8 @@ function app() {
     cockpitPage: 'run',
     cockpitLogs: [],
     cockpitGuardEvents: [],
+    cockpitLoading: false,
+    cockpitError: '',
 
     evolverToggles: [
       { key:'EVOLVER_ENABLED', label:'自动进化', color:'text-purple-400' },
