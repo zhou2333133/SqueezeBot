@@ -1381,6 +1381,83 @@ async def ai_report_generate():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/ai-report/structured")
+async def ai_report_structured(limit: int = 20):
+    """返回结构化复盘数据（不依赖 LLM）。"""
+    try:
+        from persistence import read_jsonl
+        import os
+        from config import DATA_DIR
+
+        result = {}
+
+        # 1. 规则选择器事件
+        events_file = os.path.join(DATA_DIR, "rule_selector_events.jsonl")
+        if os.path.exists(events_file):
+            events = read_jsonl(events_file)
+            recent = events[-limit:] if len(events) > limit else events
+            result["rule_selector_events"] = {
+                "total": len(events),
+                "recent": [{k: v for k, v in e.items() if k != "ts"}
+                           for e in reversed(recent)],
+                "block_count": sum(1 for e in events if e.get("decision") == "block"),
+                "warn_count": sum(1 for e in events if e.get("decision") == "warn"),
+            }
+
+        # 2. Guard 事件
+        guard_file = os.path.join(DATA_DIR, "guard_events.jsonl")
+        if os.path.exists(guard_file):
+            guards = read_jsonl(guard_file)
+            recent_g = guards[-limit:] if len(guards) > limit else guards
+            result["guard_events"] = {
+                "total": len(guards),
+                "recent": [{"event": g.get("event_type", ""),
+                            "severity": g.get("severity", ""),
+                            "reason": str(g.get("reason", ""))[:100]}
+                           for g in reversed(recent_g)],
+            }
+
+        # 3. learning_memory 弱规则
+        try:
+            from learning_memory import get_memory_summary
+            result["learning_memory"] = get_memory_summary()
+        except Exception:
+            result["learning_memory"] = {}
+
+        # 4. 近期成交概况
+        trades_file = os.path.join(DATA_DIR, "strategy_trades.jsonl")
+        if os.path.exists(trades_file):
+            trades = read_jsonl(trades_file)
+            recent_t = trades[-limit:] if len(trades) > limit else trades
+            wins = sum(1 for t in recent_t if float(t.get("pnl_usdt", 0) or 0) >= 0)
+            pnl = sum(float(t.get("pnl_usdt", 0) or 0) for t in recent_t)
+            result["recent_trades"] = {
+                "total": len(recent_t),
+                "wins": wins,
+                "win_rate": round(wins / max(len(recent_t), 1), 2),
+                "total_pnl": round(pnl, 2),
+            }
+
+        # 5. Evolver 状态
+        try:
+            from risk_guard import get_evolver_status
+            evo = get_evolver_status()
+            result["evolver"] = {
+                "status": evo.get("runtime_status", "UNKNOWN"),
+                "frozen": evo.get("frozen", False),
+                "policy_version": evo.get("current_policy_version", ""),
+                "rollback_count": evo.get("rollback_count", 0),
+                "last_error": evo.get("last_error", ""),
+            }
+        except Exception:
+            result["evolver"] = {}
+
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error("ai-report/structured 失败: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── Evolver 状态 API ──────────────────────────────────────────────────────────
 
 @app.get("/api/evolver/status")
