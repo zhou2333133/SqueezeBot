@@ -2152,6 +2152,7 @@ function app() {
       setInterval(() => this.loadBalance(), 30000)
       this.loadScalpFilterStats()
       this.loadBalance()
+      this.loadAiStructured()
       setInterval(() => this.loadStrategyStats(), 15000)
       setInterval(() => this.loadAiReport(), 30000)
       setInterval(() => this.loadAiStructured(), 45000)
