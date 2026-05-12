@@ -60,9 +60,7 @@ def record_trade(trade: dict) -> None:
         "active_param_patches": list(trade.get("active_param_patches") or []),
     }
     try:
-        os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)
-        with open(TRADES_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        append_jsonl(TRADES_FILE, row)
     except Exception as e:
         logger.warning("策略成交记录写入失败: %s", e)
 
