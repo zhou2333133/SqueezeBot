@@ -9,4 +9,6 @@ env/
 data/
 logs/
 *.log
-*.csv
+*.csv.claude/
+tmp/
+_opt_analysis.txt
