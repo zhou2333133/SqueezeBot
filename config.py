@@ -737,8 +737,10 @@ class ConfigManager:
 
     def _persist(self) -> None:
         os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        tmp = CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.settings, f, indent=4, ensure_ascii=False)
+        os.replace(tmp, CONFIG_FILE)
 
     def _apply_profile_migration(self, merged: dict, loaded: dict) -> bool:
         stored_version = self._coerce_profile_version(loaded.get("CONFIG_PROFILE_VERSION", 0))
