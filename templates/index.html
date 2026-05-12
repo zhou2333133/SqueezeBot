@@ -264,6 +264,15 @@
 
             <p class="text-xs text-orange-800 uppercase tracking-widest pt-1">交易方向 & 执行模式</p>
             <div class="flex flex-wrap gap-4 mt-2">
+              <template x-for="f in evolverToggles" :key="f.key">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <label class="toggle" style="--t:#a78bfa">
+                    <input type="checkbox" :name="f.key" :checked="cfg[f.key]!==false" @change="cfg[f.key]=$事件.target.checked">
+                    <span class="ttrack"></span>
+                  </label>
+                  <span class="text-sm" :class="f.color" x-text="f.label"></span>
+                </label>
+              </template>
               <template x-for="f in scalpToggles" :key="f.key">
                 <label class="flex items-center gap-2 cursor-pointer select-none">
                   <label class="toggle to-toggle">
@@ -2512,7 +2521,7 @@ function app() {
 
     async saveScalpConfig() {
       const fd = new FormData(document.getElementById('scalpForm'))
-      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_TP3_AGGRESSIVE_RUNNER','SCALP_SKIP_TP1_IN_STRONG_TREND','SCALP_BLOCK_TREND_LATE_ENTRY','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_WAIT_CONFIRM','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD','SCALP_YAOBI_FUNDING_OI_GUARD','SCALP_OPPORTUNITY_GUARD_ENABLED','SCALP_REQUIRE_OPPORTUNITY_QUEUE','SCALP_REQUIRE_OPPORTUNITY_PERMISSION']
+      const bk = ['SCALP_ENABLED','SCALP_AUTO_TRADE','SCALP_ENABLE_LONG','SCALP_ENABLE_SHORT','SCALP_PAPER_TRADE','SCALP_USE_DYNAMIC_SL','SCALP_TP3_AGGRESSIVE_RUNNER','SCALP_SKIP_TP1_IN_STRONG_TREND','SCALP_BLOCK_TREND_LATE_ENTRY','SCALP_USE_YAOBI_CONTEXT','SCALP_YAOBI_BLOCK_DECISION_BAN','SCALP_YAOBI_BLOCK_WAIT_CONFIRM','SCALP_YAOBI_BLOCK_HIGH_RISK','SCALP_YAOBI_DIRECTION_GUARD','SCALP_YAOBI_FUNDING_OI_GUARD','SCALP_OPPORTUNITY_GUARD_ENABLED','SCALP_REQUIRE_OPPORTUNITY_QUEUE','SCALP_REQUIRE_OPPORTUNITY_PERMISSION','EVOLVER_ENABLED','EVOLVER_AUTO_APPLY']
       bk.forEach(k=>{ if(!fd.has(k)) fd.set(k,'false') })
       try {
         const d=await(await this.apiFetch('/api/config',{method:'POST',body:fd})).json()
