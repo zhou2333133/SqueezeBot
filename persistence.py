@@ -6,6 +6,7 @@
 import json
 import logging
 import os
+import time
 import tempfile
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ def ensure_parent_dir(path: str) -> None:
 
 def atomic_write_json(path: str, data, *, encoding: str = "utf-8") -> bool:
     """原子写入 JSON：tmp + rename，避免写半截损坏。"""
+    clear_jsonl_cache(path)
     ensure_parent_dir(path)
     try:
         tmp = path + ".tmp"
@@ -49,6 +51,7 @@ def safe_read_json(path: str, default=None) -> object:
 
 def append_jsonl(path: str, record: dict) -> bool:
     """追加 JSONL 行。无文件锁，单生产者场景安全。"""
+    clear_jsonl_cache(path)
     ensure_parent_dir(path)
     try:
         with open(path, "a", encoding="utf-8") as f:
@@ -59,9 +62,18 @@ def append_jsonl(path: str, record: dict) -> bool:
         return False
 
 
-def read_jsonl(path: str) -> list[dict]:
-    """读取 JSONL 文件，每行一个 dict。"""
+_JSONL_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_JSONL_CACHE_TTL = 5.0
+
+
+def read_jsonl(path: str, force: bool = False) -> list[dict]:
+    """读取 JSONL 文件，带内存缓存（TTL 5s）。force=True 绕过缓存。"""
+    if not force:
+        cached = _JSONL_CACHE.get(path)
+        if cached and time.time() - cached[0] < _JSONL_CACHE_TTL:
+            return cached[1]
     if not os.path.exists(path):
+        _JSONL_CACHE[path] = (time.time(), [])
         return []
     result = []
     try:
@@ -72,4 +84,13 @@ def read_jsonl(path: str) -> list[dict]:
                     result.append(json.loads(line))
     except Exception as e:
         logger.warning("JSONL 读取失败 %s: %s", path, e)
+    _JSONL_CACHE[path] = (time.time(), result)
     return result
+
+
+def clear_jsonl_cache(path: str | None = None) -> None:
+    """清除 JSONL 缓存。path=None 清除全部。"""
+    if path:
+        _JSONL_CACHE.pop(path, None)
+    else:
+        _JSONL_CACHE.clear()

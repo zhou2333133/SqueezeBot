@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from config import DATA_DIR, config_manager
-from persistence import append_jsonl, ensure_parent_dir, safe_read_json
+from persistence import append_jsonl, ensure_parent_dir, read_jsonl, safe_read_json
 
 logger = logging.getLogger(__name__)
 
@@ -34,27 +34,13 @@ _ALL_STRATEGY_TAGS = ["启动型", "OI爆发", "静默建仓", "突破前夜", "
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. 数据加载
 # ══════════════════════════════════════════════════════════════════════════════
-def load_trade_data() -> list[dict]:
-    """从 strategy_trades.jsonl 加载交易记录。"""
+def load_trade_data(force: bool = False) -> list[dict]:
+    """从 strategy_trades.jsonl 加载交易记录。force=True 绕过缓存。"""
     path = os.path.join(DATA_DIR, "strategy_trades.jsonl")
-    return safe_read_json(path) if path.endswith(".json") else _read_jsonl(path)
+    return safe_read_json(path) if path.endswith(".json") else read_jsonl(path, force=force)
 
 
-def _read_jsonl(path: str) -> list[dict]:
-    """读取 JSONL 文件。"""
-    if not os.path.exists(path):
-        return []
-    try:
-        result = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    result.append(json.loads(line))
-        return result
-    except Exception as e:
-        logger.warning("读取 %s 失败: %s", path, e)
-        return []
+
 
 
 def load_current_config() -> dict:
@@ -426,7 +412,7 @@ def write_policy_version() -> str:
 
 def _next_policy_seq() -> int:
     """从历史记录中找下一个序号。"""
-    records = _read_jsonl(EVOLVER_HISTORY_FILE)
+    records = read_jsonl(EVOLVER_HISTORY_FILE)
     max_seq = 0
     for r in records:
         ver = str(r.get("policy_version", ""))
@@ -504,7 +490,7 @@ def run_evolution_once() -> dict[str, Any]:
         min_per_strategy = int(cfg.get("EVOLVER_MIN_TRADES_PER_STRATEGY", 20) or 20)
 
         # 1. 加载数据
-        trades = load_trade_data()
+        trades = load_trade_data(force=True)
         if len(trades) < min_total:
             result["message"] = f"样本不足 {len(trades)}<{min_total}"
             return result
@@ -754,7 +740,7 @@ def evaluate_current_policy(trades=None):
         return {"decision": "NO_POLICY"}
     if trades is None:
         from strategy_evolver import load_trade_data
-        trades = load_trade_data()
+        trades = load_trade_data(force=True)
     cur_perf = compute_policy_performance(cur_ver, trades)
     cur_trades = cur_perf.get("trades", 0)
     min_trades = int(cfg.get("EVOLVER_EVAL_MIN_TRADES", 30) or 30)
@@ -914,7 +900,7 @@ def run_evolution_auto():
 def load_blocked_signals() -> list[dict]:
     """读取 blocked_signals.jsonl。"""
     path = os.path.join(DATA_DIR, "blocked_signals.jsonl")
-    return _read_jsonl(path)
+    return read_jsonl(path)
 
 
 def compute_blocked_signal_stats(blocked: list[dict]) -> dict[str, dict]:
@@ -1003,7 +989,7 @@ def _ensure_min_enabled_strategies(proposals: list[dict], cfg: dict) -> list[dic
 def load_shadow_trades() -> list[dict]:
     """读取 shadow_trades.jsonl。"""
     path = os.path.join(DATA_DIR, "shadow_trades.jsonl")
-    return _read_jsonl(path)
+    return read_jsonl(path)
 
 
 def compute_shadow_stats() -> dict[str, dict]:
