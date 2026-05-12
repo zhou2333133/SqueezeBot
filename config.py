@@ -392,7 +392,7 @@ class ConfigManager:
         "YAOBI_AI_REQUIRED_FOR_PERMISSION": True,
         "YAOBI_DUAL_AI_CONSENSUS_REQUIRED": False,
         "YAOBI_SURF_DIRECTION_MIN_CONFIDENCE": 55,
-        "YAOBI_AI_PROVIDER_PRIORITY": "gemini",
+        "YAOBI_AI_PROVIDER_PRIORITY": "minimax",
         "YAOBI_AI_MODEL_OPENAI": "gpt-4o-mini",
         "YAOBI_AI_MODEL_GEMINI": "gemini-2.5-flash",
         "YAOBI_AI_MODEL_ANTHROPIC": "claude-3-5-haiku-latest",
