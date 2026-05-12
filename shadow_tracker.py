@@ -261,9 +261,11 @@ def _load_closed_trades() -> list[dict]:
 def _persist_shadow_trades(trades: list[dict]) -> None:
     try:
         os.makedirs(os.path.dirname(SHADOW_TRADES_FILE), exist_ok=True)
-        with open(SHADOW_TRADES_FILE, "w", encoding="utf-8") as f:
+        tmp = SHADOW_TRADES_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             for t in trades:
                 f.write(json.dumps(t, ensure_ascii=False, default=str) + "\n")
+        os.replace(tmp, SHADOW_TRADES_FILE)
     except Exception as e:
         logger.warning("写入 shadow_trades 失败: %s", e)
 

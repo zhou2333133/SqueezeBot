@@ -189,6 +189,7 @@ class BinanceScalpBot:
         self._evolver_trade_count: int = 0
         self._evolver_last_run: float = 0.0
         # ── Autopilot: startup guard ─────────────────────────────────────────
+        self._pending_entries: int = 0
         self._guard_last_run: float = 0.0
         try:
             from autopilot_guard import run_startup_guard
@@ -1427,7 +1428,7 @@ class BinanceScalpBot:
         if self.candidate_symbols and symbol not in self.candidate_symbols:
             self._fstat["no_candidate"] += 1
             return
-        if len(self.open_positions) >= self.cfg.get("SCALP_MAX_POSITIONS", 3):
+        if len(self.open_positions) + self._pending_entries >= self.cfg.get("SCALP_MAX_POSITIONS", 3):
             return
 
         ban_until = self.symbol_ban_until.get(symbol, 0.0)
@@ -2831,6 +2832,7 @@ class BinanceScalpBot:
             vol_ratio=self._volume_ratio(symbol),
         )
         base_signal["strategy_tag"] = strategy_tag
+        self._pending_entries += 1
 
         # ── 策略策略（Evolver 控制启停/权重）────────────────────────────────────
         _policy_result = None
@@ -2858,6 +2860,7 @@ class BinanceScalpBot:
                 return
         except Exception as e:
             logger.debug("⚡ [%s] 策略策略异常 (不影响交易): %s", symbol, e)
+            self._pending_entries = max(0, self._pending_entries - 1)
             if _policy_result is None:
                 _policy_result = {"action": "ALLOW", "reason": "exception_fallback"}
 
@@ -2959,6 +2962,7 @@ class BinanceScalpBot:
             protection_reason=result.protection_reason,
             strategy_tag=strategy_tag,
         )
+        self._pending_entries = max(0, self._pending_entries - 1)
         self.open_positions[symbol] = pos
         set_scalp_position(symbol, pos.to_dict())
 
