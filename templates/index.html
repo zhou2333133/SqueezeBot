@@ -106,6 +106,10 @@
         class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
         🤖 Evolver
       </button>
+      <button @click="mode='cockpit'" :class="mode==='cockpit'?'tab-sc-on':'tab-off'"
+        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
+        🛡 控制面板
+      </button>
     </div>
 
     <div class="flex-1"></div>
@@ -2207,6 +2211,104 @@
 
 </div><!-- /evolver -->
 
+
+</div><!-- /evolver -->
+
+<!-- COCKPIT TAB -->
+<div x-show="mode==='cockpit'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
+
+  <div class="flex items-center gap-1 bg-[#0c0c1e] border border-[#1c1c38] rounded-xl p-1 mb-3">
+    <button @click="cockpitPage='run'" :class="cockpitPage==='run'?'tab-sc-on':'tab-off'" class="px-4 py-1.5 rounded-lg text-xs font-semibold">Run</button>
+    <button @click="cockpitPage='boundary'" :class="cockpitPage==='boundary'?'tab-sc-on':'tab-off'" class="px-4 py-1.5 rounded-lg text-xs font-semibold">Boundary</button>
+    <button @click="cockpitPage='positions'" :class="cockpitPage==='positions'?'tab-sc-on':'tab-off'" class="px-4 py-1.5 rounded-lg text-xs font-semibold">Positions</button>
+    <button @click="cockpitPage='logs'; loadCockpitLogs(); loadCockpitGuardEvents()" :class="cockpitPage==='logs'?'tab-sc-on':'tab-off'" class="px-4 py-1.5 rounded-lg text-xs font-semibold">AI Log</button>
+  </div>
+
+  <div x-show="cockpitPage==='run'" class="space-y-3">
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase mb-3">Mode</div>
+      <div class="flex items-center gap-4">
+        <button @click="cockpitSetMode('STOP')" class="px-5 py-2 rounded-lg text-sm font-bold bg-red-700 text-white">STOP</button>
+        <button @click="cockpitSetMode('PAPER')" :class="cfg.SCALP_PAPER_TRADE?'bg-yellow-600 text-white':'bg-gray-700 text-gray-400'" class="px-5 py-2 rounded-lg text-sm font-bold">PAPER</button>
+        <button @click="cockpitSetMode('LIVE')" :class="!cfg.SCALP_PAPER_TRADE&&cfg.SCALP_ENABLED?'bg-green-600 text-white':'bg-gray-700 text-gray-400'" class="px-5 py-2 rounded-lg text-sm font-bold">LIVE</button>
+      </div>
+      <div class="flex items-center gap-3 mt-4">
+        <button @click="scalpRunning?stopScalp():startScalp()" :class="scalpRunning?'bg-red-700':'bg-orange-600'" class="px-5 py-2 rounded-xl text-white text-sm font-bold">
+          <span x-text="scalpRunning?'Stop Bot':'Start Bot'"></span>
+        </button>
+        <button @click="cockpitEmergencyClose()" class="px-4 py-2 rounded-xl bg-red-900/50 text-red-400 text-xs font-bold">Emergency Close All</button>
+        <button @click="resumeEvolver()" class="px-3 py-1.5 rounded-xl bg-green-900/30 text-green-400 text-xs">Resume AI</button>
+        <button @click="pauseEvolver()" class="px-3 py-1.5 rounded-xl bg-red-900/30 text-red-400 text-xs">Pause AI</button>
+      </div>
+    </div>
+  </div>
+
+  <div x-show="cockpitPage==='boundary'" class="space-y-3">
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase mb-3">Boundary Config (AI cannot modify)</div>
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="text-xs text-gray-500">Order Amount (USDT)</label>
+          <input class="inp mt-1" type="number" :value="cfg.SCALP_POSITION_USDT||100" @change="cfg.SCALP_POSITION_USDT=$event.target.value"></div>
+        <div><label class="text-xs text-gray-500">Max Positions</label>
+          <input class="inp mt-1" type="number" :value="cfg.SCALP_MAX_POSITIONS||3" @change="cfg.SCALP_MAX_POSITIONS=$event.target.value"></div>
+        <div><label class="text-xs text-gray-500">Max Leverage</label>
+          <input class="inp mt-1" type="number" :value="cfg.SCALP_LEVERAGE||10" @change="cfg.SCALP_LEVERAGE=$event.target.value"></div>
+        <div><label class="text-xs text-gray-500">Daily Max Loss (USDT)</label>
+          <input class="inp mt-1" type="number" step="10" :value="cfg.SCALP_MAX_DAILY_LOSS_USDT||200" @change="cfg.SCALP_MAX_DAILY_LOSS_USDT=$event.target.value"></div>
+      </div>
+      <button @click="saveScalpConfig()" class="mt-4 px-5 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold">Save</button>
+    </div>
+  </div>
+
+  <div x-show="cockpitPage==='positions'" class="space-y-3">
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-xs text-gray-500 uppercase">Positions</span>
+        <span class="text-xs text-gray-600" x-text="Object.keys(scalpPositions).length"></span>
+      </div>
+      <div x-show="Object.keys(scalpPositions).length===0" class="text-sm text-gray-500 py-6 text-center">No open positions</div>
+      <template x-for="(pos, sym) in scalpPositions" :key="sym">
+        <div class="flex items-center justify-between py-2 border-t border-[#1c1c38] text-xs">
+          <div><span class="font-bold" x-text="sym"></span>
+            <span :class="pos.direction==='LONG'?'text-green-400':'text-red-400'" x-text="pos.direction"></span>
+            <span class="text-gray-600 ml-1" x-text="'qty='+pos.quantity_remaining"></span></div>
+          <div class="text-right">
+            <div class="font-mono" x-text="'@ '+pos.entry_price"></div>
+            <div :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'" x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
+          </div>
+          <button @click="(()=>{if(!confirm('Close?'))return;fetch('/api/scalp/positions/'+sym+'/close',{method:'POST',headers:{'X-SqueezeBot-Token':auth.token},body:new URLSearchParams({percent:'100'})}).then(r=>r.json()).then(d=>showToast(d.message||'done','success')).catch(e=>showToast('err','error'))})()" class="px-3 py-1 rounded bg-red-900/30 text-red-400 text-xs">Close</button>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div x-show="cockpitPage==='logs'" class="space-y-3">
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase mb-2">Evolver History</div>
+      <div x-show="cockpitLogs.length===0" class="text-xs text-gray-600 py-2">No records yet</div>
+      <template x-for="h in cockpitLogs.slice(0,15)" :key="h.evolver_run_id||h.timestamp">
+        <div class="flex gap-3 py-1.5 border-t border-[#1c1c38] text-xs">
+          <span :class="h.event_type==='ROLLBACK'?'text-orange-400':'text-green-400'" x-text="h.event_type||''"></span>
+          <span class="font-mono text-purple-300" x-text="(h.policy_version||'').slice(0,20)"></span>
+          <span class="text-gray-600" x-text="(h.reason||'').slice(0,40)"></span>
+        </div>
+      </template>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase mb-2">Guard Events</div>
+      <div x-show="cockpitGuardEvents.length===0" class="text-xs text-gray-600 py-2">No events</div>
+      <template x-for="e in cockpitGuardEvents.slice(0,15)" :key="e.created_at">
+        <div class="flex gap-3 py-1.5 border-t border-[#1c1c38] text-xs">
+          <span :class="e.severity==='CRITICAL'?'text-red-400':e.severity==='WARNING'?'text-yellow-400':'text-gray-500'" x-text="e.severity||''"></span>
+          <span class="text-gray-400" x-text="e.event_type||''"></span>
+          <span class="text-gray-600" x-text="(e.reason||'').slice(0,50)"></span>
+        </div>
+      </template>
+    </div>
+  </div>
+
+</div><!-- /cockpit -->
+
 </main>
 
 <!-- Panel Auth -->
@@ -2285,6 +2387,9 @@ function app() {
     evolverPatches: [],
     evolverHealth: null,
     strategyMode: 'all',
+    cockpitPage: 'run',
+    cockpitLogs: [],
+    cockpitGuardEvents: [],
 
     evolverToggles: [
       { key:'EVOLVER_ENABLED', label:'自动进化', color:'text-purple-400' },
