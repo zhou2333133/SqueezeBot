@@ -106,10 +106,6 @@
         class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
         🤖 Evolver
       </button>
-      <button @click="mode='cockpit'" :class="mode==='cockpit'?'tab-sc-on':'tab-off'"
-        class="px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 select-none">
-        🛡 控制面板
-      </button>
     </div>
 
     <div class="flex-1"></div>
@@ -2109,208 +2105,23 @@
 
 </div><!-- /strategy -->
 
-<!-- EVOLVER TAB -->
-<div x-show="mode==='evolver'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
-
-  <div class="card px-5 py-4 flex flex-wrap items-center gap-4" style="border-color:rgba(168,85,247,.2)">
-    <div class="flex items-center gap-2.5">
-      <span class="text-lg">🤖</span>
-      <span class="font-semibold text-purple-300">Evolver 自动进化</span>
+<!-- EVOLVER INLINE STATUS (removed from tabs) -->
+<div x-show="mode==='scalp'" class="card p-3 mb-3" style="border-color:rgba(168,85,247,.2)">
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-gray-500 uppercase">Evolver</span>
+      <span :class="evolverStatus?.runtime_status==='IDLE'?'text-green-400':evolverStatus?.frozen?'text-red-400':'text-gray-500'"
+        x-text="evolverStatus?.frozen?'已冻结':evolverStatus?.runtime_status==='IDLE'?'空闲':evolverStatus?.runtime_status||'等待中'"></span>
     </div>
-    <div class="flex items-center gap-2 ml-auto">
-      <button @click="runEvolverOnce()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs">▶ 运行一次</button>
-      <button @click="pauseEvolver()" class="px-3 py-1.5 rounded-xl bg-red-900/30 hover:bg-red-900/50 text-red-400 text-xs">⏸ 暂停</button>
-      <button @click="resumeEvolver()" class="px-3 py-1.5 rounded-xl bg-green-900/30 hover:bg-green-900/50 text-green-400 text-xs">▶ 恢复</button>
-      <button @click="rollbackEvolver()" class="px-3 py-1.5 rounded-xl bg-orange-900/30 hover:bg-orange-900/50 text-orange-400 text-xs">↩ 回滚</button>
-      <button @click="loadEvolver运行状态();loadEvolverHistory()" class="px-3 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs">↻ 刷新</button>
-    </div>
-  </div>
-
-  <template x-if="evolver运行状态">
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-      <div class="card p-3">
-        <div class="text-xs text-gray-500 uppercase">运行状态</div>
-        <div class="text-lg font-bold mt-1" :class="evolver运行状态.runtime_status==='IDLE'?'text-green-400':evolver运行状态.frozen?'text-red-400':'text-yellow-400'"
-          x-text="evolver运行状态.frozen?'FROZEN':evolver运行状态.runtime_status"></div>
-        <div class="text-xs text-gray-600" x-show="evolver运行状态.enabled" x-text="'自动应用='+evolver运行状态.auto_apply"></div>
-        <div class="text-xs text-red-400" x-show="!evolver运行状态.enabled">DISABLED</div>
-      </div>
-      <div class="card p-3">
-        <div class="text-xs text-gray-500 uppercase">策略版本</div>
-        <div class="text-xs font-mono mt-1 text-purple-300" x-text="evolver运行状态.current_policy_version||'-'"></div>
-        <div class="text-xs text-gray-600" x-text="'哈希='+(evolver运行状态.current_config_hash||'-')"></div>
-        <div class="text-xs text-yellow-400" x-show="evolver运行状态.pending_evaluation">等待评估中</div>
-      </div>
-      <div class="card p-3">
-        <div class="text-xs text-gray-500 uppercase">回滚次数</div>
-        <div class="text-lg font-bold mt-1 text-orange-400" x-text="evolver运行状态.rollback_count||0"></div>
-        <div class="text-xs text-gray-600" x-text="'今日: '+(evolver运行状态.daily_rollback_count||0)"></div>
-        <div class="text-xs text-gray-600" x-text="'错误: '+(evolver运行状态.consecutive_errors||0)"></div>
-      </div>
-      <div class="card p-3">
-        <div class="text-xs text-gray-500 uppercase">上次运行</div>
-        <div class="text-xs mt-1" :class="evolver运行状态.last_success?'text-green-400':'text-red-400'" x-text="evolver运行状态.last_success?'OK':'ERROR'"></div>
-        <div class="text-xs text-gray-600" x-text="evolver运行状态.last_error?'err: '+evolver运行状态.last_error:''"></div>
-      </div>
-    </div>
-  </template>
-
-  <template x-if="evolverPatches&&evolverPatches.length>0"><div><div x-show="!evolverPatches||evolverPatches.length===0" class="text-xs text-gray-600 py-2">暂无参数修改记录</div>
-    <div class="card p-3 mb-3">
-      <div class="text-xs text-gray-500 uppercase mb-2">参数修改记录</div>
-      <table class="w-full text-xs">
-        <thead><tr class="text-gray-600"><th class="text-left p-1">key</th><th class="text-left p-1">old</th><th class="text-left p-1">new</th><th class="text-left p-1">status</th><th class="text-left p-1">reason</th></tr></thead>
-        <tbody>
-          <template x-for="p in evolverPatches.slice(0,20)" :key="p.param_patch_id">
-            <tr class="border-t border-[#1c1c38]">
-              <td class="p-1 text-xs" x-text="p.key"></td>
-              <td class="p-1 text-gray-500" x-text="p.old"></td>
-              <td class="p-1 text-green-400" x-text="p.new"></td>
-              <td class="p-1" :class="p.status==='ACTIVE'?'text-green-400':'text-gray-500'" x-text="p.status||''"></td>
-              <td class="p-1 text-gray-500" x-text="(p.reason||'').slice(0,30)"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
-  </template>
-
-  <template x-if="evolverHealth">
-    <div class="card p-3 mb-3">
-      <div class="flex items-center gap-2 mb-2">
-        <span class="text-xs text-gray-500 uppercase">健康检查</span>
-        <span :class="evolverHealth.ok?'text-green-400':'text-red-400'" x-text="evolverHealth.ok?'OK':'ISSUES'"></span>
-      </div>
-      <template x-for="w in (evolverHealth.warnings||[])" :key="w">
-        <div class="text-xs text-yellow-400">⚠ <span x-text="w"></span></div>
-      </template>
-      <template x-for="e in (evolverHealth.errors||[])" :key="e">
-        <div class="text-xs text-red-400">✖ <span x-text="e"></span></div>
-      </template>
-    </div>
-  </template>
-
-  <div x-show="!evolverHistory||evolverHistory.length===0" class="text-xs text-gray-600 py-2">暂无进化历史</div>
-            <template x-if="evolverHistory&&evolverHistory.length>0">
-    <div class="card p-3">
-      <div class="text-xs text-gray-500 uppercase mb-2">最近进化历史</div>
-      <table class="w-full text-xs">
-        <thead><tr class="text-gray-600"><th class="text-left p-1">事件</th><th class="text-left p-1">policy</th><th class="text-left p-1">修改数</th></tr></thead>
-        <tbody>
-          <template x-for="h in evolverHistory.slice(0,15)" :key="h.evolver_run_id||h.timestamp">
-            <tr class="border-t border-[#1c1c38]">
-              <td class="p-1" :class="h.事件_type==='ROLLBACK'?'text-orange-400':h.事件_type==='APPLY'||h.事件_type==='SUCCESS'?'text-green-400':'text-gray-400'"
-                x-text="h.事件_type||''"></td>
-              <td class="p-1 font-mono text-xs text-purple-300" x-text="(h.policy_version||'').slice(0,25)"></td>
-              <td class="p-1" x-text="(h.applied_修改数||[]).length||(h.修改数||'')"></td>
-            </tr>
-          </template>
-        </tbody>
-      </table>
-    </div>
-  </template>
-
-</div><!-- /evolver -->
-
-
-</div><!-- /evolver -->
-
-<!-- COCKPIT TAB -->
-<div x-show="mode==='cockpit'" x-transition:enter="transition duration-150" x-transition:enter-start="opacity-0 translate-y-1" x-transition:enter-end="opacity-100">
-
-  <div class="flex items-center gap-1 bg-[#0c0c1e] border border-[#1c1c38] rounded-xl p-1 mb-3">
-    <button @click="cockpitPage='run'" :class="cockpitPage==='run'?'tab-sc-on':'tab-off'" class="px-4 py-1.5 rounded-lg text-xs font-semibold">Run</button>
-    <button @click="cockpitPage='boundary'" :class="cockpitPage==='boundary'?'tab-sc-on':'tab-off'" class="px-4 py-1.5 rounded-lg text-xs font-semibold">Boundary</button>
-    <button @click="cockpitPage='positions'" :class="cockpitPage==='positions'?'tab-sc-on':'tab-off'" class="px-4 py-1.5 rounded-lg text-xs font-semibold">Positions</button>
-    <button @click="cockpitPage='logs'; loadCockpitLogs(); loadCockpitGuardEvents()" :class="cockpitPage==='logs'?'tab-sc-on':'tab-off'" class="px-4 py-1.5 rounded-lg text-xs font-semibold">AI Log</button>
-  </div>
-
-  <div x-show="cockpitPage==='run'" class="space-y-3">
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase mb-3">Mode</div>
-      <div class="flex items-center gap-4">
-        <button @click="cockpitSetMode('STOP')" class="px-5 py-2 rounded-lg text-sm font-bold bg-red-700 text-white">STOP</button>
-        <button @click="cockpitSetMode('PAPER')" :class="cfg.SCALP_PAPER_TRADE?'bg-yellow-600 text-white':'bg-gray-700 text-gray-400'" class="px-5 py-2 rounded-lg text-sm font-bold">PAPER</button>
-        <button @click="cockpitSetMode('LIVE')" :class="!cfg.SCALP_PAPER_TRADE&&cfg.SCALP_ENABLED?'bg-green-600 text-white':'bg-gray-700 text-gray-400'" class="px-5 py-2 rounded-lg text-sm font-bold">LIVE</button>
-      </div>
-      <div class="flex items-center gap-3 mt-4">
-        <button @click="scalpRunning?stopScalp():startScalp()" :class="scalpRunning?'bg-red-700':'bg-orange-600'" class="px-5 py-2 rounded-xl text-white text-sm font-bold">
-          <span x-text="scalpRunning?'Stop Bot':'Start Bot'"></span>
-        </button>
-        <button @click="cockpitEmergencyClose()" class="px-4 py-2 rounded-xl bg-red-900/50 text-red-400 text-xs font-bold">Emergency Close All</button>
-        <button @click="resumeEvolver()" class="px-3 py-1.5 rounded-xl bg-green-900/30 text-green-400 text-xs">Resume AI</button>
-        <button @click="pauseEvolver()" class="px-3 py-1.5 rounded-xl bg-red-900/30 text-red-400 text-xs">Pause AI</button>
-      </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-gray-600" x-text="'policy: '+(evolverStatus?.current_policy_version||'-')"></span>
+      <span class="text-xs text-gray-600" x-show="evolverStatus?.rollback_count" x-text="'回滚: '+evolverStatus?.rollback_count"></span>
+      <button @click="runEvolverOnce()" class="px-2 py-1 rounded bg-[#1a1a30] text-gray-400 text-xs">▶ 运行</button>
+      <button @click="resumeEvolver()" class="px-2 py-1 rounded bg-green-900/30 text-green-400 text-xs">恢复</button>
+      <button @click="pauseEvolver()" class="px-2 py-1 rounded bg-red-900/30 text-red-400 text-xs">暂停</button>
     </div>
   </div>
-
-  <div x-show="cockpitPage==='boundary'" class="space-y-3">
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase mb-3">Boundary Config (AI cannot modify)</div>
-      <div class="grid grid-cols-2 gap-4">
-        <div><label class="text-xs text-gray-500">Order Amount (USDT)</label>
-          <input class="inp mt-1" type="number" :value="cfg.SCALP_POSITION_USDT||100" @change="cfg.SCALP_POSITION_USDT=$event.target.value"></div>
-        <div><label class="text-xs text-gray-500">Max Positions</label>
-          <input class="inp mt-1" type="number" :value="cfg.SCALP_MAX_POSITIONS||3" @change="cfg.SCALP_MAX_POSITIONS=$event.target.value"></div>
-        <div><label class="text-xs text-gray-500">Max Leverage</label>
-          <input class="inp mt-1" type="number" :value="cfg.SCALP_LEVERAGE||10" @change="cfg.SCALP_LEVERAGE=$event.target.value"></div>
-        <div><label class="text-xs text-gray-500">Daily Max Loss (USDT)</label>
-          <input class="inp mt-1" type="number" step="10" :value="cfg.SCALP_MAX_DAILY_LOSS_USDT||200" @change="cfg.SCALP_MAX_DAILY_LOSS_USDT=$event.target.value"></div>
-      </div>
-      <button @click="saveScalpConfig()" class="mt-4 px-5 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold">Save</button>
-    </div>
-  </div>
-
-  <div x-show="cockpitPage==='positions'" class="space-y-3">
-    <div class="card p-4">
-      <div class="flex items-center justify-between mb-3">
-        <span class="text-xs text-gray-500 uppercase">Positions</span>
-        <span class="text-xs text-gray-600" x-text="Object.keys(scalpPositions).length"></span>
-      </div>
-      <div x-show="Object.keys(scalpPositions).length===0" class="text-sm text-gray-500 py-6 text-center">No open positions</div>
-      <template x-for="(pos, sym) in scalpPositions" :key="sym">
-        <div class="flex items-center justify-between py-2 border-t border-[#1c1c38] text-xs">
-          <div><span class="font-bold" x-text="sym"></span>
-            <span :class="pos.direction==='LONG'?'text-green-400':'text-red-400'" x-text="pos.direction"></span>
-            <span class="text-gray-600 ml-1" x-text="'qty='+pos.quantity_remaining"></span></div>
-          <div class="text-right">
-            <div class="font-mono" x-text="'@ '+pos.entry_price"></div>
-            <div :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'" x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
-          </div>
-          <button @click="(()=>{if(!confirm('确认平仓？'))return;fetch('/api/scalp/positions/'+sym+'/close',{method:'POST',headers:{'X-SqueezeBot-Token':auth.token},body:new URLSearchParams({percent:'100'})}).then(r=>r.json()).then(d=>showToast(d.message||'done','success')).catch(e=>showToast('err','error'))})()" class="px-3 py-1 rounded bg-red-900/30 text-red-400 text-xs">Close</button>
-        </div>
-      </template>
-    </div>
-  </div>
-
-  <div x-show="cockpitPage==='logs'" class="space-y-3">
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase mb-2">Evolver History</div>
-      <div x-show="cockpitLoading" class="text-xs text-gray-600 py-2 animate-pulse">Loading...</div>
-      <div x-show="cockpitError" class="text-xs text-red-400 py-2" x-text="'Error: '+cockpitError"></div>
-      <div x-show="!cockpitLoading && !cockpitError && cockpitLogs.length===0" class="text-xs text-gray-600 py-2">No records yet</div>
-      <template x-for="h in cockpitLogs.slice(0,15)" :key="h.evolver_run_id||h.timestamp">
-        <div class="flex gap-3 py-1.5 border-t border-[#1c1c38] text-xs">
-          <span :class="h.event_type==='ROLLBACK'?'text-orange-400':'text-green-400'" x-text="h.event_type||''"></span>
-          <span class="font-mono text-purple-300" x-text="(h.policy_version||'').slice(0,20)"></span>
-          <span class="text-gray-600" x-text="(h.reason||'').slice(0,40)"></span>
-        </div>
-      </template>
-    </div>
-    <div class="card p-4">
-      <div class="text-xs text-gray-500 uppercase mb-2">Guard Events</div>
-      <div x-show="cockpitGuardEvents.length===0" class="text-xs text-gray-600 py-2">No events</div>
-      <template x-for="e in cockpitGuardEvents.slice(0,15)" :key="e.created_at">
-        <div class="flex gap-3 py-1.5 border-t border-[#1c1c38] text-xs">
-          <span :class="e.severity==='CRITICAL'?'text-red-400':e.severity==='WARNING'?'text-yellow-400':'text-gray-500'" x-text="e.severity||''"></span>
-          <span class="text-gray-400" x-text="e.event_type||''"></span>
-          <span class="text-gray-600" x-text="(e.reason||'').slice(0,50)"></span>
-        </div>
-      </template>
-    </div>
-  </div>
-
-</div><!-- /cockpit -->
+</div>
 
 </main>
 

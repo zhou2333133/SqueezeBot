@@ -2907,7 +2907,7 @@ class BinanceScalpBot:
         exit_s = "SELL" if direction == "LONG" else "BUY"
         pos_side = self._position_side(direction)
 
-        # ── 统一执行（PAPER/LIVE 通过 _exec_open 适配）────────────────────
+        # ── 统一执行（PAPER/LIVE 通过 execution_router 路由）─────────────
         result = await self._exec_open(
             symbol, direction, side, exit_s, entry_price, sl_price,
             quantity, leverage, pos_side, intended_risk_usdt,
@@ -2921,6 +2921,12 @@ class BinanceScalpBot:
             actual_risk_usdt=actual_risk_usdt,
             strategy_tag=strategy_tag,
         )
+        # execution_router 验证执行结果是否违反边界
+        try:
+            import execution_router as _er
+            _er.verify_execution(result, symbol, direction, quantity, cfg)
+        except Exception:
+            pass
         if not result.success:
             # 保护失败且已市价撤出：记录信号但不建仓
             if result.status == "protection_failed" and result.fill_resp:

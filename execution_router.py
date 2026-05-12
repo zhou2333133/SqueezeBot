@@ -64,3 +64,17 @@ def _call_executor(ex, intent: dict) -> dict:
     if "close_qty" in action and hasattr(ex, "_exec_close_qty"):
         return ex._exec_close_qty(**intent.get("_exec_kwargs", {}))
     return {"success": False, "error": f"cannot_route:{action}"}
+
+
+def verify_execution(exec_result, symbol: str, direction: str, quantity: float, cfg: dict) -> dict:
+    """验证执行结果。主要检查 PAPER/LIVE 边界是否一致。"""
+    result = {"verified": True, "warnings": []}
+    if not exec_result or not getattr(exec_result, "success", False):
+        result["verified"] = False
+        return result
+    is_paper = getattr(exec_result, "is_paper", False) if hasattr(exec_result, "is_paper") else False
+    if is_paper and not cfg.get("SCALP_PAPER_TRADE", False):
+        result["warnings"].append(f"{symbol}: PAPER mode mismatch")
+    elif not is_paper and cfg.get("SCALP_PAPER_TRADE", True):
+        result["warnings"].append(f"{symbol}: LIVE mode mismatch")
+    return result
