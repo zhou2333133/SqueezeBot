@@ -1,0 +1,13 @@
+{
+  "execution_mode": "PAPER",
+  "trading_enabled": true,
+  "allow_open": true,
+  "allow_close": true,
+  "fixed_order_amount_usdt": 100,
+  "max_open_positions": 3,
+  "max_leverage": 10,
+  "daily_max_loss_usdt": 200,
+  "max_account_drawdown_pct": 50,
+  "allowed_symbols": [],
+  "blocked_symbols": []
+}

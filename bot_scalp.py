@@ -2861,6 +2861,25 @@ class BinanceScalpBot:
             if _policy_result is None:
                 _policy_result = {"action": "ALLOW", "reason": "exception_fallback"}
 
+        # ── Risk Guard 硬风控检查 ────────────────────────────────────────
+        try:
+            from risk_guard import check_open_order
+            _rg_result = check_open_order(
+                symbol=symbol, direction=direction,
+                amount_usdt=quantity * entry_price / max(leverage, 1),
+                leverage=leverage,
+                current_positions=len(self.open_positions),
+                daily_loss_usdt=self.daily_loss_usdt,
+            )
+            if not _rg_result.get("allow", True):
+                _reason = _rg_result.get("reason", "risk_guard_blocked")
+                add_scalp_signal({**base_signal, "auto_traded": False,
+                                  "rejected_reason": _reason})
+                logger.info("⚡ [%s] ❌ Risk Guard 拦截: %s", symbol, _reason)
+                return
+        except Exception as e:
+            logger.debug("⚡ [%s] Risk Guard 异常 (不拦截): %s", symbol, e)
+
         # ── 单币 AI 判单（已废弃，功能由 evolver 覆盖）────────────────────────
         _judge_result = None
 

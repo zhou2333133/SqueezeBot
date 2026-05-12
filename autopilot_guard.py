@@ -153,68 +153,13 @@ def run_startup_guard(cfg: dict | None = None) -> dict:
 # Guard: periodic
 # ══════════════════════════════════════════════════════════════════════════════
 def run_periodic_guard(cfg: dict | None = None) -> dict:
-    """周期健康检查。"""
-    warnings: list[str] = []
-    errors: list[str] = []
-    if cfg is None:
-        cfg = config_manager.settings
-
-    if not cfg.get("AUTOPILOT_GUARD_ENABLED", True):
-        return {"ok": True, "warnings": [], "errors": [], "frozen": False}
-
-    # 1. Locked params unchanged
-    before = get_current_locked_param_values(cfg)
-    # Simulate a guard check by comparing with snapshot
-    snapshot = load_locked_param_snapshot()
-    if snapshot:
-        snap_vals = snapshot.get("locked_params", {})
-        for k in snap_vals:
-            if k in before and before[k] != snap_vals[k]:
-                errors.append(f"LOCKED_PARAM {k} changed, restoring")
-                cfg[k] = snap_vals[k]
-        if errors:
-            config_manager._persist()
-            freeze_evolver("LOCKED_PARAM_MUTATED_PERIODIC")
-
-    # 2. Check runtime state
+    """周期健康检查（委托 risk_guard）。"""
     try:
-        from evolver_runtime import _get_state
-        state = _get_state()
-        if state.get("status") == "ERROR":
-            freeze_evolver("evolver_runtime_error")
-    except Exception:
-        pass
+        from risk_guard import health_check
+        return health_check()
+    except Exception as e:
+        return {"ok": False, "warnings": [str(e)], "errors": [], "frozen": False}
 
-    # 3. Required files writable
-    for fname in ["strategy_trades.jsonl", "evolver_history.jsonl",
-                   "shadow_trades.jsonl", "proposal_validation_history.jsonl"]:
-        fpath = os.path.join(DATA_DIR, fname)
-        if os.path.exists(fpath) and not os.access(fpath, os.W_OK):
-            warnings.append(f"{fname} not writable")
-
-    # 4. E2E status
-    if cfg.get("AUTOPILOT_REQUIRE_E2E_PASS", True):
-        e2e_status = safe_read_json(E2E_STATUS_FILE)
-        if not isinstance(e2e_status, dict) or not e2e_status.get("passed"):
-            warnings.append("E2E not passed")
-        elif e2e_status.get("last_run_at"):
-            e2e_max_age = float(cfg.get("AUTOPILOT_E2E_MAX_AGE_HOURS", 24) or 24)
-            age_hours = (time.time() - e2e_status["last_run_at"]) / 3600
-            if age_hours > e2e_max_age:
-                warnings.append(f"E2E stale: {age_hours:.1f}h")
-
-    ok = len(errors) == 0
-    if not ok and cfg.get("AUTOPILOT_FREEZE_EVOLVER_ON_GUARD_FAIL", True):
-        freeze_evolver("periodic_guard_failed")
-    write_guard_event("PERIODIC_CHECK", "WARNING" if warnings else "INFO",
-                      f"ok={ok}", {"errors": errors, "warnings": warnings})
-    return {"ok": ok, "warnings": warnings, "errors": errors,
-            "frozen": not ok and cfg.get("AUTOPILOT_FREEZE_EVOLVER_ON_GUARD_FAIL", True)}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Freeze / unfreeze
-# ══════════════════════════════════════════════════════════════════════════════
 def freeze_evolver(reason: str) -> None:
     """冻结 Evolver。不影响交易。"""
     try:

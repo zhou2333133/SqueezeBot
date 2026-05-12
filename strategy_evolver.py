@@ -321,60 +321,52 @@ def _make_proposal(key: str, old_val: Any, new_val: Any, reason: str, strategy_t
 # 5. 校验
 # ══════════════════════════════════════════════════════════════════════════════
 def validate_param_updates(proposals: list[dict], current_config: dict) -> tuple[list[dict], list[dict]]:
-    """校验 proposals，返回 (valid, rejected)。"""
-    locked = config_manager.LOCKED_PARAMS
-    bounds = config_manager.PARAM_BOUNDS
+    """校验 proposals，返回 (valid, rejected)。委托 risk_guard 执行硬风控。"""
+    # 首先检查原始 LOCKED_PARAMS（保持向后兼容）
+    locked = getattr(config_manager, "LOCKED_PARAMS", set())
+    rejected_prefix = []
+    remaining = []
+    for prop in proposals:
+        key = prop.get("key", "")
+        if key in locked:
+            rejected_prefix.append({**prop, "rejected_reason": "LOCKED_PARAM"})
+        else:
+            remaining.append(prop)
+    from risk_guard import check_proposals
+    valid, rejected = check_proposals(remaining)
+    rejected = rejected_prefix + rejected
+
     max_change_pct = float(current_config.get("EVOLVER_MAX_PARAM_CHANGE_PCT", 0.30) or 0.30)
     max_updates = int(current_config.get("EVOLVER_MAX_UPDATES_PER_RUN", 5) or 5)
+    bounds = config_manager.PARAM_BOUNDS
+    filtered = []
 
-    valid: list[dict] = []
-    rejected: list[dict] = []
-
-    for prop in proposals:
+    for prop in valid:
         key = prop["key"]
-        old = prop["old"]
-        new = prop["new"]
-
-        # 检查 LOCKED_PARAMS
-        if key in locked:
-            rejected.append({**prop, "rejected_reason": "LOCKED_PARAM"})
-            continue
-
+        old_v = prop["old"]
+        new_v = prop["new"]
         # 检查 INEFFECTIVE_PARAMS
         if hasattr(config_manager, "INEFFECTIVE_PARAMS") and key in config_manager.INEFFECTIVE_PARAMS:
             rejected.append({**prop, "rejected_reason": "INEFFECTIVE_PARAM"})
             continue
-
         # 检查 PARAM_BOUNDS
         if key not in bounds:
             rejected.append({**prop, "rejected_reason": "NO_BOUNDS"})
             continue
-
-        # 检查变化幅度
         lo, hi = bounds[key]
-        pct_change = abs(new - old) / abs(old) if old != 0 else 1.0
+        pct_change = abs(new_v - old_v) / abs(old_v) if old_v != 0 else 1.0
         if pct_change > max_change_pct:
-            # clamp 到最大允许值
-            max_delta = abs(old) * max_change_pct
-            if new > old:
-                new = old + max_delta
-            else:
-                new = old - max_delta
-            prop["new"] = new
+            max_delta = abs(old_v) * max_change_pct
+            new_v = old_v + max_delta if new_v > old_v else old_v - max_delta
+            prop["new"] = new_v
             prop["clamped"] = True
+        new_v = max(lo, min(hi, new_v))
+        prop["new"] = new_v
+        if abs(new_v - old_v) < 0.001:
+            continue
+        filtered.append(prop)
 
-        # clamp 到 PARAM_BOUNDS 范围
-        new = max(lo, min(hi, new))
-        prop["new"] = new
-
-        if abs(new - old) < 0.001:
-            continue  # 无实际变化，跳过
-
-        valid.append(prop)
-
-    # 限制每轮修改数量
-    valid = valid[:max_updates]
-    return valid, rejected
+    return filtered[:max_updates], rejected
 
 
 # ══════════════════════════════════════════════════════════════════════════════
