@@ -397,7 +397,7 @@ class ConfigManager:
         "YAOBI_AI_MODEL_GEMINI": "gemini-2.5-flash",
         "YAOBI_AI_MODEL_ANTHROPIC": "claude-3-5-haiku-latest",
         "YAOBI_AI_MODEL_DEEPSEEK": "deepseek-v4-flash",
-        "YAOBI_AI_MODEL_MINIMAX": "minimax-m1",
+        "YAOBI_AI_MODEL_MINIMAX": "MiniMax-M2.7",
         "YAOBI_AI_MAX_SYMBOLS_PER_RUN": 6,
         "YAOBI_AI_TOP_OUTPUT": 6,
         "YAOBI_AI_FAILURE_FALLBACK_ENABLED": True,

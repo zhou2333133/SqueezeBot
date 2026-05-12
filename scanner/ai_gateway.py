@@ -778,9 +778,9 @@ async def _call_deepseek(session: aiohttp.ClientSession, system_prompt: str, pay
 
 
 async def _call_minimax(session: aiohttp.ClientSession, system_prompt: str, payload: str, max_output: int) -> tuple[str, int]:
-    """调用 MiniMax M1 或更新模型（OpenAI 兼容接口）。"""
+    """调用 MiniMax M2.7（OpenAI 兼容接口）。"""
     api_key = os.getenv("MINIMAX_API_KEY") or MINIMAX_API_KEY
-    model = str(config_manager.settings.get("YAOBI_AI_MODEL_MINIMAX", "minimax-m1") or "minimax-m1")
+    model = str(config_manager.settings.get("YAOBI_AI_MODEL_MINIMAX", "MiniMax-M2.7") or "MiniMax-M2.7")
     body = {
         "model": model,
         "messages": [
@@ -789,9 +789,10 @@ async def _call_minimax(session: aiohttp.ClientSession, system_prompt: str, payl
         ],
         "temperature": 0.1,
         "max_tokens": max_output,
+        "response_format": {"type": "json_object"},
     }
     async with session.post(
-        "https://api.minimax.io/v1/chat/completions",
+        "https://api.minimax.chat/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json=body,
         timeout=aiohttp.ClientTimeout(total=30),
