@@ -52,60 +52,60 @@ def load_current_config() -> dict:
 # 2. 策略指标统计
 # ══════════════════════════════════════════════════════════════════════════════
 def compute_strategy_metrics(trades: list[dict]) -> dict[str, dict]:
-    """按 strategy_tag 统计策略表现。"""
-    by_tag: dict[str, list[dict]] = defaultdict(list)
+    """按 strategy_tag 统计策略表现。单次遍历 O(n)。"""
+    by_tag: dict[str, dict] = {}
     for t in trades:
         tag = str(t.get("strategy_tag") or "")
-        if tag:
-            by_tag[tag].append(t)
+        if not tag:
+            continue
+        if tag not in by_tag:
+            by_tag[tag] = {"n": 0, "wins": 0, "pnl_total": 0.0, "win_pnl": 0.0, "loss_pnl": 0.0,
+                           "sum_mfe": 0.0, "sum_mae": 0.0, "sum_dur": 0.0,
+                           "tag_counts": defaultdict(int), "exit_reasons": defaultdict(int)}
+        s = by_tag[tag]
+        pnl = _f(t.get("pnl_usdt"))
+        s["n"] += 1
+        if pnl >= 0:
+            s["wins"] += 1
+        s["pnl_total"] += pnl
+        if pnl >= 0:
+            s["win_pnl"] += pnl
+        else:
+            s["loss_pnl"] += abs(pnl)
+        s["sum_mfe"] += max(0, _f(t.get("mfe_pct")))
+        s["sum_mae"] += min(0, _f(t.get("mae_pct")))
+        s["sum_dur"] += _f(t.get("duration_sec"))
+        for ft in (t.get("failure_tags") or t.get("diagnosis_tags") or []):
+            if ft and ft != "good_trade":
+                s["tag_counts"][ft] += 1
+        r = str(t.get("close_reason") or "UNKNOWN")
+        s["exit_reasons"][r] += 1
 
-    metrics: dict[str, dict] = {}
-    for tag, tag_trades in by_tag.items():
-        n = len(tag_trades)
-        wins = [t for t in tag_trades if _f(t.get("pnl_usdt")) >= 0]
-        losses = [t for t in tag_trades if _f(t.get("pnl_usdt")) < 0]
-        win_count = len(wins)
-        loss_count = len(losses)
-        pnls = [_f(t.get("pnl_usdt")) for t in tag_trades]
-        total_pnl = sum(pnls)
-        win_pnls = [_f(t.get("pnl_usdt")) for t in wins]
-        loss_pnls = [_f(t.get("pnl_usdt")) for t in losses]
-        avg_win = sum(win_pnls) / len(win_pnls) if win_pnls else 0.0
-        avg_loss = abs(sum(loss_pnls) / len(loss_pnls)) if loss_pnls else 1.0
-        expectancy = (win_count / n * avg_win - loss_count / n * avg_loss) if n > 0 else 0.0 if n else 0.0
-        profit_factor = sum(win_pnls) / abs(sum(loss_pnls)) if sum(loss_pnls) != 0 else float("inf") if sum(win_pnls) > 0 else 0.0
-
-        # Failure tags aggregate
-        all_tags: list[str] = []
-        for t in tag_trades:
-            ft = t.get("failure_tags") or t.get("diagnosis_tags") or []
-            all_tags.extend(ft if isinstance(ft, list) else [])
-        tag_counts = defaultdict(int)
-        for tg in all_tags:
-            if tg and tg != "good_trade":
-                tag_counts[tg] += 1
-
-        # Exit reason distribution
-        exit_reasons = defaultdict(int)
-        for t in tag_trades:
-            r = str(t.get("close_reason") or "UNKNOWN")
-            exit_reasons[r] += 1
+    metrics = {}
+    for tag, s in by_tag.items():
+        n = s["n"]
+        wins = s["wins"]
+        losses = n - wins
+        total_pnl = s["pnl_total"]
+        avg_mfe = s["sum_mfe"] / n if n > 0 else 0.0
+        avg_mae = s["sum_mae"] / n if n > 0 else 0.0
+        avg_dur = s["sum_dur"] / n if n > 0 else 0.0
+        win_rate = wins / n if n > 0 else 0.0
+        avg_win = total_pnl / wins if wins > 0 else 0.0
+        avg_loss = abs(total_pnl / losses) if losses > 0 else 1.0
+        expectancy = (win_rate * avg_win - (1 - win_rate) * avg_loss) if n > 0 else 0.0
+        pf = s["win_pnl"] / s["loss_pnl"] if s["loss_pnl"] > 0 else (float("inf") if total_pnl > 0 else 0.0)
 
         metrics[tag] = {
-            "total_trades": n,
-            "wins": win_count,
-            "losses": loss_count,
-            "win_rate": round(win_count / n, 4) if n > 0 else 0.0,
-            "pnl_total": round(total_pnl, 4),
-            "avg_win": round(avg_win, 4),
-            "avg_loss": round(avg_loss, 4),
+            "total_trades": n, "wins": wins, "losses": losses,
+            "win_rate": round(win_rate, 4), "pnl_total": round(total_pnl, 4),
+            "avg_win": round(avg_win, 4), "avg_loss": round(avg_loss, 4),
             "expectancy": round(expectancy, 4),
-            "profit_factor": round(profit_factor, 4) if profit_factor != float("inf") else None,
-            "avg_mfe": round(sum(_f(t.get("mfe_pct")) for t in tag_trades) / n, 4) if n > 0 else 0.0,
-            "avg_mae": round(sum(_f(t.get("mae_pct")) for t in tag_trades) / n, 4) if n > 0 else 0.0,
-            "avg_duration_sec": round(sum(_f(t.get("duration_sec")) for t in tag_trades) / n, 1) if n > 0 else 0.0,
-            "exit_reason_distribution": dict(sorted(exit_reasons.items(), key=lambda x: -x[1])),
-            "failure_tags_top": [{"tag": k, "count": v} for k, v in sorted(tag_counts.items(), key=lambda x: -x[1])[:5]],
+            "profit_factor": round(pf, 4) if pf != float("inf") else None,
+            "avg_mfe": round(avg_mfe, 4), "avg_mae": round(avg_mae, 4),
+            "avg_duration_sec": round(avg_dur, 1),
+            "exit_reason_distribution": dict(sorted(s["exit_reasons"].items(), key=lambda x: -x[1])),
+            "failure_tags_top": [{"tag": k, "count": v} for k, v in sorted(s["tag_counts"].items(), key=lambda x: -x[1])[:5]],
         }
     return metrics
 
