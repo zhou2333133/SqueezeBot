@@ -114,9 +114,9 @@
 
     <div class="flex-1"></div>
 
-    <!-- WS indicators -->
+    <!-- WS indicators with health -->
     <div class="hidden sm:flex items-center gap-3 text-xs">
-      <template x-for="[k,lb] in [['scalpLog','超短线日志'],['scalpSig','超短线信号'],['yaobiCand','妖币扫描'],['yaobiOpp','机会队列']]" :key="k">
+      <template x-for="[k,lb] in [['scalpLog','超短线日志'],['scalpSig','超短线信号'],['yaobiCand','妖币扫描'],['yaobiOpp','机会队列'],['bot','机器人状态']]" :key="k">
         <div class="flex items-center gap-1.5">
           <span class="w-2 h-2 rounded-full flex-shrink-0" :class="ws运行状态[k]==='open'?'bg-green-500 shadow-[0_0_5px_#22c55e]':'bg-gray-700'"></span>
           <span class="text-gray-600" x-text="lb"></span>
@@ -2155,7 +2155,7 @@
     </div>
   </template>
 
-  <template x-if="evolverPatches&&evolverPatches.length>0">
+  <template x-if="evolverPatches&&evolverPatches.length>0"><div><div x-show="!evolverPatches||evolverPatches.length===0" class="text-xs text-gray-600 py-2">暂无参数修改记录</div>
     <div class="card p-3 mb-3">
       <div class="text-xs text-gray-500 uppercase mb-2">参数修改记录</div>
       <table class="w-full text-xs">
@@ -2190,7 +2190,8 @@
     </div>
   </template>
 
-  <template x-if="evolverHistory&&evolverHistory.length>0">
+  <div x-show="!evolverHistory||evolverHistory.length===0" class="text-xs text-gray-600 py-2">暂无进化历史</div>
+            <template x-if="evolverHistory&&evolverHistory.length>0">
     <div class="card p-3">
       <div class="text-xs text-gray-500 uppercase mb-2">最近进化历史</div>
       <table class="w-full text-xs">
@@ -2276,7 +2277,7 @@
             <div class="font-mono" x-text="'@ '+pos.entry_price"></div>
             <div :class="pos.unrealized_pct>=0?'text-green-400':'text-red-400'" x-text="(pos.unrealized_pct>=0?'+':'')+pos.unrealized_pct+'%'"></div>
           </div>
-          <button @click="(()=>{if(!confirm('Close?'))return;fetch('/api/scalp/positions/'+sym+'/close',{method:'POST',headers:{'X-SqueezeBot-Token':auth.token},body:new URLSearchParams({percent:'100'})}).then(r=>r.json()).then(d=>showToast(d.message||'done','success')).catch(e=>showToast('err','error'))})()" class="px-3 py-1 rounded bg-red-900/30 text-red-400 text-xs">Close</button>
+          <button @click="(()=>{if(!confirm('确认平仓？'))return;fetch('/api/scalp/positions/'+sym+'/close',{method:'POST',headers:{'X-SqueezeBot-Token':auth.token},body:new URLSearchParams({percent:'100'})}).then(r=>r.json()).then(d=>showToast(d.message||'done','success')).catch(e=>showToast('err','error'))})()" class="px-3 py-1 rounded bg-red-900/30 text-red-400 text-xs">Close</button>
         </div>
       </template>
     </div>
@@ -2537,21 +2538,21 @@ function app() {
     },
 
     async loadEvolver运行状态() {
-      try { const r = await this.apiFetch('/api/evolver/status'); if (r.ok) this.evolver运行状态 = await r.json(); } catch(e) {}
+      try { const r = await this.apiFetch('/api/evolver/status'); if (r.ok) this.evolver运行状态 = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false }
     },
     async loadEvolverHistory() {
-      try { const r = await this.apiFetch('/api/evolver/history?limit=10'); if (r.ok) this.evolverHistory = await r.json(); } catch(e) {}
+      try { const r = await this.apiFetch('/api/evolver/history?limit=10'); if (r.ok) this.evolverHistory = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false }
     },
     async loadEvolverPatches() {
-      try { const r = await this.apiFetch('/api/evolver/patches?limit=20'); if (r.ok) this.evolverPatches = await r.json(); } catch(e) {}
+      try { const r = await this.apiFetch('/api/evolver/patches?limit=20'); if (r.ok) this.evolverPatches = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false }
     },
     async loadEvolverHealth() {
-      try { const r = await this.apiFetch('/api/evolver/health'); if (r.ok) this.evolverHealth = await r.json(); } catch(e) {}
+      try { const r = await this.apiFetch('/api/evolver/health'); if (r.ok) this.evolverHealth = await r.json(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false }
     },
-    async runEvolverOnce() { try { await this.apiFetch('/api/evolver/run-once', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) {} },
-    async pauseEvolver() { try { await this.apiFetch('/api/evolver/pause', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) {} },
-    async resumeEvolver() { try { await this.apiFetch('/api/evolver/resume', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) {} },
-    async rollbackEvolver() { if (!confirm('确认回滚到上一版本？')) return; try { await this.apiFetch('/api/evolver/rollback-last', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) {} },
+    async runEvolverOnce() { try { await this.apiFetch('/api/evolver/run-once', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false } },
+    async pauseEvolver() { try { await this.apiFetch('/api/evolver/pause', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false } },
+    async resumeEvolver() { try { await this.apiFetch('/api/evolver/resume', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false } },
+    async rollbackEvolver() { if (!confirm('确认回滚到上一版本？')) return; try { await this.apiFetch('/api/evolver/rollback-last', {method:'POST'}); this.loadEvolver运行状态(); } catch(e) { this.showToast('切换失败: '+e,'error') } finally { this.cockpitLoading = false } },
     async loadBalance() {
       try { const d=await(await this.apiFetch('/api/account/balance')).json(); if(d.asset) this.balance=d } catch{}
     },
@@ -2653,7 +2654,7 @@ function app() {
     async clearScalpSignals() {
       await this.apiFetch('/api/scalp/signals',{method:'DELETE'}); this.scalpSignals=[]; this.showToast('✅ 超短线信号已清空')
     },
-    async loadScalpTrades() {
+    async loadScalpTrades() { this._loadingTrades = true
       try {
         const d = await(await this.apiFetch('/api/scalp/trades?limit=200')).json()
         this.scalpTrades    = d.trades    || []
