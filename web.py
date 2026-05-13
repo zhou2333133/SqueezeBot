@@ -1399,6 +1399,26 @@ async def export_scalp_analysis_pack_json(request: Request, detail: str = "slim"
     )
 
 
+@app.get("/api/scalp/analysis-pack/available-dates")
+async def analysis_pack_available_dates():
+    """返回有交易数据的日期列表，供前端日期选择器使用。"""
+    try:
+        import os
+        from config import DATA_DIR
+        from persistence import read_jsonl
+        trades_file = os.path.join(DATA_DIR, "strategy_trades.jsonl")
+        dates: set[str] = set()
+        if os.path.exists(trades_file):
+            trades = read_jsonl(trades_file)
+            for t in trades:
+                ts = t.get("exit_time") or t.get("entry_time") or ""
+                if ts and len(ts) >= 10:
+                    dates.add(ts[:10])
+        return JSONResponse(sorted(dates, reverse=True))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/scalp/analysis-pack.md")
 async def export_scalp_analysis_pack_markdown(request: Request, detail: str = "slim", date: str = ""):
     """下载复盘包 MD。detail=slim|full, date=YYYY-MM-DD(指定日期)|空=全部。"""

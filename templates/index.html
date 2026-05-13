@@ -1941,6 +1941,31 @@
     </template>
   </div>
 
+  <!-- 复盘下载 -->
+  <div class="card p-4 mb-3" style="border-color:rgba(59,130,246,.2)">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">📦</span>
+        <span class="font-semibold text-blue-300 text-sm">复盘下载</span>
+        <span class="text-[10px] text-gray-600">选择日期下载当日复盘包</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <select class="inp w-auto text-xs py-1.5" x-model="selectedDate" style="border-color:#1a3a2a;max-width:200px">
+        <option value="">全部历史</option>
+        <template x-for="d in analysisDates" :key="d">
+          <option :value="d" x-text="d"></option>
+        </template>
+      </select>
+      <button @click="downloadAnalysisPack()" class="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors">
+        ⬇ 下载 JSON
+      </button>
+      <button @click="downloadAnalysisPackMD()" class="px-4 py-1.5 rounded-xl bg-[#1a1a30] hover:bg-[#22223a] text-gray-400 text-xs font-medium transition-colors">
+        ⬇ 下载 MD
+      </button>
+    </div>
+  </div>
+
   <template x-if="Object.keys(strategyStats.strategies||{}).length===0">
     <div class="card p-6 text-center text-gray-500 text-sm">暂无策略成交记录</div>
   </template>
@@ -2101,6 +2126,8 @@ function app() {
     aiReport: null,
     aiReportLoading: false,
     aiStructured: null,
+    analysisDates: [],
+    selectedDate: '',
     evolver运行状态: null,
     strategyMode: 'all',
 
@@ -2154,6 +2181,7 @@ function app() {
       this.loadScalpFilterStats()
       this.loadBalance()
       this.loadAiStructured()
+      this.loadAnalysisDates()
       setInterval(() => this.loadStrategyStats(), 15000)
       setInterval(() => this.loadAiReport(), 30000)
       setInterval(() => this.loadAiStructured(), 45000)
@@ -2282,6 +2310,30 @@ function app() {
         const resp = await this.apiFetch('/api/ai-report/structured')
         if (resp.ok) this.aiStructured = await resp.json()
       } catch(e) { /* ignore */ }
+    },
+    async loadAnalysisDates() {
+      try {
+        const resp = await this.apiFetch('/api/scalp/analysis-pack/available-dates')
+        if (resp.ok) { this.analysisDates = await resp.json(); if (this.analysisDates.length && !this.selectedDate) this.selectedDate = this.analysisDates[0] }
+      } catch(e) { /* ignore */ }
+    },
+    async downloadAnalysisPack() {
+      const date = this.selectedDate
+      if (!date) { this.showToast('请先选择日期','error'); return }
+      const resp = await this.apiFetch(`/api/scalp/analysis-pack.json?date=${date}`)
+      if (!resp.ok) { this.showToast('下载失败','error'); return }
+      const blob = await resp.blob()
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `复盘_${date}.json`; a.click()
+      URL.revokeObjectURL(a.href)
+    },
+    async downloadAnalysisPackMD() {
+      const date = this.selectedDate
+      const resp = await this.apiFetch(`/api/scalp/analysis-pack.md?date=${date}`)
+      if (!resp.ok) { this.showToast('下载失败','error'); return }
+      const blob = await resp.blob()
+      const tag = date || '全部'
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `复盘_${tag}.md`; a.click()
+      URL.revokeObjectURL(a.href)
     },
 
     async copyScalpReport() {
