@@ -670,35 +670,6 @@
     </div>
   </div><!-- end grid -->
 
-  <!-- Persistent Trade Stats (重启不丢) -->
-  <div class="card p-4 mb-3" style="border-color:rgba(52,211,153,.15)">
-    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
-      <div>
-        <span class="text-gray-600">永久累计</span>
-        <div class="text-lg font-bold text-white" x-text="(persistStats?.total||0)+'笔'"></div>
-      </div>
-      <div>
-        <span class="text-gray-600">累计盈亏</span>
-        <div class="text-lg font-bold" :class="(persistStats?.total_pnl||0)>=0?'text-green-400':'text-red-400'"
-          x-text="((persistStats?.total_pnl||0)>=0?'+':'')+(persistStats?.total_pnl||0).toFixed(2)+'U'"></div>
-      </div>
-      <div>
-        <span class="text-gray-600">今日成交</span>
-        <div class="text-lg font-bold text-white" x-text="(persistStats?.today_trades||0)+'笔'"></div>
-      </div>
-      <div>
-        <span class="text-gray-600">今日盈亏</span>
-        <div class="text-lg font-bold" :class="(persistStats?.today_pnl||0)>=0?'text-green-400':'text-red-400'"
-          x-text="((persistStats?.today_pnl||0)>=0?'+':'')+(persistStats?.today_pnl||0).toFixed(2)+'U'"></div>
-      </div>
-      <div>
-        <span class="text-gray-600">今日胜率</span>
-        <div class="text-lg font-bold text-white"
-          x-text="persistStats?.today_trades?((persistStats.today_wins/persistStats.today_trades*100).toFixed(0)+'%'):'--'"></div>
-      </div>
-    </div>
-  </div>
-
   <!-- Scalp Trade History -->
   <div class="card">
     <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
@@ -719,8 +690,33 @@
         <button @click="copyScalpReport()" class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="生成策略分析报告并复制到剪贴板">📋 复制报告</button>
         <button @click="resetScalpReviewData()" class="text-xs text-gray-500 hover:text-red-300 transition-colors" title="清空成交、信号、模拟仓位、平仓后观察和候选路径基准">一键清空复盘</button>
         <button @click="clearDisplayOnly()" class="text-xs text-gray-600 hover:text-yellow-400 transition-colors" title="仅清空前端显示，不删 AI 学习数据">🧹 仅清显示</button>
-        <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
+        <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清内存</button>
       </div>
+    </div>
+    <div x-show="persistStats" class="px-5 pb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs border-b border-[#0d0d20]">
+      <span class="text-gray-600">全部: <span class="text-white font-bold" x-text="persistStats?.total||0"></span> 笔
+      <span :class="(persistStats?.total_pnl||0)>=0?'text-green-400':'text-red-400'"
+        x-text="((persistStats?.total_pnl||0)>=0?'+':'')+(persistStats?.total_pnl||0).toFixed(2)+'U'"></span>
+      <span class="text-gray-500">|</span>
+      <span class="text-gray-600">今日: <span class="text-white font-bold" x-text="persistStats?.today_trades||0"></span> 笔
+      <span :class="(persistStats?.today_pnl||0)>=0?'text-green-400':'text-red-400'"
+        x-text="((persistStats?.today_pnl||0)>=0?'+':'')+(persistStats?.today_pnl||0).toFixed(2)+'U'"></span>
+      <span class="text-gray-600" x-text="(persistStats?.today_trades?((persistStats.today_wins/persistStats.today_trades*100).toFixed(0)+'%'):'--')"></span>
+      <button @click="dailyOpen=!dailyOpen" class="text-gray-600 hover:text-blue-300 ml-auto">
+        <span x-text="dailyOpen?'▲ 收起':'▼ 每日盈亏'"></span>
+      </button>
+    </div>
+    <div x-show="dailyOpen && persistStats?.by_date" class="px-5 pb-3 max-h-36 overflow-y-auto border-b border-[#0d0d20]">
+      <template x-for="[date, ds] in Object.entries(persistStats?.by_date||{})" :key="date">
+        <div class="flex items-center gap-3 text-xs py-0.5">
+          <span class="text-gray-500 w-20 font-mono" x-text="date"></span>
+          <span class="text-gray-400 w-12" x-text="ds.trades+'笔'"></span>
+          <span class="w-12" :class="ds.wins/ds.trades>=0.5?'text-green-400':'text-red-400'"
+            x-text="(ds.wins/ds.trades*100).toFixed(0)+'%'"></span>
+          <span class="font-mono font-bold" :class="ds.pnl>=0?'text-green-400':'text-red-400'"
+            x-text="(ds.pnl>=0?'+':'')+ds.pnl.toFixed(2)+'U'"></span>
+        </div>
+      </template>
     </div>
     <div class="overflow-x-auto">
       <div x-show="scalpTrades.length===0" class="text-center text-gray-600 py-8 text-sm">暂无历史成交记录</div>
@@ -776,26 +772,6 @@
           </template>
         </tbody>
       </table>
-    </div>
-  </div>
-
-  <!-- 每日盈亏 -->
-  <div class="card p-4" style="border-color:rgba(96,165,250,.15)" x-show="persistStats?.by_date && Object.keys(persistStats.by_date).length>0">
-    <div class="flex items-center gap-2 mb-3">
-      <span class="text-base">📅</span>
-      <span class="text-sm font-semibold text-blue-300">每日盈亏</span>
-    </div>
-    <div class="space-y-1 max-h-48 overflow-y-auto">
-      <template x-for="[date, ds] in Object.entries(persistStats?.by_date||{})" :key="date">
-        <div class="flex items-center gap-3 text-xs py-1 border-b border-[#0d0d20] last:border-0">
-          <span class="text-gray-500 w-24 font-mono" x-text="date"></span>
-          <span class="text-gray-400 w-16" x-text="ds.trades+'笔'"></span>
-          <span class="w-16" :class="ds.wins/ds.trades>=0.5?'text-green-400':'text-red-400'"
-            x-text="(ds.wins/ds.trades*100).toFixed(0)+'%'"></span>
-          <span class="font-mono font-bold" :class="ds.pnl>=0?'text-green-400':'text-red-400'"
-            x-text="(ds.pnl>=0?'+':'')+ds.pnl.toFixed(2)+'U'"></span>
-        </div>
-      </template>
     </div>
   </div>
 
@@ -2194,6 +2170,7 @@ function app() {
     aiReportLoading: false,
     aiStructured: null,
     persistStats: null,
+    dailyOpen: false,
     analysisDates: [],
     selectedDate: '',
     evolver运行状态: null,
