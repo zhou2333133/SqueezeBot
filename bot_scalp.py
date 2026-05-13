@@ -2853,6 +2853,41 @@ class BinanceScalpBot:
             if _policy_result is None:
                 _policy_result = {"action": "ALLOW", "reason": "exception_fallback"}
 
+        # ── Rule Selector 软判断（市场状态 × 规则历史表现）───────────────
+        try:
+            from market_state import classify as _classify_state
+            from rule_selector import should_trade as _rule_should_trade
+            _candle_buf = self.kline_buffer.get(symbol, [])
+            _ms = _classify_state(
+                candle_buf=_candle_buf[-30:] if len(_candle_buf) >= 30 else _candle_buf,
+                oi_change_5m=self._get_oi_change_pct(symbol),
+                taker_ratio=self._current_taker_ratio(symbol),
+                volume_ratio=self._volume_ratio(symbol),
+                atr_pct=abs(float(entry_context.get("atr_pct", 0) or 0)),
+                ema20_deviation_pct=entry_context.get("directional_ema20_deviation_pct", 0),
+            )
+            base_signal["_state_key"] = _ms.get("state_key", "unknown")
+            _sources = entry_context.get("candidate_sources", [])
+            _candidate_source = str(_sources[0]) if isinstance(_sources, list) and _sources else ""
+            _rs = _rule_should_trade(
+                symbol=symbol,
+                strategy_tag=strategy_tag,
+                signal_type=base_signal.get("signal_type", ""),
+                state_key=_ms.get("state_key", "unknown"),
+                candidate_source=_candidate_source,
+            )
+            if not _rs.get("allow", True):
+                _reason = _rs.get("reason", "rule_selector_blocked")
+                add_scalp_signal({**base_signal, "auto_traded": False,
+                                  "rejected_reason": _reason})
+                logger.info("⚡ [%s] ❌ Rule Selector 拦截: %s", symbol, _reason)
+                _release_pending()
+                return
+            if _rs.get("suggested_action") == "warn":
+                logger.info("⚡ [%s] ⚠️ Rule Selector 预警: %s", symbol, _rs.get("reason", ""))
+        except Exception as e:
+            logger.debug("⚡ [%s] Rule Selector 异常 (不拦截): %s", symbol, e)
+
         # ── Risk Guard 硬风控检查 ────────────────────────────────────────
         try:
             from risk_guard import check_open_order
@@ -2966,6 +3001,7 @@ class BinanceScalpBot:
                 protection_reason=result.protection_reason,
                 strategy_tag=strategy_tag,
             )
+            pos._state_key = base_signal.get("_state_key", "")
             self.open_positions[symbol] = pos
             set_scalp_position(symbol, pos.to_dict())
         finally:
@@ -3325,6 +3361,8 @@ class BinanceScalpBot:
             "tp2_hit":      pos.tp2_hit,
             "entry_context": pos.entry_context,
             "close_reason": close_reason,
+            "_state_key": getattr(pos, "_state_key", pos.entry_context.get("_state_key", "")),
+            "_signal_type": pos.entry_context.get("signal_type", ""),
             "paper":          pos.paper,
             "execution_mode": "PAPER" if pos.paper else "LIVE",
             "strategy_tag":   pos.strategy_tag,
@@ -3374,8 +3412,12 @@ class BinanceScalpBot:
         try:
             from trade_context import extract_features
             features = extract_features(trade.get("entry_context", {}))
+            # 把 trade 层的 _state_key 注入 features（market_state 在进入时已设置）
+            if trade.get("_state_key"):
+                features["state_key"] = trade["_state_key"]
             trade["_features"] = features
             trade["kline_pattern"] = features.get("patterns", [])
+            trade["_signal_type"] = trade.get("_signal_type") or features.get("signal_type", "")
         except Exception as e:
             logger.debug("trade_context error: %s", e)
         try:

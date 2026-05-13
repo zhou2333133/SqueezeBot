@@ -48,6 +48,10 @@ def extract_features(entry_context: dict) -> dict:
     # K 线模式识别
     patterns = _detect_patterns(ec, trigger, vol_ratio, oi_5m, taker)
 
+    # 候选来源
+    sources = ec.get("candidate_sources", [])
+    candidate_source = str(sources[0]) if isinstance(sources, list) and sources else "unknown"
+
     return {
         "signal_type": signal_type,
         "trend_state": trend_state,
@@ -62,6 +66,11 @@ def extract_features(entry_context: dict) -> dict:
         "retrace_30m_pct": round(ret20, 2),
         "patterns": patterns,
         "raw_entry_atr": round(atr, 2),
+        # 新增字段
+        "candidate_source": candidate_source,
+        "spread_pct": round(float(ec.get("spread_pct", 0) or 0), 4),
+        "entry_reason": sig,
+        "state_key": str(ec.get("_state_key", "")),
     }
 
 
