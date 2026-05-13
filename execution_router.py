@@ -170,49 +170,8 @@ def _error_result(mode: str, symbol: str, side: str, error: str) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 以下为兼容层 — 逐步迁移到 execute()
+# verify_execution（保留，后验检查）
 # ══════════════════════════════════════════════════════════════════════════════
-
-def route_order(order_intent: dict, executor_ref) -> dict:
-    """（兼容）路由一笔 order_intent 到对应执行器。"""
-    action = order_intent.get("action", "open")
-    if action == "open":
-        return _route_open(order_intent, executor_ref)
-    elif action in ("close", "close_qty"):
-        return _route_close(order_intent, executor_ref)
-    else:
-        return {"success": False, "error": f"unknown_action:{action}"}
-
-
-def _route_open(intent: dict, ex) -> dict:
-    """（兼容）路由开仓。"""
-    from risk_guard import check_open_order
-    result = check_open_order(
-        symbol=intent.get("symbol", ""),
-        direction=intent.get("direction", ""),
-        amount_usdt=intent.get("amount_usdt", 0),
-        leverage=intent.get("leverage", 1),
-        current_positions=intent.get("current_positions", 0),
-        daily_loss_usdt=intent.get("daily_loss_usdt", 0),
-    )
-    if not result.get("allow", False):
-        return {"success": False, "rejected_reason": result.get("reason", "risk_guard")}
-    return _call_executor(ex, intent)
-
-
-def _route_close(intent: dict, ex) -> dict:
-    """（兼容）路由平仓。"""
-    return _call_executor(ex, intent)
-
-
-def _call_executor(ex, intent: dict) -> dict:
-    """（兼容）调用实际执行器。"""
-    action = intent.get("action", "open")
-    if action == "open" and hasattr(ex, "_exec_open"):
-        return ex._exec_open(**intent.get("_exec_kwargs", {}))
-    if "close_qty" in action and hasattr(ex, "_exec_close_qty"):
-        return ex._exec_close_qty(**intent.get("_exec_kwargs", {}))
-    return {"success": False, "error": f"cannot_route:{action}"}
 
 
 def verify_execution(exec_result, symbol: str, direction: str, quantity: float, cfg: dict) -> dict:

@@ -207,21 +207,22 @@ def unfreeze_evolver_if_safe() -> bool:
 # Guard events
 # ══════════════════════════════════════════════════════════════════════════════
 def write_guard_event(event_type: str, severity: str, reason: str, details: dict | None = None) -> None:
+    """委托 risk_guard 统一写入 guard_events.jsonl。"""
     try:
-        record = {
-            "event_type": event_type,
-            "created_at": time.time(),
-            "severity": severity,
-            "reason": reason,
-            "details": details or {},
-        }
-        append_jsonl(GUARD_EVENTS_FILE, record)
+        from risk_guard import write_guard_event as _rg_write
+        _rg_write(event_type, severity, reason, details)
     except Exception as e:
         logger.warning("write_guard_event failed: %s", e)
 
 
 def get_guard_events(limit: int = 50) -> list[dict]:
-    return safe_read_json(GUARD_EVENTS_FILE) if GUARD_EVENTS_FILE.endswith(".json") else _read_jsonl(GUARD_EVENTS_FILE, limit)
+    """委托 risk_guard 统一读取 guard_events.jsonl。"""
+    try:
+        from risk_guard import get_guard_events as _rg_get
+        return _rg_get(limit=limit)
+    except Exception as e:
+        logger.warning("get_guard_events failed: %s", e)
+        return []
 
 
 def _read_jsonl(path: str, limit: int = 0) -> list[dict]:

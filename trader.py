@@ -119,7 +119,7 @@ class BinanceTrader:
     async def _request(self, method: str, endpoint: str, params: dict, _retry_on_time_skew: bool = True):
         """发送已签名的请求；遇到 -1021 时强制重新同步时间并自动重试一次。"""
         if not self.api_key or self.api_key.startswith("YOUR_") or not self.api_secret:
-            logger.warning("交易功能未开启 (account=%s): API Key 未配置。", self.label)
+            logger.debug("交易功能未开启 (account=%s): API Key 未配置。", self.label)
             return None
 
         await self._ensure_server_time_synced()

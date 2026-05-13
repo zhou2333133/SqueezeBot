@@ -111,7 +111,8 @@
       "Bash(python evolver_e2e_tester.py --data-dir ./tmp/e2e_v4)",
       "Bash(git rm *)",
       "Bash(git commit *)",
-      "Bash(git status *)"
+      "Bash(git status *)",
+      "Bash(python evolver_e2e_tester.py --data-dir ./tmp/e2e_cleanup)"
     ]
   }
 }
