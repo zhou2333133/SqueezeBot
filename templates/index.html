@@ -1813,6 +1813,23 @@
     </div>
   </div>
 
+  <!-- 规则预警条 -->
+  <template x-if="aiStructured?.rule_selector_events?.warn_count>0 || aiStructured?.rule_selector_events?.block_count>0">
+    <div class="card p-3 mb-3" :style="'border-color:'+(aiStructured.rule_selector_events.block_count>0?'rgba(239,68,68,.3)':'rgba(234,179,8,.3)')">
+      <div class="flex items-center gap-3 text-xs">
+        <span :class="aiStructured.rule_selector_events.block_count>0?'text-red-400':'text-yellow-400'" class="text-base">⚠️</span>
+        <span class="text-gray-400">规则选择器</span>
+        <span x-show="aiStructured.rule_selector_events.warn_count>0" class="text-yellow-400">
+          <span class="font-bold" x-text="aiStructured.rule_selector_events.warn_count"></span> 条预警
+        </span>
+        <span x-show="aiStructured.rule_selector_events.block_count>0" class="text-red-400">
+          <span class="font-bold" x-text="aiStructured.rule_selector_events.block_count"></span> 次拦截
+        </span>
+        <span class="text-gray-600 ml-auto">样本不足或历史低分组合被限制</span>
+      </div>
+    </div>
+  </template>
+
   <!-- AI 今日复盘 -->
   <div class="card p-4 mb-3" style="border-color:rgba(168,85,247,.2)">
     <div class="flex items-center justify-between mb-3">

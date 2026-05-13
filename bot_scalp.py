@@ -3408,6 +3408,22 @@ class BinanceScalpBot:
         }
         self._start_post_exit_watch(trade, pos, exit_price)
         apply_trade_diagnosis(trade)
+        # ── 平仓时市场状态（exit_state）────────────────────────────────────
+        try:
+            from market_state import classify as _classify_state
+            _exit_buf = self.kline_buffer.get(symbol, [])
+            _exit_ms = _classify_state(
+                candle_buf=_exit_buf[-30:] if len(_exit_buf) >= 30 else _exit_buf,
+                oi_change_5m=self._get_oi_change_pct(symbol),
+                taker_ratio=self._current_taker_ratio(symbol),
+                volume_ratio=self._volume_ratio(symbol),
+                atr_pct=abs(float(pos.entry_context.get("atr_pct", 0) or 0)),
+                ema20_deviation_pct=pos.entry_context.get("directional_ema20_deviation_pct", 0),
+            )
+            trade["_exit_state_key"] = _exit_ms.get("state_key", "")
+        except Exception as e:
+            logger.debug("exit_state error: %s", e)
+            trade["_exit_state_key"] = ""
         # ── 交易画像 + 学习记忆 ────────────────────────────────────────────
         try:
             from trade_context import extract_features
