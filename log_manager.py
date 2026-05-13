@@ -13,6 +13,11 @@ import queue
 log_queue:       queue.Queue = queue.Queue(maxsize=1000)
 scalp_log_queue: queue.Queue = queue.Queue(maxsize=500)
 
+# 最近日志环形缓冲区（供页面刷新后重放历史）
+LOG_RECENT_MAX = 200
+log_recent: list[str] = []       # 全部日志最近 200 条
+scalp_log_recent: list[str] = [] # 超短线日志最近 200 条
+
 _LOG_FORMAT      = "[%(asctime)s] [%(levelname)-8s] %(message)s"
 _FILE_LOG_FORMAT = "[%(asctime)s] [%(levelname)-8s] [%(name)s] %(message)s"
 _DATE_FORMAT     = "%H:%M:%S"
@@ -36,9 +41,16 @@ class _RoutingQueueHandler(logging.Handler):
         try:
             msg = self.format(record)
             _put(log_queue, msg)
+            # 追加到环形缓冲区
+            log_recent.append(msg)
+            if len(log_recent) > LOG_RECENT_MAX:
+                log_recent[:] = log_recent[-LOG_RECENT_MAX:]
             name = record.name.lower()
             if "scalp" in name:
                 _put(scalp_log_queue, msg)
+                scalp_log_recent.append(msg)
+                if len(scalp_log_recent) > LOG_RECENT_MAX:
+                    scalp_log_recent[:] = scalp_log_recent[-LOG_RECENT_MAX:]
         except Exception:
             self.handleError(record)
 

@@ -2184,6 +2184,7 @@ function app() {
       this.loadScalpTrades()
       this.loadScalpEquity()
       this.loadScalpSignals()
+      this.loadRecentLogs()
       this.loadAiStructured()
       this.loadAnalysisDates()
       setInterval(() => this.loadStrategyStats(), 15000)
@@ -2242,6 +2243,13 @@ function app() {
       this.connectWs('scalpSig',  '/ws/scalp/signals')
       this.connectWs('yaobiCand', '/ws/yaobi/candidates')
       this.connectWs('yaobiOpp',  '/ws/yaobi/opportunities')
+    },
+
+    async loadRecentLogs() {
+      try {
+        const resp = await this.apiFetch('/api/log/scalp/recent?limit=200')
+        if (resp.ok) { const logs = await resp.json(); this.scalpLogs = logs.reverse().concat(this.scalpLogs).slice(0,400) }
+      } catch(e) { /* ignore */ }
     },
 
     connectWs(key, path) {

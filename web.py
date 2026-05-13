@@ -1488,6 +1488,13 @@ async def _ws_pump(websocket: WebSocket, q: std_queue.Queue, sleep: float = 0.1)
         logger.debug("WS 异常: %s", e)
 
 
+@app.get("/api/log/scalp/recent")
+async def get_scalp_log_recent(limit: int = 200):
+    """返回最近 N 条超短线日志。"""
+    from log_manager import scalp_log_recent
+    return JSONResponse(scalp_log_recent[-limit:])
+
+
 @app.websocket("/ws/log")
 async def ws_log_all(websocket: WebSocket):
     await _ws_pump(websocket, log_queue)
