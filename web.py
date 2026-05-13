@@ -521,6 +521,50 @@ async def get_scalp_trades(limit: int = 200):
     })
 
 
+@app.get("/api/scalp/trades/persistent")
+async def get_scalp_trades_persistent():
+    """从 strategy_trades.jsonl 读取永久成交记录（重启不丢失）。"""
+    try:
+        import os
+        from config import DATA_DIR
+        from persistence import read_jsonl
+        from datetime import datetime
+        trades_file = os.path.join(DATA_DIR, "strategy_trades.jsonl")
+        if not os.path.exists(trades_file):
+            return JSONResponse({"trades":[], "total":0, "total_pnl":0,
+                                 "today_trades":0, "today_pnl":0, "by_date":{}})
+        all_trades = read_jsonl(trades_file)
+        today = datetime.now().strftime("%Y-%m-%d")
+        total_pnl = sum(float(t.get("pnl_usdt", 0) or 0) for t in all_trades)
+        today_trades = [t for t in all_trades if (t.get("exit_time") or t.get("entry_time") or "").startswith(today)]
+        today_pnl = sum(float(t.get("pnl_usdt", 0) or 0) for t in today_trades)
+        today_wins = sum(1 for t in today_trades if float(t.get("pnl_usdt", 0) or 0) >= 0)
+        by_date = {}
+        for t in all_trades:
+            date = (t.get("exit_time") or t.get("entry_time") or "")[:10]
+            if not date:
+                continue
+            if date not in by_date:
+                by_date[date] = {"trades":0, "wins":0, "pnl":0.0}
+            pnl = float(t.get("pnl_usdt", 0) or 0)
+            by_date[date]["trades"] += 1
+            if pnl >= 0:
+                by_date[date]["wins"] += 1
+            by_date[date]["pnl"] = round(by_date[date].get("pnl", 0) + pnl, 2)
+        return JSONResponse({
+            "trades": all_trades[-200:][::-1],
+            "total": len(all_trades),
+            "total_pnl": round(total_pnl, 2),
+            "today_trades": len(today_trades),
+            "today_pnl": round(today_pnl, 2),
+            "today_wins": today_wins,
+            "by_date": dict(sorted(by_date.items(), reverse=True)),
+        })
+    except Exception as e:
+        logger.error("persistent trades error: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/scalp/equity")
 async def get_scalp_equity():
     return JSONResponse(_scalp_equity_summary(list(scalp_trade_history)))
@@ -530,6 +574,17 @@ async def get_scalp_equity():
 async def clear_scalp_trades():
     scalp_trade_history.clear()
     return JSONResponse({"status": "success", "message": "✅ 历史成交已清空"})
+
+
+@app.post("/api/scalp/clear-display")
+async def clear_scalp_display():
+    """仅清空前端显示数据，不影响 AI 学习记忆和 strategy_trades.jsonl。"""
+    scalp_trade_history.clear()
+    scalp_signals_history.clear()
+    _drain_queue(scalp_signal_queue)
+    return JSONResponse({"status": "success",
+                         "message": "✅ 前端显示已清空（AI 学习数据不受影响）",
+                         "detail": "strategy_trades.jsonl / learning_memory.json / rule_selector_events.jsonl 均保留"})
 
 
 def _drain_queue(q: std_queue.Queue) -> int:

@@ -670,6 +670,35 @@
     </div>
   </div><!-- end grid -->
 
+  <!-- Persistent Trade Stats (重启不丢) -->
+  <div class="card p-4 mb-3" style="border-color:rgba(52,211,153,.15)">
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+      <div>
+        <span class="text-gray-600">永久累计</span>
+        <div class="text-lg font-bold text-white" x-text="(persistStats?.total||0)+'笔'"></div>
+      </div>
+      <div>
+        <span class="text-gray-600">累计盈亏</span>
+        <div class="text-lg font-bold" :class="(persistStats?.total_pnl||0)>=0?'text-green-400':'text-red-400'"
+          x-text="((persistStats?.total_pnl||0)>=0?'+':'')+(persistStats?.total_pnl||0).toFixed(2)+'U'"></div>
+      </div>
+      <div>
+        <span class="text-gray-600">今日成交</span>
+        <div class="text-lg font-bold text-white" x-text="(persistStats?.today_trades||0)+'笔'"></div>
+      </div>
+      <div>
+        <span class="text-gray-600">今日盈亏</span>
+        <div class="text-lg font-bold" :class="(persistStats?.today_pnl||0)>=0?'text-green-400':'text-red-400'"
+          x-text="((persistStats?.today_pnl||0)>=0?'+':'')+(persistStats?.today_pnl||0).toFixed(2)+'U'"></div>
+      </div>
+      <div>
+        <span class="text-gray-600">今日胜率</span>
+        <div class="text-lg font-bold text-white"
+          x-text="persistStats?.today_trades?((persistStats.today_wins/persistStats.today_trades*100).toFixed(0)+'%'):'--'"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Scalp Trade History -->
   <div class="card">
     <div class="flex items-center justify-between px-5 py-4 border-b border-[#1c1c38]">
@@ -689,6 +718,7 @@
           download class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="下载 Markdown 摘要复盘包">⬇ MD摘要</a>
         <button @click="copyScalpReport()" class="text-xs text-gray-500 hover:text-blue-400 transition-colors" title="生成策略分析报告并复制到剪贴板">📋 复制报告</button>
         <button @click="resetScalpReviewData()" class="text-xs text-gray-500 hover:text-red-300 transition-colors" title="清空成交、信号、模拟仓位、平仓后观察和候选路径基准">一键清空复盘</button>
+        <button @click="clearDisplayOnly()" class="text-xs text-gray-600 hover:text-yellow-400 transition-colors" title="仅清空前端显示，不删 AI 学习数据">🧹 仅清显示</button>
         <button @click="clearScalpTrades()" class="text-xs text-gray-600 hover:text-red-400 transition-colors">清空</button>
       </div>
     </div>
@@ -746,6 +776,26 @@
           </template>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- 每日盈亏 -->
+  <div class="card p-4" style="border-color:rgba(96,165,250,.15)" x-show="persistStats?.by_date && Object.keys(persistStats.by_date).length>0">
+    <div class="flex items-center gap-2 mb-3">
+      <span class="text-base">📅</span>
+      <span class="text-sm font-semibold text-blue-300">每日盈亏</span>
+    </div>
+    <div class="space-y-1 max-h-48 overflow-y-auto">
+      <template x-for="[date, ds] in Object.entries(persistStats?.by_date||{})" :key="date">
+        <div class="flex items-center gap-3 text-xs py-1 border-b border-[#0d0d20] last:border-0">
+          <span class="text-gray-500 w-24 font-mono" x-text="date"></span>
+          <span class="text-gray-400 w-16" x-text="ds.trades+'笔'"></span>
+          <span class="w-16" :class="ds.wins/ds.trades>=0.5?'text-green-400':'text-red-400'"
+            x-text="(ds.wins/ds.trades*100).toFixed(0)+'%'"></span>
+          <span class="font-mono font-bold" :class="ds.pnl>=0?'text-green-400':'text-red-400'"
+            x-text="(ds.pnl>=0?'+':'')+ds.pnl.toFixed(2)+'U'"></span>
+        </div>
+      </template>
     </div>
   </div>
 
@@ -2143,6 +2193,7 @@ function app() {
     aiReport: null,
     aiReportLoading: false,
     aiStructured: null,
+    persistStats: null,
     analysisDates: [],
     selectedDate: '',
     evolver运行状态: null,
@@ -2202,11 +2253,13 @@ function app() {
       this.loadScalpEquity()
       this.loadScalpSignals()
       this.loadRecentLogs()
+      this.loadPersistentStats()
       this.loadAiStructured()
       this.loadAnalysisDates()
       setInterval(() => this.loadStrategyStats(), 15000)
       setInterval(() => this.loadAiReport(), 30000)
       setInterval(() => this.loadAiStructured(), 45000)
+      setInterval(() => this.loadPersistentStats(), 30000)
     },
 
     async unlockPanel(silent=false) {
@@ -2339,6 +2392,22 @@ function app() {
         const resp = await this.apiFetch('/api/ai-report/structured')
         if (resp.ok) this.aiStructured = await resp.json()
       } catch(e) { /* ignore */ }
+    },
+    async loadPersistentStats() {
+      try {
+        const resp = await this.apiFetch('/api/scalp/trades/persistent')
+        if (resp.ok) this.persistStats = await resp.json()
+      } catch(e) { /* ignore */ }
+    },
+    async clearDisplayOnly() {
+      try {
+        const resp = await this.apiFetch('/api/scalp/clear-display', {method:'POST'})
+        const d = await resp.json()
+        this.showToast(d.message, 'success')
+        this.scalpTrades=[]; this.scalpSignals=[]; this.scalpTotalPnl=0; this.scalpWinRate=0; this.scalpTradeTotal=0
+        this.scalpEquity={trades:0,points:[]}
+        this.loadPersistentStats()
+      } catch(e) { this.showToast('清空失败: '+e,'error') }
     },
     async loadAnalysisDates() {
       try {
