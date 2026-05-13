@@ -1085,11 +1085,161 @@ def _slim_candidate(c: dict) -> dict:
     return {k: c.get(k) for k in _SLIM_CANDIDATE_KEYS if c.get(k) is not None}
 
 
-async def _build_scalp_analysis_pack(detail: str = "slim") -> dict:
+# ══════════════════════════════════════════════════════════════════════════════
+# 复盘包辅助构建函数（新架构数据）
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _build_rule_selector_section(filter_fn, days_ts: float = 0.0) -> dict:
+    """第 3 层：规则选择器 + learning_memory。"""
+    import os
+    from config import DATA_DIR
+    from persistence import read_jsonl
+
+    section = {}
+
+    # learning_memory 摘要
+    try:
+        from learning_memory import get_memory_summary, get_state_keys
+        section["记忆摘要"] = get_memory_summary()
+        section["已知市场状态"] = get_state_keys()[:20]
+    except Exception as e:
+        section["记忆摘要"] = {"error": str(e)}
+
+    # rule_selector 事件
+    events_file = os.path.join(DATA_DIR, "rule_selector_events.jsonl")
+    if os.path.exists(events_file):
+        events = read_jsonl(events_file)
+        filtered = filter_fn(events, "ts")
+        section["选择器事件"] = {
+            "总计": len(events),
+            "本日": len(filtered),
+            "本日_block": sum(1 for e in filtered if e.get("decision") == "block"),
+            "本日_warn": sum(1 for e in filtered if e.get("decision") == "warn"),
+            "最近": [{k: v for k, v in e.items() if k != "ts"} for e in filtered[-20:]],
+        }
+
+    return section
+
+
+def _build_evolver_section() -> dict:
+    """第 4 层：Evolver 状态 + 历史。"""
+    section = {}
+    try:
+        from risk_guard import get_evolver_status, get_recent_evolver_history
+        section["状态"] = get_evolver_status()
+        section["历史"] = get_recent_evolver_history(limit=20)
+    except Exception as e:
+        section["状态"] = {"error": str(e)}
+    return section
+
+
+def _build_guard_section(filter_fn, days_ts: float = 0.0) -> dict:
+    """第 5 层：风控拦截事件。"""
+    import os
+    from config import DATA_DIR
+    from persistence import read_jsonl
+    section = {}
+    events_file = os.path.join(DATA_DIR, "guard_events.jsonl")
+    if os.path.exists(events_file):
+        events = read_jsonl(events_file)
+        filtered = filter_fn(events, "ts")
+        section["总计"] = len(events)
+        section["本日"] = len(filtered)
+        if filtered:
+            section["本日_WARNING"] = sum(1 for e in filtered if e.get("severity") == "WARNING")
+            section["本日_ERROR"] = sum(1 for e in filtered if e.get("severity") == "ERROR")
+            section["最近"] = [{"event": e.get("event_type"), "severity": e.get("severity"),
+                                "reason": str(e.get("reason", ""))[:120]}
+                               for e in filtered[-20:]]
+    return section
+
+
+def _build_param_attribution_section() -> dict:
+    """第 4 层：参数补丁因果回溯。"""
+    import os
+    from config import DATA_DIR
+    from persistence import read_jsonl
+    section = {}
+    patches_file = os.path.join(DATA_DIR, "param_patches.jsonl")
+    if os.path.exists(patches_file):
+        patches = read_jsonl(patches_file)
+        active = [p for p in patches if p.get("status") == "ACTIVE"]
+        section["总计"] = len(patches)
+        section["活跃补丁"] = len(active)
+        section["最近"] = [{"patch_id": p.get("param_patch_id", ""),
+                            "key": p.get("key", ""),
+                            "old": p.get("old"), "new": p.get("new"),
+                            "verdict": p.get("_verdict", "pending"),
+                            "status": p.get("status", "")}
+                           for p in patches[-10:]]
+    return section
+
+
+def _build_boundary_section() -> dict:
+    """用户边界快照。"""
+    import json, os
+    section = {}
+    bc_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "boundary_config.json")
+    if os.path.exists(bc_file):
+        try:
+            with open(bc_file, "r", encoding="utf-8") as f:
+                section["boundary_config"] = json.load(f)
+        except Exception as e:
+            section["boundary_config"] = {"error": str(e)}
+    # locked params
+    try:
+        from risk_guard import get_locked_params_status
+        section["锁定参数"] = get_locked_params_status()
+    except Exception as e:
+        section["锁定参数"] = {"error": str(e)}
+    return section
+
+
+def _build_ai_report_section() -> dict:
+    """AI 日报最新。"""
+    try:
+        from ai_reporter import get_latest_report
+        report = get_latest_report()
+        return {"最新日报": report} if report else {"最新日报": None}
+    except Exception as e:
+        return {"最新日报": {"error": str(e)}}
+
+
+async def _build_scalp_analysis_pack(detail: str = "slim", date: str = "") -> dict:
+    """构建 AI 复盘包。detail=slim|full, date=YYYY-MM-DD(指定日期)|空=全部。"""
     detail = (detail or "slim").lower()
     full_mode = detail == "full"
+    _day_start = 0.0
+    _day_end = 0.0
+    if date:
+        try:
+            d = datetime.strptime(date.strip(), "%Y-%m-%d")
+            _day_start = d.timestamp()
+            _day_end = _day_start + 86400
+        except (ValueError, TypeError):
+            pass
 
-    raw_trades = [apply_trade_diagnosis(t) for t in list(scalp_trade_history)]
+    def _in_day_range(ts: float) -> bool:
+        return True if _day_end == 0.0 else _day_start <= ts < _day_end
+
+    def _parse_ts(s: str) -> float:
+        try:
+            return datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S").timestamp()
+        except (ValueError, TypeError):
+            return 0.0
+
+    def _filter_trades(trades: list) -> list:
+        if _day_end == 0.0:
+            return trades
+        return [t for t in trades if _in_day_range(_parse_ts(t.get("exit_time", t.get("entry_time", ""))))]
+
+    def _filter_jsonl(rows: list, ts_key: str = "ts") -> list:
+        if _day_end == 0.0:
+            return rows
+        return [r for r in rows if _in_day_range(float(r.get(ts_key, 0) or 0))]
+
+    raw_trades_all = [apply_trade_diagnosis(t) for t in list(scalp_trade_history)]
+    raw_trades = _filter_trades(raw_trades_all)
     trades = raw_trades if full_mode else [_slim_trade(t) for t in raw_trades]
     bot = bot_state.scalp_bot
     learning_report = build_learning_report(raw_trades)
@@ -1189,6 +1339,14 @@ async def _build_scalp_analysis_pack(detail: str = "slim") -> dict:
             ],
         },
         "数据源诊断": provider_diag,
+
+        # ── 新架构数据（第 3 层规则学习器 + 第 4 层 Evolver + 第 5 层风控）────
+        "规则学习器": _build_rule_selector_section(_filter_jsonl, days_ts=_day_start),
+        "进化模块": _build_evolver_section(),
+        "风控拦截": _build_guard_section(_filter_jsonl, days_ts=_day_start),
+        "参数归因": _build_param_attribution_section(),
+        "边界配置": _build_boundary_section(),
+        "AI日报": _build_ai_report_section(),
     }
     if full_mode:
         pack["字段说明"] = {
@@ -1225,9 +1383,11 @@ def _maybe_gzip_response(
 
 
 @app.get("/api/scalp/analysis-pack.json")
-async def export_scalp_analysis_pack_json(request: Request, detail: str = "slim"):
-    pack = await _build_scalp_analysis_pack(detail=detail)
+async def export_scalp_analysis_pack_json(request: Request, detail: str = "slim", date: str = ""):
+    """下载复盘包。detail=slim|full, date=YYYY-MM-DD(指定日期)|空=全部。"""
+    pack = await _build_scalp_analysis_pack(detail=detail, date=date)
     full_mode = (detail or "slim").lower() == "full"
+    date_tag = f"_{date}" if date else ""
     if full_mode:
         payload = json.dumps(pack, ensure_ascii=False, indent=2, default=str)
     else:
@@ -1235,18 +1395,20 @@ async def export_scalp_analysis_pack_json(request: Request, detail: str = "slim"
     return _maybe_gzip_response(
         payload, request,
         media_type="application/json; charset=utf-8",
-        filename="squeezebot_analysis_pack.json",
+        filename=f"squeezebot_analysis_pack{date_tag}.json",
     )
 
 
 @app.get("/api/scalp/analysis-pack.md")
-async def export_scalp_analysis_pack_markdown(request: Request, detail: str = "slim"):
-    pack = await _build_scalp_analysis_pack(detail=detail)
+async def export_scalp_analysis_pack_markdown(request: Request, detail: str = "slim", date: str = ""):
+    """下载复盘包 MD。detail=slim|full, date=YYYY-MM-DD(指定日期)|空=全部。"""
+    pack = await _build_scalp_analysis_pack(detail=detail, date=date)
     payload = _analysis_markdown(pack)
+    date_tag = f"_{date}" if date else ""
     return _maybe_gzip_response(
         payload, request,
         media_type="text/markdown; charset=utf-8",
-        filename="squeezebot_analysis_pack.md",
+        filename=f"squeezebot_analysis_pack{date_tag}.md",
     )
 
 
