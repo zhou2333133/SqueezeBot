@@ -44,12 +44,16 @@ def _save(data: dict) -> None:
 
 def _empty() -> dict:
     return {
-        "symbols": {},      # symbol → state_key → rule_id → stats
-        "strategies": {},   # tag → stats (旧兼容)
-        "patterns": {},     # pattern → count (旧兼容)
-        "_by_state": {},    # state_key → rule_id → stats (跨币种聚合)
+        "symbols": {},          # L2: symbol → state_key → rule_id
+        "strategies": {},       # 旧兼容
+        "patterns": {},         # 旧兼容
+        "_by_state": {},        # L4: state_key → rule_id
+        "by_source": {},        # L1: source → symbol → state_key → rule_id
+        "by_source_state": {},  # L3: source → state_key → rule_id
+        "by_rule": {},          # L5: rule_id
+        "state_transitions": {},# entry_state → exit_state → stats
         "updated_at": 0.0,
-        "version": 2,       # schema 版本
+        "version": 3,
     }
 
 
@@ -154,6 +158,30 @@ def record_trade(trade: dict) -> None:
             _by_rule[rule_id] = _empty_stats()
         _update_stats(_by_rule[rule_id], pnl)
 
+        # ── Level 3：candidate_source × state_key × rule_id ──────────────
+        _by_source_state = mem.setdefault("by_source_state", {})
+        if candidate_source not in _by_source_state:
+            _by_source_state[candidate_source] = {}
+        if state_key not in _by_source_state[candidate_source]:
+            _by_source_state[candidate_source][state_key] = {}
+        if rule_id not in _by_source_state[candidate_source][state_key]:
+            _by_source_state[candidate_source][state_key][rule_id] = _empty_stats()
+        _update_stats(_by_source_state[candidate_source][state_key][rule_id], pnl)
+
+        # ── entry_state → exit_state 状态迁移 ────────────────────────────
+        exit_state_key = str(trade.get("_exit_state_key", ""))
+        if exit_state_key and state_key and exit_state_key != state_key:
+            _transitions = mem.setdefault("state_transitions", {})
+            if state_key not in _transitions:
+                _transitions[state_key] = {}
+            if exit_state_key not in _transitions[state_key]:
+                _transitions[state_key][exit_state_key] = {"count": 0, "wins": 0, "total_pnl": 0.0}
+            t = _transitions[state_key][exit_state_key]
+            t["count"] += 1
+            if pnl >= 0:
+                t["wins"] += 1
+            t["total_pnl"] = round(t.get("total_pnl", 0.0) + pnl, 4)
+
         # ── 旧 schema 兼容 ──────────────────────────────────────────────
         # 旧格式：按币种聚合（平铺）
         _update_legacy_symbol(mem, symbol, tag, pnl, pattern)
@@ -247,13 +275,28 @@ def get_rule_stats(symbol: str, state_key: str, rule_id: str) -> dict:
 
 
 def get_rule_stats_by_source(candidate_source: str, symbol: str, state_key: str, rule_id: str) -> dict:
-    """按候选来源查询规则表现（新 schema: by_source→source→symbol→state_key→rule_id）。"""
+    """按候选来源查询规则表现（Level 1: by_source→source→symbol→state_key→rule_id）。"""
     mem = _load()
     return (mem.get("by_source", {})
             .get(candidate_source, {})
             .get(symbol, {})
             .get(state_key, {})
             .get(rule_id, {}))
+
+
+def get_rule_stats_by_source_state(candidate_source: str, state_key: str, rule_id: str) -> dict:
+    """按候选来源+市场状态查询（Level 3: by_source_state→source→state_key→rule_id）。"""
+    mem = _load()
+    return (mem.get("by_source_state", {})
+            .get(candidate_source, {})
+            .get(state_key, {})
+            .get(rule_id, {}))
+
+
+def get_rule_stats_by_rule(rule_id: str) -> dict:
+    """按规则 ID 查询（Level 5: by_rule→rule_id）。"""
+    mem = _load()
+    return mem.get("by_rule", {}).get(rule_id, {})
 
 
 def get_state_summary(state_key: str, min_trades: int = 5) -> list[dict]:
@@ -289,6 +332,15 @@ def get_weak_rules(symbol: str, state_key: str, min_trades: int = 5) -> list[dic
                 "avg_pnl": stats.get("avg_pnl", 0),
             })
     return sorted(result, key=lambda x: x["score"])
+
+
+def get_state_transitions(entry_state_key: str = "") -> dict:
+    """返回状态迁移记录。指定 entry_state 则只返回该状态下的迁移。"""
+    mem = _load()
+    transitions = mem.get("state_transitions", {})
+    if entry_state_key:
+        return transitions.get(entry_state_key, {})
+    return transitions
 
 
 def get_state_keys(symbol: str = "") -> list[str]:
