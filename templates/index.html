@@ -2144,6 +2144,7 @@ function app() {
       setInterval(() => this.loadScalpTrades(), 10000)
       setInterval(() => this.loadScalpEquity(), 10000)
       setInterval(() => this.loadWatchlist(), 15000)
+      this.pollScalp运行状态()
       setInterval(() => this.pollScalp运行状态(), 5000)
       setInterval(() => this.pollYaobi运行状态(), 8000)
       setInterval(() => this.loadYaobiOpportunities(), 10000)
@@ -2441,7 +2442,6 @@ function app() {
       } catch(e){ this.showToast('❌ 移除失败: '+e,'error') }
     },
     async loadScalpPositions() {
-      if (!this.scalpRunning) return
       try { const d=await(await this.apiFetch('/api/scalp/positions')).json(); this.scalpPositions=d.positions||{} } catch{}
     },
     async loadScalpFilterStats() {
