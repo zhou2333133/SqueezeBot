@@ -548,11 +548,10 @@ def run_evolution_once() -> dict[str, Any]:
             backup_path = backup_config()
             result["config_backup"] = backup_path
 
-        # 8. risk_guard 写入（验证通过才写入）
-        applied, _ = apply_proposals(valid)
-        result["applied_updates"] = applied
-
-        if auto_apply and applied:
+        # 8. risk_guard 写入（仅在 auto_apply=True 时写入）
+        if auto_apply and valid:
+            applied, _ = apply_proposals(valid)
+            result["applied_updates"] = applied
             result["auto_applied"] = True
 
             # 更新 policy_version
@@ -561,6 +560,7 @@ def run_evolution_once() -> dict[str, Any]:
 
             config_manager._persist()
         else:
+            result["applied_updates"] = valid
             result["message"] = "EVOLVER_AUTO_APPLY=False，仅生成建议未应用"
             return result
 
