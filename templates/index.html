@@ -1984,6 +1984,24 @@
     </template>
   </div>
 
+
+  <!-- 历史报告列表 -->
+  <div class="card p-3 mb-3" style="border-color:rgba(168,85,247,.15)" x-show="aiReportList.length>1">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-xs text-gray-500">📚 历史报告</span>
+      <span class="text-[10px] text-gray-700">点击查看往期复盘</span>
+      <button @click="loadAiReportList()" class="text-xs text-gray-600 hover:text-blue-300 ml-auto">↻ 刷新</button>
+    </div>
+    <div class="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+      <template x-for="r in aiReportList" :key="r.generated_at">
+        <button @click="aiReport=r"
+          class="px-2.5 py-1.5 rounded text-xs transition-colors"
+          :class="(r.generated_at||'')===(aiReport?.generated_at||'')?'bg-purple-900/40 text-purple-300 border border-purple-500/30':'bg-[#0c0c1e] text-gray-500 hover:text-gray-300 border border-[#1c1c38]'"
+          x-text="(r.generated_at||'').slice(0,10)"></button>
+      </template>
+    </div>
+  </div>
+
   <!-- 复盘下载 -->
   <div class="card p-4 mb-3" style="border-color:rgba(59,130,246,.2)">
     <div class="flex items-center justify-between mb-3">
@@ -2167,6 +2185,7 @@ function app() {
 
     strategyStats: { strategies: {} },
     aiReport: null,
+    aiReportList: [],
     aiReportLoading: false,
     aiStructured: null,
     persistStats: null,
@@ -2233,8 +2252,10 @@ function app() {
       this.loadPersistentStats()
       this.loadAiStructured()
       this.loadAnalysisDates()
+      this.loadAiReportList()
       setInterval(() => this.loadStrategyStats(), 15000)
       setInterval(() => this.loadAiReport(), 30000)
+      setInterval(() => this.loadAiReportList(), 60000)
       setInterval(() => this.loadAiStructured(), 45000)
       setInterval(() => this.loadPersistentStats(), 30000)
     },
@@ -2356,11 +2377,30 @@ function app() {
         if (resp.ok) this.aiReport = await resp.json()
       } catch(e) { /* ignore */ }
     },
+    async loadAiReportList() {
+      try {
+        const resp = await this.apiFetch('/api/ai-report/list?limit=30')
+        if (resp.ok) { const d = await resp.json(); this.aiReportList = d.reports || [] }
+      } catch(e) { /* ignore */ }
+    },
+    async viewAiReportByDate(dateStr) {
+      try {
+        const resp = await this.apiFetch('/api/ai-report/list?limit=30')
+        if (resp.ok) {
+          const d = await resp.json()
+          const found = (d.reports || []).find(r => (r.generated_at||'').startsWith(dateStr))
+          if (found) this.aiReport = found
+        }
+      } catch(e) { /* ignore */ }
+    },
     async generateAiReport() {
       this.aiReportLoading = true
       try {
         const resp = await this.apiFetch('/api/ai-report/generate', {method:'POST'})
-        if (resp.ok) this.aiReport = await resp.json()
+        if (resp.ok) {
+          this.aiReport = await resp.json()
+          this.loadAiReportList()
+        }
       } catch(e) { /* ignore */ }
       this.aiReportLoading = false
     },
