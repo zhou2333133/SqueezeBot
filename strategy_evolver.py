@@ -527,12 +527,12 @@ def run_evolution_once() -> dict[str, Any]:
         # 6. 反事实验证
         try:
             from deprecated.proposal_validator import counterfactual_validate_proposals, write_proposal_validation_history
-            cv_results = counterfactual_validate_proposals(valid, cfg)
+            cv_results = counterfactual_validate_proposals(applied, cfg)
             cv_accepted = [r for r in cv_results if r.get("validation_action") in ("ACCEPT", "WEAK_ACCEPT")]
             cv_rejected = [r for r in cv_results if r.get("validation_action") in ("REJECT", "NEED_MORE_DATA")]
-            # 只保留 ACCEPT / WEAK_ACCEPT
+            # 只保留 ACCEPT / WEAK_ACCEPT（用于记录，已由 risk_guard 写入）
             accepted_keys = {r["key"] for r in cv_accepted}
-            valid = [v for v in valid if v["key"] in accepted_keys]
+            applied = [v for v in applied if v["key"] in accepted_keys]
             for r in cv_rejected:
                 rejected.append({"key": r["key"], "rejected_reason": f"COUNTERFACTUAL_{r['validation_action']}",
                                  "reason": r.get("reason", "")})
@@ -561,7 +561,7 @@ def run_evolution_once() -> dict[str, Any]:
             # 持久化
             config_manager._persist()
         else:
-            result["applied_updates"] = valid
+            result["applied_updates"] = applied
             result["message"] = "EVOLVER_AUTO_APPLY=False，仅生成建议未应用"
             return result
 

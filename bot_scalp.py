@@ -2834,6 +2834,7 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": reason})
                 logger.info("⚡ [%s] ❌ 策略 %s 已禁用，跳过开仓", symbol, strategy_tag)
+                _log_blocked_signal(symbol, direction, strategy_tag, reason, _policy_result, cfg)
                 _release_pending()
                 return
             # 权重准入检查
@@ -2846,6 +2847,7 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": _wreason})
                 logger.info("⚡ [%s] ❌ 权重准入拦截 %s: %s", symbol, strategy_tag, _wreason)
+                _log_blocked_signal(symbol, direction, strategy_tag, _wreason, _policy_result, cfg)
                 _release_pending()
                 return
         except Exception as e:
@@ -3472,6 +3474,11 @@ class BinanceScalpBot:
         try:
             from evolver_runtime import mark_trade_closed, maybe_schedule_evolver_job
             mark_trade_closed()
+            try:
+                from strategy_evolver import update_evolver_state_after_trade
+                update_evolver_state_after_trade(trade)
+            except Exception:
+                pass
             _evo_result = maybe_schedule_evolver_job(self.cfg)
             if _evo_result.get("scheduled") and _evo_result.get("job_result", {}).get("status") == "SUCCESS":
                 _jr = _evo_result["job_result"]
