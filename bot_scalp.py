@@ -86,17 +86,31 @@ def _compute_cfg_hash(cfg: dict) -> str:
         return "UNKNOWN"
 
 
-def _log_blocked_signal(symbol, direction, strategy_tag, reason, policy_result, cfg):
-    """记录被策略策略拦截的信号到 blocked_signals.jsonl 并创建 shadow trade。"""
+def _log_blocked_signal(symbol, direction, strategy_tag, reason, policy_result, cfg,
+                        base_signal: dict | None = None):
+    """记录被拦截的信号到 blocked_signals.jsonl 并创建 shadow trade。
+
+    base_signal 包含 entry_price/sl_price/tp_price 等参考价，让 shadow 能真正模拟盈亏。
+    """
     try:
         from persistence import append_jsonl
         from config import DATA_DIR
         import time
+        bs = base_signal or {}
         record = {
             "symbol": symbol, "side": direction,
             "strategy_tag": strategy_tag, "blocked_reason": reason,
             "policy_version": str(cfg.get("POLICY_VERSION", "")),
             "config_hash": str(cfg.get("config_hash", "")),
+            "entry_price": bs.get("entry_price", 0),
+            "sl_price": bs.get("sl_price", 0),
+            "tp1_price": bs.get("tp1_price", 0),
+            "tp2_price": bs.get("tp2_price", 0),
+            "trigger_pct": bs.get("trigger_pct", 0),
+            "signal_label": bs.get("signal_label", ""),
+            "market_state": bs.get("market_state", ""),
+            "state_key": bs.get("_state_key", ""),
+            "candidate_source": str((bs.get("entry_context") or {}).get("candidate_sources", [""])[0]),
             "strategy_weight": policy_result.get("weight", 1.0) if isinstance(policy_result, dict) else 1.0,
             "decision_trace": {"strategy_policy": policy_result} if isinstance(policy_result, dict) else {},
             "timestamp": time.time(),
@@ -2834,7 +2848,7 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": reason})
                 logger.info("⚡ [%s] ❌ 策略 %s 已禁用，跳过开仓", symbol, strategy_tag)
-                _log_blocked_signal(symbol, direction, strategy_tag, reason, _policy_result, cfg)
+                _log_blocked_signal(symbol, direction, strategy_tag, reason, _policy_result, cfg, base_signal)
                 _release_pending()
                 return
             # 权重准入检查
@@ -2847,7 +2861,7 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": _wreason})
                 logger.info("⚡ [%s] ❌ 权重准入拦截 %s: %s", symbol, strategy_tag, _wreason)
-                _log_blocked_signal(symbol, direction, strategy_tag, _wreason, _policy_result, cfg)
+                _log_blocked_signal(symbol, direction, strategy_tag, _wreason, _policy_result, cfg, base_signal)
                 _release_pending()
                 return
         except Exception as e:
@@ -2883,6 +2897,7 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": _reason})
                 logger.info("⚡ [%s] ❌ Rule Selector 拦截: %s", symbol, _reason)
+                _log_blocked_signal(symbol, direction, strategy_tag, _reason, _rs, cfg, base_signal)
                 _release_pending()
                 return
             if _rs.get("suggested_action") == "warn":
@@ -2905,12 +2920,14 @@ class BinanceScalpBot:
                 add_scalp_signal({**base_signal, "auto_traded": False,
                                   "rejected_reason": _reason})
                 logger.info("⚡ [%s] ❌ Risk Guard 拦截: %s", symbol, _reason)
+                _log_blocked_signal(symbol, direction, strategy_tag, _reason, _rg_result, cfg, base_signal)
                 _release_pending()
                 return
         except Exception as e:
             logger.error("⚡ [%s] ❌ Risk Guard 异常，禁止开仓: %s", symbol, e, exc_info=True)
             add_scalp_signal({**base_signal, "auto_traded": False,
                               "rejected_reason": "risk_guard_error"})
+            _log_blocked_signal(symbol, direction, strategy_tag, f"risk_guard_error: {e}", {}, cfg, base_signal)
             _release_pending()
             return
 

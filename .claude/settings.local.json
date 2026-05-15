@@ -114,7 +114,8 @@
       "Bash(git status *)",
       "Bash(python evolver_e2e_tester.py --data-dir ./tmp/e2e_cleanup)",
       "Bash(python -m py_compile log_manager.py)",
-      "Bash(timeout 20 python -c ' *)"
+      "Bash(timeout 20 python -c ' *)",
+      "Bash(python evolver_e2e_tester.py --data-dir ./tmp/e2e_v7)"
     ]
   }
 }

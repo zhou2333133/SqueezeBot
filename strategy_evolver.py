@@ -514,25 +514,23 @@ def run_evolution_once() -> dict[str, Any]:
             result["message"] = "无参数修改建议"
             return result
 
-        # 5. risk_guard 审核 + 写入（Evolver 只提案，Guard 批准）
-        from risk_guard import apply_proposals
-        applied, rejected = apply_proposals(proposals)
+        # 5. risk_guard 审核（检查边界，不写入）
+        from risk_guard import check_proposals, apply_proposals
+        valid, rejected = check_proposals(proposals)
         result["rejected_updates"] = rejected
-        result["applied_updates"] = applied
 
-        if not applied:
+        if not valid:
             result["message"] = f"所有 proposal 被拒绝 ({len(rejected)} rejected)"
             return result
 
-        # 6. 反事实验证
+        # 6. 反事实验证（在写入之前运行）
         try:
             from deprecated.proposal_validator import counterfactual_validate_proposals, write_proposal_validation_history
-            cv_results = counterfactual_validate_proposals(applied, cfg)
+            cv_results = counterfactual_validate_proposals(valid, cfg)
             cv_accepted = [r for r in cv_results if r.get("validation_action") in ("ACCEPT", "WEAK_ACCEPT")]
             cv_rejected = [r for r in cv_results if r.get("validation_action") in ("REJECT", "NEED_MORE_DATA")]
-            # 只保留 ACCEPT / WEAK_ACCEPT（用于记录，已由 risk_guard 写入）
             accepted_keys = {r["key"] for r in cv_accepted}
-            applied = [v for v in applied if v["key"] in accepted_keys]
+            valid = [v for v in valid if v["key"] in accepted_keys]
             for r in cv_rejected:
                 rejected.append({"key": r["key"], "rejected_reason": f"COUNTERFACTUAL_{r['validation_action']}",
                                  "reason": r.get("reason", "")})
@@ -545,23 +543,24 @@ def run_evolution_once() -> dict[str, Any]:
         except Exception as e:
             logger.debug("反事实验证异常 (不影响): %s", e)
 
-        # 6. 备份
+        # 7. 备份（写入前备份旧配置）
         if cfg.get("EVOLVER_BACKUP_ENABLED", True):
             backup_path = backup_config()
             result["config_backup"] = backup_path
 
-        # 7. 应用（已由 risk_guard 在第5步写入，此处仅记录）
+        # 8. risk_guard 写入（验证通过才写入）
+        applied, _ = apply_proposals(valid)
+        result["applied_updates"] = applied
+
         if auto_apply and applied:
             result["auto_applied"] = True
 
-            # 8. 更新 policy_version
+            # 更新 policy_version
             version = write_policy_version()
             result["policy_version"] = version
 
-            # 持久化
             config_manager._persist()
         else:
-            result["applied_updates"] = applied
             result["message"] = "EVOLVER_AUTO_APPLY=False，仅生成建议未应用"
             return result
 
