@@ -115,7 +115,11 @@
       "Bash(python -m py_compile log_manager.py)",
       "Bash(timeout 20 python -c ' *)",
       "Bash(python evolver_e2e_tester.py --data-dir ./tmp/e2e_v7)",
-      "Bash(python -m py_compile strategy_evolver.py bot_scalp.py)"
+      "Bash(python -m py_compile strategy_evolver.py bot_scalp.py)",
+      "WebFetch(domain:platform.minimax.chat)",
+      "Bash(python _patch_abbrev.py)",
+      "Bash(python -m py_compile scanner/ai_gateway.py)",
+      "Bash(python -m pytest tests/test_yaobi_sources.py -v -k \"test_ai_gateway_compact_candidate\")"
     ]
   }
 }

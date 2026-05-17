@@ -213,7 +213,7 @@ def _load_latest_success(ttl_sec: float, symbols: set[str]) -> dict | None:
         return None
     filtered = []
     for row in rows:
-        symbol = _symbol_key(row.get("symbol", ""))
+        symbol = _symbol_key(row.get("symbol") or row.get("s") or "")
         if not symbol or symbol not in symbols:
             continue
         filtered.append(dict(row, cached=True, reused=True, provider=latest.get("provider", "")))
@@ -258,37 +258,37 @@ def _compact_candidate(c: Any) -> dict:
     elif rule_action.startswith("WATCH_SHORT"):
         rule_bias = "SHORT"
     return {
-        "symbol": symbol,
-        "score": getattr(c, "score", 0),
-        "anomaly": getattr(c, "anomaly_score", 0),
-        "decision": getattr(c, "decision_action", ""),
-        "rule_action": rule_action or "OBSERVE",
-        "rule_bias": rule_bias,
-        "rule_score": getattr(c, "opportunity_score", 0),
-        "price_1h": round(float(getattr(c, "price_change_1h", 0) or 0), 3),
-        "price_4h": round(float(getattr(c, "price_change_4h", 0) or 0), 3),
-        "price_24h": round(float(getattr(c, "price_change_24h", 0) or 0), 3),
-        "oi_5m": round(float(getattr(c, "oi_change_5m_pct", 0) or 0), 3),
-        "oi_15m": round(float(getattr(c, "oi_change_15m_pct", 0) or 0), 3),
-        "oi_24h": round(float(getattr(c, "oi_change_24h_pct", 0) or 0), 3),
-        "volume_5m_ratio": round(float(getattr(c, "volume_5m_ratio", 0) or 0), 3),
-        "volume_ratio": round(float(getattr(c, "volume_ratio", 0) or 0), 3),
-        "taker_buy_5m": round(float(getattr(c, "taker_buy_ratio_5m", 0.5) or 0.5), 3),
-        "funding_pct": round(float(getattr(c, "funding_rate_pct", 0) or 0), 5),
-        "long_account_pct": round(float(getattr(c, "long_account_pct", 0) or 0), 2),
-        "retail_short_pct": round(float(getattr(c, "retail_short_pct", 0) or 0), 2),
-        "top_trader_long_pct": round(float(getattr(c, "top_trader_long_pct", 0) or 0), 2),
-        "liq_5m_usd": round(float(getattr(c, "liquidation_5m_usd", 0) or 0), 2),
-        "liq_15m_usd": round(float(getattr(c, "liquidation_15m_usd", 0) or 0), 2),
-        "contract_activity": getattr(c, "contract_activity_score", 0),
-        "market_stage": getattr(c, "market_stage", ""),
-        "playbook_type": getattr(c, "playbook_type", ""),
-        "trade_permission": getattr(c, "trade_permission", ""),
-        "risk_score": getattr(c, "risk_score", 0),
-        "chip_score": getattr(c, "chip_score", 0),
-        "control_score": getattr(c, "control_score", 0),
-        "distribution_score": getattr(c, "distribution_score", 0),
-        "early_wallet_layout": bool(getattr(c, "early_wallet_layout", False)),
+        "s": symbol,
+        "sc": getattr(c, "score", 0),
+        "an": getattr(c, "anomaly_score", 0),
+        "dc": getattr(c, "decision_action", ""),
+        "ra": rule_action or "OBSERVE",
+        "rb": rule_bias,
+        "rsc": getattr(c, "opportunity_score", 0),
+        "p1": round(float(getattr(c, "price_change_1h", 0) or 0), 3),
+        "p4": round(float(getattr(c, "price_change_4h", 0) or 0), 3),
+        "p24": round(float(getattr(c, "price_change_24h", 0) or 0), 3),
+        "o5": round(float(getattr(c, "oi_change_5m_pct", 0) or 0), 3),
+        "o15": round(float(getattr(c, "oi_change_15m_pct", 0) or 0), 3),
+        "o24": round(float(getattr(c, "oi_change_24h_pct", 0) or 0), 3),
+        "v5r": round(float(getattr(c, "volume_5m_ratio", 0) or 0), 3),
+        "vr": round(float(getattr(c, "volume_ratio", 0) or 0), 3),
+        "tb5": round(float(getattr(c, "taker_buy_ratio_5m", 0.5) or 0.5), 3),
+        "fp": round(float(getattr(c, "funding_rate_pct", 0) or 0), 5),
+        "lp": round(float(getattr(c, "long_account_pct", 0) or 0), 2),
+        "sp": round(float(getattr(c, "retail_short_pct", 0) or 0), 2),
+        "tlp": round(float(getattr(c, "top_trader_long_pct", 0) or 0), 2),
+        "l5": round(float(getattr(c, "liquidation_5m_usd", 0) or 0), 2),
+        "l15": round(float(getattr(c, "liquidation_15m_usd", 0) or 0), 2),
+        "ca": getattr(c, "contract_activity_score", 0),
+        "ms": getattr(c, "market_stage", ""),
+        "pb": getattr(c, "playbook_type", ""),
+        "tp": getattr(c, "trade_permission", ""),
+        "rsk": getattr(c, "risk_score", 0),
+        "cs": getattr(c, "chip_score", 0),
+        "ctrl": getattr(c, "control_score", 0),
+        "ds": getattr(c, "distribution_score", 0),
+        "ewl": bool(getattr(c, "early_wallet_layout", False)),
         "case_similarity": getattr(c, "case_similarity", {}) or {},
         "okx_buy_ratio": round(float(getattr(c, "okx_buy_ratio", 0) or 0), 3),
         "okx_large_trade_pct": round(float(getattr(c, "okx_large_trade_pct", 0) or 0), 3),
@@ -374,8 +374,8 @@ def _normalize_ai_items(payload) -> list[dict]:
         symbol = _symbol_key(row.get("symbol", ""))
         if not symbol:
             continue
-        action = _normalize_action(str(row.get("action", "OBSERVE")).upper())
-        permission = str(row.get("permission", "OBSERVE")).upper()
+        action = _normalize_action(str(row.get("action") or row.get("act") or "OBSERVE").upper())
+        permission = str(row.get("permission") or row.get("perm") or "OBSERVE").upper()
         trade_permission = str(row.get("trade_permission", row.get("permission", "OBSERVE")) or "OBSERVE").upper()
         result.append({
             "symbol": symbol,
@@ -388,16 +388,16 @@ def _normalize_ai_items(payload) -> list[dict]:
                 "BLOCK",
             } else "OBSERVE",
             "permission": permission if permission in {"ALLOW_IF_1M_SIGNAL", "OBSERVE", "BLOCK"} else "OBSERVE",
-            "confidence": _bounded_int(row.get("confidence", 0)),
-            "market_stage": str(row.get("market_stage", "") or "")[:80],
-            "playbook_type": str(row.get("playbook_type", "") or "")[:80],
+            "confidence": _bounded_int(row.get("confidence") or row.get("c") or 0),
+            "market_stage": str(row.get("market_stage") or row.get("ms") or "" or "")[:80],
+            "playbook_type": str(row.get("playbook_type") or row.get("pb") or "" or "")[:80],
             "trade_permission": trade_permission if trade_permission in {"AMBUSH_WATCH", "WATCH_CONFIRMATION", "OBSERVE", "BLOCK"} else "OBSERVE",
-            "opportunity_score": _bounded_int(row.get("opportunity_score", 0)),
-            "risk_score": _bounded_int(row.get("risk_score", 0)),
-            "summary": str(row.get("summary", ""))[:240],
-            "reasons": list(row.get("reasons", []) or [])[:5],
-            "risks": list(row.get("risks", []) or [])[:5],
-            "required_confirmation": list(row.get("required_confirmation", []) or [])[:5],
+            "opportunity_score": _bounded_int(row.get("opportunity_score") or row.get("sc") or 0),
+            "risk_score": _bounded_int(row.get("risk_score") or row.get("rs") or 0),
+            "summary": str(row.get("summary") or row.get("sum") or "")[:240],
+            "reasons": list(row.get("reasons") or row.get("rsn") or [] or [])[:5],
+            "risks": list(row.get("risks") or row.get("rsk") or [] or [])[:5],
+            "required_confirmation": list(row.get("required_confirmation") or row.get("req") or [] or [])[:5],
         })
     return result
 
@@ -452,19 +452,18 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
         ),
         "output_schema": {
             "opportunities": [{
-                "symbol": "BASE",
-                "market_stage": "accumulation_before_oi|real_breakout|bull_trap|mm_control|distribution|dead|neutral",
-                "playbook_type": "ambush_watch|oi_confirmation|avoid_chasing_oi|thin_book_control|avoid_distribution|block_high_risk|observe",
-                "trade_permission": "AMBUSH_WATCH|WATCH_CONFIRMATION|OBSERVE|BLOCK",
-                "opportunity_score": 0,
-                "risk_score": 0,
-                "action": "WATCH_LONG_CONTINUATION|WATCH_SHORT_CONTINUATION|WATCH_LONG_FADE|WATCH_SHORT_FADE|OBSERVE|BLOCK",
-                "permission": "ALLOW_IF_1M_SIGNAL|OBSERVE|BLOCK",
-                "confidence": 0,
-                "summary": "short reason",
-                "reasons": ["..."],
-                "risks": ["..."],
-                "required_confirmation": ["1m breakout/squeeze", "taker/OI still agrees"],
+                "s": "BASE",
+                "ms": "acc_before_oi|real_bo|bull_trap|mm_ctrl|dist|dead|neutral",
+                "pb": "ambush|oi_cfm|avoid_chase|thin_book|avoid_dist|block_high|obs",
+                "perm": "ALLOW_1M|OBS|BLOCK",
+                "sc": 0,
+                "rs": 0,
+                "act": "W_LC|W_SC|W_LF|W_SF|OBS|BLK",
+                "c": 0,
+                "sum": "short reason",
+                "rsn": ["..."],
+                "rsk": ["..."],
+                "req": ["1m breakout/squeeze", "taker/OI still agrees"],
             }]
         },
         "candidates": rows,
@@ -491,7 +490,7 @@ async def analyze_opportunities(session: aiohttp.ClientSession, candidates: list
     cache_ttl = float(cfg.get("YAOBI_AI_CACHE_TTL_MINUTES", 30) or 30) * 60
     if usage["last_call_ts"] and time.time() - usage["last_call_ts"] < min_interval:
         record_provider_skip("ai", _ENDPOINT, "min_interval", items=len(rows))
-        reused = _load_latest_success(cache_ttl, {_symbol_key(x["symbol"]) for x in rows})
+        reused = _load_latest_success(cache_ttl, {_symbol_key(x.get("symbol") or x.get("s") or "") for x in rows})
         if reused is not None:
             return {
                 "items": reused["items"],

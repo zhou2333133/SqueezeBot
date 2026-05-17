@@ -677,12 +677,10 @@ class TestYaobiSources(unittest.TestCase):
 
         payload = ai_gateway._compact_candidate(c)
 
-        self.assertEqual(payload["price_1h"], 3.2)
-        self.assertEqual(payload["price_4h"], 7.5)
-        self.assertEqual(payload["long_account_pct"], 61.0)
-        self.assertEqual(payload["surf_news_sentiment"], "positive")
-        self.assertEqual(payload["rule_bias"], "LONG")
-        self.assertIn("lesson_stats", payload)
+        self.assertEqual(payload["p1"], 3.2)
+        self.assertEqual(payload["p4"], 7.5)
+        self.assertEqual(payload["lp"], 61.0)
+        self.assertEqual(payload["rb"], "LONG")
 
     def test_ai_gateway_prompt_evaluates_playbook_without_1m_signal(self) -> None:
         from config import config_manager
