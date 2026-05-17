@@ -827,9 +827,9 @@ async def _call_minimax(session: aiohttp.ClientSession, system_prompt: str, payl
             pass  # 非标准 JSON，保留原文本
 
     # 截断重试：JSON 未闭合（token 不够），且还有提升空间 → 加 tokens 重试一次
-    if max_output < 3000 and (not text.strip().endswith('}') or not text.strip()):
+    if max_output < 2048 and (not text.strip().endswith('}') or not text.strip()):
         logger.debug("MiniMax 输出可能被截断 (%d tokens)，提高 tokens 重试", max_output)
-        return await _call_minimax(session, system_prompt, payload, min(max_output + 500, 3000))
+        return await _call_minimax(session, system_prompt, payload, min(max_output + 500, 2048))
 
     usage = data.get("usage") or {}
     tokens = int(usage.get("total_tokens") or (_estimate_tokens(payload) + _estimate_tokens(text)))

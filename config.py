@@ -448,7 +448,7 @@ class ConfigManager:
         "SINGLE_COIN_JUDGE_PROMPT": "",
         "STRATEGY_早期启动_MIN_OI_CHANGE_15M": 0.5,
         "YAOBI_AI_MAX_INPUT_TOKENS": 8000,
-        "YAOBI_AI_MAX_OUTPUT_TOKENS": 1200,
+        "YAOBI_AI_MAX_OUTPUT_TOKENS": 2048,
         "OKX_MIN_REQUEST_INTERVAL": 0.20,
         "SURF_MIN_REQUEST_INTERVAL": 0.20,
         # ── 多周期 Gate ──────────────────────────────────────────────────────
