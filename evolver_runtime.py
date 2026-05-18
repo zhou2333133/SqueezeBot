@@ -44,6 +44,9 @@ def _default_state() -> dict:
         "lock_created_at": 0.0,
         "last_policy_version": "",
         "last_config_hash": "",
+        "last_skip_reason": "",
+        "last_skip_at": 0.0,
+        "trades_at_last_check": 0,
     }
 
 
@@ -365,6 +368,18 @@ _scheduled_count: int = 0
 _last_job_ts: float = 0.0
 
 
+def _save_skip_reason(reason: str, trades: int = 0) -> None:
+    """将调度跳过原因写入 runtime state，供复盘包读取。"""
+    try:
+        state = _get_state()
+        state["last_skip_reason"] = str(reason)[:240]
+        state["last_skip_at"] = time.time()
+        state["trades_at_last_check"] = int(trades)
+        _save_state(state)
+    except Exception:
+        pass
+
+
 def maybe_schedule_evolver_job(cfg: dict | None = None) -> dict:
     """轻量触发器：检查条件，满足则异步安排 evolver job。"""
     global _last_schedule_ts, _scheduled_count, _last_job_ts
@@ -391,26 +406,31 @@ def maybe_schedule_evolver_job(cfg: dict | None = None) -> dict:
 
         if not cfg.get("EVOLVER_RUNTIME_ENABLED", True):
             result["reason"] = "runtime_disabled"
+            _save_skip_reason(result["reason"])
             return result
 
         if is_evolver_locked():
             result["reason"] = "locked"
+            _save_skip_reason(result["reason"])
             return result
 
         state = _get_state()
         if state.get("status") in ("RUNNING", "FROZEN"):
             result["reason"] = f"status={state['status']}"
+            _save_skip_reason(result["reason"], _scheduled_count)
             return result
 
         now = time.time()
         interval = float(cfg.get("EVOLVER_INTERVAL_MINUTES", 60) or 60)
         if now - _last_job_ts < interval * 60:
             result["reason"] = f"interval_{interval}m"
+            _save_skip_reason(result["reason"], _scheduled_count)
             return result
 
         after_trades = int(cfg.get("EVOLVER_RUN_AFTER_CLOSED_TRADES", 30) or 30)
         if _scheduled_count < after_trades:
             result["reason"] = f"trades_{_scheduled_count}<{after_trades}"
+            _save_skip_reason(result["reason"], _scheduled_count)
             return result
 
         # 触发 job
@@ -427,6 +447,7 @@ def maybe_schedule_evolver_job(cfg: dict | None = None) -> dict:
     except Exception as e:
         logger.warning("Evolver 调度异常: %s", e)
         result["reason"] = f"exception:{e}"
+        _save_skip_reason(result["reason"])
         return result
 
 

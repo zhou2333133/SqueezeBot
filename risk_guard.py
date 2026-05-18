@@ -324,6 +324,9 @@ def get_evolver_status() -> dict:
         "consecutive_errors": int(runtime_state.get("consecutive_errors", 0)),
         "locked_params_unchanged": True,
         "trades_since_last_policy": int(evolver_state.get("trades_since_last_policy", 0)),
+        "last_skip_reason": str(runtime_state.get("last_skip_reason", "")),
+        "last_skip_at": runtime_state.get("last_skip_at", 0.0),
+        "trades_at_last_check": int(runtime_state.get("trades_at_last_check", 0)),
     }
 
 
