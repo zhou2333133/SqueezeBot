@@ -1612,6 +1612,10 @@ async def evolver_dry_run():
         # 2. 数据与指标
         trades = load_trade_data(force=True)
         result["交易数据"] = {"总笔数": len(trades)}
+        min_for_analysis = 15
+        if len(trades) < min_for_analysis:
+            result["样本不足"] = f"当前 {len(trades)} 笔 < 最少 {min_for_analysis} 笔，无法生成指标/pattern/proposal"
+            return JSONResponse(result)
         if len(trades) >= 15:
             metrics = compute_strategy_metrics(trades)
             result["策略指标"] = {tag: {k: m[k] for k in ("total_trades", "win_rate", "expectancy", "profit_factor")}

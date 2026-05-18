@@ -167,7 +167,7 @@ def detect_failure_patterns(metrics: dict[str, dict], trades: list[dict]) -> lis
         if rsn in ("SL", "STOP_LOSS", "结构止损", "WATERFALL_STOP"):
             sym_sl[sym]["sl_count"] += 1
     for sym, d in sym_sl.items():
-        if d["sl_count"] >= 2 and d["total_pnl"] < 0 and d["trades"] >= 3:
+        if d["sl_count"] >= 2 and d["total_pnl"] < 0:
             patterns.append({"strategy_tag": "ALL", "pattern": "repeated_symbol_sl",
                              "severity": "medium", "detail": f"{sym} SL={d['sl_count']} pnl={d['total_pnl']:.1f}"})
 
@@ -189,7 +189,7 @@ def detect_failure_patterns(metrics: dict[str, dict], trades: list[dict]) -> lis
     for t in trades:
         if str(t.get("direction", "")).upper() == "LONG":
             ec = t.get("entry_context") or t.get("_features") or {}
-            provider = str(ec.get("ai_provider", "") if isinstance(ec, dict) else "")
+            provider = str(ec.get("ai_provider") or ec.get("yaobi_ai_provider") or "") if isinstance(ec, dict) else ""
             if provider == "rule_fallback":
                 fallback_long_total += 1
                 if _f(t.get("pnl_usdt")) < 0:

@@ -32,6 +32,12 @@ class TestRepeatedSymbolSL(unittest.TestCase):
         matched = [p for p in patterns if p["pattern"] == "repeated_symbol_sl"]
         self.assertFalse(matched, "1 笔 SL 不应触发")
 
+    def test_exactly_2_sl_triggers(self):
+        trades = [_t("BTCUSDT", "LONG", -10, "SL") for _ in range(2)]
+        patterns = detect_failure_patterns({}, trades)
+        matched = [p for p in patterns if p["pattern"] == "repeated_symbol_sl"]
+        self.assertTrue(matched, "2 笔 SL 应触发（不再要求 trades>=3）")
+
 
 class TestLongLossCluster(unittest.TestCase):
     """模式8: LONG 方向集中亏损"""
@@ -60,6 +66,18 @@ class TestWeakMarketLongFailure(unittest.TestCase):
         patterns = detect_failure_patterns({}, trades)
         matched = [p for p in patterns if p["pattern"] == "weak_market_long_failure"]
         self.assertTrue(matched, "fallback LONG 低胜率应检测到")
+
+    def test_detects_via_yaobi_ai_provider(self):
+        """真实 trade dict 使用 yaobi_ai_provider 字段"""
+        trades = []
+        for i in range(6):
+            t = _t(f"COIN{i}USDT", "LONG", -5, "SL", ai_provider="rule_fallback")
+            t["entry_context"]["yaobi_ai_provider"] = "rule_fallback"
+            trades.append(t)
+        trades += [_t("XUSDT", "LONG", 3, "TP1", ai_provider="minimax")]
+        patterns = detect_failure_patterns({}, trades)
+        matched = [p for p in patterns if p["pattern"] == "weak_market_long_failure"]
+        self.assertTrue(matched, "yaobi_ai_provider 也应被识别")
 
     def test_ai_long_not_detected(self):
         trades = [_t("BTCUSDT", "LONG", -5, "SL", ai_provider="minimax") for _ in range(5)]
