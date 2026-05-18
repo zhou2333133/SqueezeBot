@@ -1624,6 +1624,29 @@ async def evolver_dry_run():
             result["生成的 Proposal"] = [{"key": p["key"], "old": p.get("old"), "new": p.get("new"),
                                            "reason": p.get("reason", "")} for p in proposals]
 
+            # 4. risk_guard 审核模拟
+            guard_results = []
+            from risk_guard import check_proposals
+            valid, rejected = check_proposals(proposals)
+            guard_results.append({"通过的": len(valid), "拒绝的": len(rejected)})
+            if rejected:
+                guard_results.append({"拒绝详情": [{"key": r["key"], "reason": r.get("rejected_reason", "")} for r in rejected]})
+            result["风控审核"] = guard_results
+
+            # 5. 为什么没自动应用
+            min_trades = int(cfg.get("EVOLVER_RUN_AFTER_CLOSED_TRADES", 30) or 30)
+            trades_count = evo_state.get("trades_since_last_policy", 0)
+            if trades_count < min_trades:
+                result["不应用原因"] = f"交易数 {trades_count} < 门槛 {min_trades}"
+            elif not cfg.get("EVOLVER_AUTO_APPLY", True):
+                result["不应用原因"] = "EVOLVER_AUTO_APPLY=False"
+            elif not proposals:
+                result["不应用原因"] = "无 proposal 生成"
+            elif not valid:
+                result["不应用原因"] = "所有 proposal 被 risk_guard 拒绝"
+            else:
+                result["不应用原因"] = "条件满足，auto_apply 可通过"
+
         return JSONResponse(result)
     except Exception as e:
         logger.error("dry-run 失败: %s", e, exc_info=True)

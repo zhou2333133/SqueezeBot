@@ -151,6 +151,56 @@ def detect_failure_patterns(metrics: dict[str, dict], trades: list[dict]) -> lis
         if m["win_rate"] < 0.35 and total >= 20:
             patterns.append({"strategy_tag": tag, "pattern": "low_win_rate",
                              "severity": "critical", "detail": f"win_rate={m['win_rate']}"})
+
+    # ── Guard 失败模式（基于原始 trades 而非按 tag 聚合）────────────────────
+
+    # 模式7: repeated_symbol_sl — 同一币种多次 SL
+    sym_sl: dict[str, dict] = {}
+    for t in trades:
+        sym = str(t.get("symbol", "")).upper()
+        rsn = str(t.get("close_reason", "")).upper().strip()
+        pnl = _f(t.get("pnl_usdt"))
+        if sym not in sym_sl:
+            sym_sl[sym] = {"sl_count": 0, "total_pnl": 0.0, "trades": 0}
+        sym_sl[sym]["trades"] += 1
+        sym_sl[sym]["total_pnl"] += pnl
+        if rsn in ("SL", "STOP_LOSS", "结构止损", "WATERFALL_STOP"):
+            sym_sl[sym]["sl_count"] += 1
+    for sym, d in sym_sl.items():
+        if d["sl_count"] >= 2 and d["total_pnl"] < 0 and d["trades"] >= 3:
+            patterns.append({"strategy_tag": "ALL", "pattern": "repeated_symbol_sl",
+                             "severity": "medium", "detail": f"{sym} SL={d['sl_count']} pnl={d['total_pnl']:.1f}"})
+
+    # 模式8: long_loss_cluster — LONG 方向集中亏损
+    long_trades = [t for t in trades if str(t.get("direction", "")).upper() == "LONG"]
+    if len(long_trades) >= 10:
+        long_wins = sum(1 for t in long_trades if _f(t.get("pnl_usdt")) >= 0)
+        long_pnl = sum(_f(t.get("pnl_usdt")) for t in long_trades)
+        long_wr = long_wins / len(long_trades)
+        long_exp = long_pnl / len(long_trades)
+        if long_wr < 0.45 and long_exp < 0:
+            patterns.append({"strategy_tag": "ALL", "pattern": "long_loss_cluster",
+                             "severity": "medium",
+                             "detail": f"LONG wr={long_wr:.2f} exp={long_exp:.2f} n={len(long_trades)}"})
+
+    # 模式9: weak_market_long_failure — AI fallback LONG 在弱势市场亏损
+    fallback_long_loss = 0
+    fallback_long_total = 0
+    for t in trades:
+        if str(t.get("direction", "")).upper() == "LONG":
+            ec = t.get("entry_context") or t.get("_features") or {}
+            provider = str(ec.get("ai_provider", "") if isinstance(ec, dict) else "")
+            if provider == "rule_fallback":
+                fallback_long_total += 1
+                if _f(t.get("pnl_usdt")) < 0:
+                    fallback_long_loss += 1
+    if fallback_long_total >= 5:
+        fl_wr = 1 - fallback_long_loss / fallback_long_total
+        if fl_wr < 0.4:
+            patterns.append({"strategy_tag": "ALL", "pattern": "weak_market_long_failure",
+                             "severity": "medium",
+                             "detail": f"fallback LONG wr={fl_wr:.2f} loss={fallback_long_loss}/{fallback_long_total}"})
+
     return patterns
 
 
@@ -266,6 +316,37 @@ def propose_param_updates(metrics: dict[str, dict], patterns: list[dict], curren
                 new_weight = max(0.1, cfg[weight_key] - 0.2)
                 proposals.append(_make_proposal(weight_key, cfg[weight_key], new_weight,
                                                  f"direction_wrong 降权", tag))
+
+    # ── Guard 参数 proposal（基于失败模式）──────────────────────────────
+    for p in patterns:
+        pt = p.get("pattern", "")
+        tag = p.get("strategy_tag", "")
+
+        if pt == "repeated_symbol_sl":
+            cur = int(cfg.get("RAPID_BLOCK_SL_COUNT", 2))
+            if cur > 1:
+                proposals.append(_make_proposal("RAPID_BLOCK_SL_COUNT", cur, max(1, cur - 1),
+                                                 f"repeated_symbol_sl: {p.get('detail','')}", tag))
+
+        elif pt == "long_loss_cluster":
+            cur_loss = int(cfg.get("LONG_PAUSE_LOSS_COUNT", 2))
+            if cur_loss > 1:
+                proposals.append(_make_proposal("LONG_PAUSE_LOSS_COUNT", cur_loss, max(1, cur_loss - 1),
+                                                 f"long_loss_cluster: {p.get('detail','')}", tag))
+            cur_min = int(cfg.get("LONG_PAUSE_MINUTES", 60))
+            if cur_min < 180:
+                proposals.append(_make_proposal("LONG_PAUSE_MINUTES", cur_min, min(180, cur_min + 30),
+                                                 f"long_loss_cluster: {p.get('detail','')}", tag))
+
+        elif pt == "weak_market_long_failure":
+            cur_btc = float(cfg.get("MARKET_BREADTH_BTC_5M_DROP_PCT", 1.5))
+            if cur_btc > 0.5:
+                proposals.append(_make_proposal("MARKET_BREADTH_BTC_5M_DROP_PCT", cur_btc, max(0.5, round(cur_btc - 0.3, 1)),
+                                                 f"weak_market_long: {p.get('detail','')}", tag))
+            cur_decl = float(cfg.get("MARKET_BREADTH_DECLINE_RATIO", 0.6))
+            if cur_decl > 0.3:
+                proposals.append(_make_proposal("MARKET_BREADTH_DECLINE_RATIO", cur_decl, max(0.3, round(cur_decl - 0.05, 2)),
+                                                 f"weak_market_long: {p.get('detail','')}", tag))
 
     # 全局：胜率高策略适当升权
     for tag, m in metrics.items():
