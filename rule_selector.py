@@ -80,9 +80,59 @@ def is_rapid_blocked(symbol: str) -> dict:
     return {"blocked": False, "reason": ""}
 
 
+# ── 方向连续亏损暂停（#2: LONG 连亏暂停 60 分钟）────────────────────────
+_LONG_PAUSE: dict[str, dict] = {}  # symbol → {streak, pause_until}
+
+
+def record_direction_result(symbol: str, direction: str, pnl: float) -> None:
+    """平仓时调用：记录方向盈亏，2 笔 LONG 亏损后暂停 LONG 60 分钟。"""
+    import time
+    symbol = str(symbol or "").upper()
+    direction = str(direction or "").upper()
+
+    if direction not in ("LONG",):
+        return  # 只跟踪 LONG
+
+    if symbol not in _LONG_PAUSE:
+        _LONG_PAUSE[symbol] = {"streak": 0, "pause_until": 0.0}
+
+    lp = _LONG_PAUSE[symbol]
+
+    # 过期清除
+    if lp["pause_until"] and time.time() >= lp["pause_until"]:
+        lp["streak"] = 0
+        lp["pause_until"] = 0.0
+
+    if pnl >= 0:
+        # LONG 盈利 → 重置计数，解除暂停
+        lp["streak"] = 0
+        lp["pause_until"] = 0.0
+    else:
+        # LONG 亏损 → 累计
+        lp["streak"] += 1
+        if lp["streak"] >= 2 and lp["pause_until"] == 0.0:
+            lp["pause_until"] = time.time() + 3600
+            logger.warning("⚡ [%s] LONG 连续 %d 笔亏损，暂停 60 分钟", symbol, lp["streak"])
+
+
+def is_long_paused(symbol: str) -> dict:
+    """开仓前调用：返回 {paused, until, reason}。"""
+    import time
+    symbol = str(symbol or "").upper()
+    lp = _LONG_PAUSE.get(symbol)
+    if not lp:
+        return {"paused": False, "until": 0, "reason": ""}
+    if lp.get("pause_until", 0) and time.time() < lp["pause_until"]:
+        remain = int(lp["pause_until"] - time.time())
+        return {"paused": True, "until": lp["pause_until"],
+                "reason": f"LONG 连续 {lp.get('streak',0)} 笔亏损，剩余 {remain//60} 分钟"}
+    return {"paused": False, "until": 0, "reason": ""}
+
+
 def should_trade(symbol: str, strategy_tag: str, signal_type: str,
                  state_key: str,
                  candidate_source: str = "",
+                 direction: str = "",
                  cfg: dict | None = None) -> dict:
     """判断是否允许交易。
 
@@ -122,6 +172,20 @@ def should_trade(symbol: str, strategy_tag: str, signal_type: str,
             result["suggested_action"] = "block"
             _log_event(symbol, strategy_tag, state_key, 0, 0.0, "block", result["reason"])
             return result
+    except Exception:
+        pass
+
+    # ── LONG 连续亏损暂停检查 ──────────────────────────────────────────
+    try:
+        _dir = str(direction or "").upper()
+        if _dir == "LONG":
+            _lp = is_long_paused(symbol)
+            if _lp.get("paused"):
+                result["allow"] = False
+                result["reason"] = _lp.get("reason", "long_pause")
+                result["suggested_action"] = "block"
+                _log_event(symbol, strategy_tag, state_key, 0, 0.0, "block", result["reason"])
+                return result
     except Exception:
         pass
 

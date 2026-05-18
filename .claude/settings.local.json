@@ -120,7 +120,8 @@
       "Bash(python _patch_abbrev.py)",
       "Bash(python -m py_compile scanner/ai_gateway.py)",
       "Bash(python -m pytest tests/test_yaobi_sources.py -v -k \"test_ai_gateway_compact_candidate\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(python -m py_compile rule_selector.py bot_scalp.py)"
     ]
   }
 }

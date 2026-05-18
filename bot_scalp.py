@@ -2891,6 +2891,7 @@ class BinanceScalpBot:
                 signal_type=base_signal.get("signal_type", ""),
                 state_key=_ms.get("state_key", "unknown"),
                 candidate_source=_candidate_source,
+                direction=direction,
             )
             if not _rs.get("allow", True):
                 _reason = _rs.get("reason", "rule_selector_blocked")
@@ -3465,10 +3466,11 @@ class BinanceScalpBot:
             feed_trade(trade)
         except Exception as e:
             logger.debug("param_attribution feed_trade error: %s", e)
-        # ── 当日快速拦截（rapid block）────────────────────────────────────
+        # ── 当日快速拦截（rapid block + direction pause）─────────────────
         try:
-            from rule_selector import record_rapid_block
+            from rule_selector import record_rapid_block, record_direction_result
             record_rapid_block(pos.symbol, close_reason, total_pnl)
+            record_direction_result(pos.symbol, pos.direction, total_pnl)
         except Exception as e:
             logger.debug("rapid_block error: %s", e)
         # failure_tags 从 diagnosis_tags 提取
