@@ -1585,6 +1585,49 @@ async def strategy_trades(limit: int = 50, mode: str = "all"):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ─── Evolver Dry-Run API ────────────────────────────────────────────────────────
+
+@app.get("/api/evolver/dry-run")
+async def evolver_dry_run():
+    """只读模拟 Evolver 运行，不写任何配置。"""
+    try:
+        from strategy_evolver import load_trade_data, compute_strategy_metrics, \
+            detect_failure_patterns, propose_param_updates, run_evolution_once
+        from evolver_runtime import maybe_schedule_evolver_job, get_evolver_state_snapshot
+        from risk_guard import get_evolver_status
+
+        result = {}
+
+        # 1. 调度检查
+        sched = maybe_schedule_evolver_job()
+        result["调度检查"] = {
+            "可以运行": sched.get("scheduled", False),
+            "原因": sched.get("reason", ""),
+            "下次触发还需交易数": max(0, sched.get("trades_needed", 0)),
+        }
+
+        # 2. 数据与指标
+        trades = load_trade_data(force=True)
+        result["交易数据"] = {"总笔数": len(trades)}
+        if len(trades) >= 15:
+            metrics = compute_strategy_metrics(trades)
+            result["策略指标"] = {tag: {k: m[k] for k in ("total_trades", "win_rate", "expectancy", "profit_factor")}
+                                  for tag, m in metrics.items()}
+            patterns = detect_failure_patterns(metrics, trades)
+            result["失败模式"] = patterns[:10]
+
+            # 3. 模拟 proposal
+            from config import config_manager
+            proposals = propose_param_updates(metrics, patterns, config_manager.settings)
+            result["生成的 Proposal"] = [{"key": p["key"], "old": p.get("old"), "new": p.get("new"),
+                                           "reason": p.get("reason", "")} for p in proposals]
+
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error("dry-run 失败: %s", e, exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── AI 复盘日报 API ─────────────────────────────────────────────────────────────
 
 @app.get("/api/ai-report/latest")

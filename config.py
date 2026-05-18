@@ -249,6 +249,16 @@ class ConfigManager:
         "STRATEGY_ENABLED.QUIET_ACCUM":           [0.0,  1.0],
         "STRATEGY_ENABLED.PRE_BREAKOUT":          [0.0,  1.0],
         "STRATEGY_ENABLED.EARLY_START":           [0.0,  1.0],
+        # 短期风控闸门参数（Round 4）
+        "RAPID_BLOCK_ENABLED":                    [0.0,  1.0],
+        "RAPID_BLOCK_SL_COUNT":                   [1,     5],
+        "LONG_PAUSE_ENABLED":                     [0.0,  1.0],
+        "LONG_PAUSE_LOSS_COUNT":                  [1,     5],
+        "LONG_PAUSE_MINUTES":                     [15,   240],
+        "MARKET_BREADTH_GUARD_ENABLED":           [0.0,  1.0],
+        "MARKET_BREADTH_BTC_5M_DROP_PCT":         [0.5,  5.0],
+        "MARKET_BREADTH_BTC_15M_DROP_PCT":        [1.0,  8.0],
+        "MARKET_BREADTH_DECLINE_RATIO":           [0.3,  0.9],
     }
     PROFILE_MIGRATION_DEFAULTS = {
         # 当前回测/实盘观测后确认要强制落地的策略默认值。
@@ -528,17 +538,40 @@ class ConfigManager:
         "EVOLVER_MAX_HISTORY_LINES": 10000,
         "EVOLVER_MAX_BACKUPS": 50,
         # 策略权重（0.0 = 禁用，1.0 = 正常，>1.0 = 增强）
+        # 新版点分格式（Evolver 实际写入此格式）
+        "STRATEGY_WEIGHTS.STARTUP": 1.0,
+        "STRATEGY_WEIGHTS.OI_EXPLOSION": 1.0,
+        "STRATEGY_WEIGHTS.QUIET_ACCUM": 1.0,
+        "STRATEGY_WEIGHTS.PRE_BREAKOUT": 1.0,
+        "STRATEGY_WEIGHTS.EARLY_START": 1.0,
+        # 旧版平铺格式（兼容）
         "STRATEGY_WEIGHT_启动型": 1.0,
         "STRATEGY_WEIGHT_OI爆发": 1.0,
         "STRATEGY_WEIGHT_静默建仓": 1.0,
         "STRATEGY_WEIGHT_突破前夜": 1.0,
         "STRATEGY_WEIGHT_早期启动": 1.0,
         # 策略启用开关
+        "STRATEGY_ENABLED.STARTUP": True,
+        "STRATEGY_ENABLED.OI_EXPLOSION": True,
+        "STRATEGY_ENABLED.QUIET_ACCUM": True,
+        "STRATEGY_ENABLED.PRE_BREAKOUT": True,
+        "STRATEGY_ENABLED.EARLY_START": True,
+        # 旧版平铺格式（兼容）
         "STRATEGY_ENABLED_启动型": True,
         "STRATEGY_ENABLED_OI爆发": True,
         "STRATEGY_ENABLED_静默建仓": True,
         "STRATEGY_ENABLED_突破前夜": True,
         "STRATEGY_ENABLED_早期启动": True,
+        # 短期风控闸门（Round 4）
+        "RAPID_BLOCK_ENABLED": True,
+        "RAPID_BLOCK_SL_COUNT": 2,
+        "LONG_PAUSE_ENABLED": True,
+        "LONG_PAUSE_LOSS_COUNT": 2,
+        "LONG_PAUSE_MINUTES": 60,
+        "MARKET_BREADTH_GUARD_ENABLED": True,
+        "MARKET_BREADTH_BTC_5M_DROP_PCT": 1.5,
+        "MARKET_BREADTH_BTC_15M_DROP_PCT": 2.5,
+        "MARKET_BREADTH_DECLINE_RATIO": 0.6,
                 # ── Shadow Tracker ─────────────────────────────────────────────────────
         "SHADOW_TRACKER_ENABLED": True,
         "SHADOW_MAX_HOLD_MINUTES": 240,

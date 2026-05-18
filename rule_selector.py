@@ -61,9 +61,13 @@ def record_rapid_block(symbol: str, close_reason: str, pnl: float) -> None:
     if _sl_reason in ("SL", "STOP_LOSS", "结构止损", "WATERFALL_STOP"):
         rb["sl_count"] += 1
 
-    # 达到 2 笔 SL → ban 到次日 00:00
-    RAPID_BLOCK_SL_MIN = 2
-    if rb["sl_count"] >= RAPID_BLOCK_SL_MIN and not rb.get("blocked_until"):
+    # 达到阈值 SL → ban 到次日 00:00
+    try:
+        from config import config_manager
+        _rapid_sl_min = int(config_manager.settings.get("RAPID_BLOCK_SL_COUNT", 2) or 2)
+    except Exception:
+        _rapid_sl_min = 2
+    if rb["sl_count"] >= _rapid_sl_min and not rb.get("blocked_until"):
         tomorrow = datetime.now().replace(hour=0, minute=0, second=0) + __import__('datetime').timedelta(days=1)
         rb["blocked_until"] = tomorrow.timestamp()
         logger.warning("⚡ [%s] 当日 %d 笔 SL，快速拦截至 %s", symbol, rb["sl_count"], tomorrow.strftime("%Y-%m-%d"))
@@ -112,9 +116,15 @@ def record_direction_result(symbol: str, direction: str, pnl: float) -> None:
     else:
         # LONG 亏损 → 累计
         lp["streak"] += 1
-        if lp["streak"] >= 2 and lp["pause_until"] == 0.0:
-            lp["pause_until"] = time.time() + 3600
-            logger.warning("⚡ [%s] LONG 连续 %d 笔亏损，暂停 60 分钟", symbol, lp["streak"])
+        try:
+            from config import config_manager
+            _loss_min = int(config_manager.settings.get("LONG_PAUSE_LOSS_COUNT", 2) or 2)
+            _pause_min = int(config_manager.settings.get("LONG_PAUSE_MINUTES", 60) or 60)
+        except Exception:
+            _loss_min, _pause_min = 2, 60
+        if lp["streak"] >= _loss_min and lp["pause_until"] == 0.0:
+            lp["pause_until"] = time.time() + _pause_min * 60
+            logger.warning("⚡ [%s] LONG 连续 %d 笔亏损，暂停 %d 分钟", symbol, lp["streak"], _pause_min)
 
 
 def is_long_paused(symbol: str) -> dict:

@@ -91,8 +91,8 @@ def compute_strategy_metrics(trades: list[dict]) -> dict[str, dict]:
         avg_mae = s["sum_mae"] / n if n > 0 else 0.0
         avg_dur = s["sum_dur"] / n if n > 0 else 0.0
         win_rate = wins / n if n > 0 else 0.0
-        avg_win = total_pnl / wins if wins > 0 else 0.0
-        avg_loss = abs(total_pnl / losses) if losses > 0 else 1.0
+        avg_win = s["win_pnl"] / wins if wins > 0 else 0.0
+        avg_loss = s["loss_pnl"] / losses if losses > 0 else 0.0
         expectancy = (win_rate * avg_win - (1 - win_rate) * avg_loss) if n > 0 else 0.0
         pf = s["win_pnl"] / s["loss_pnl"] if s["loss_pnl"] > 0 else (float("inf") if total_pnl > 0 else 0.0)
 
@@ -261,7 +261,7 @@ def propose_param_updates(metrics: dict[str, dict], patterns: list[dict], curren
 
         # PP5: direction_wrong → 降权
         if pattern == "direction_wrong":
-            weight_key = f"STRATEGY_WEIGHT_{_tag_key(tag)}"
+            weight_key = f"STRATEGY_WEIGHTS.{_tag_key(tag)}"
             if weight_key in cfg:
                 new_weight = max(0.1, cfg[weight_key] - 0.2)
                 proposals.append(_make_proposal(weight_key, cfg[weight_key], new_weight,
@@ -271,7 +271,7 @@ def propose_param_updates(metrics: dict[str, dict], patterns: list[dict], curren
     for tag, m in metrics.items():
         if m["total_trades"] < 20:
             continue
-        weight_key = f"STRATEGY_WEIGHT_{_tag_key(tag)}"
+        weight_key = f"STRATEGY_WEIGHTS.{_tag_key(tag)}"
         if weight_key not in cfg:
             continue
         if m["win_rate"] >= 0.58 and m["expectancy"] > 0:
