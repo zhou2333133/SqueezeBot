@@ -37,8 +37,7 @@ def should_degrade_long(bot=None) -> dict:
     result = {"degrade": False, "reason": "", "btc_drop_5m": 0.0, "decline_ratio": 0.0}
 
     if not bot:
-        _set_cache(result)
-        return result
+        return {"degrade": False, "reason": "", "btc_drop_5m": 0.0, "decline_ratio": 0.0}
 
     # 1. BTC 短周期跌幅
     btc_buf = bot.kline_buffer.get("BTCUSDT", []) if hasattr(bot, "kline_buffer") else []

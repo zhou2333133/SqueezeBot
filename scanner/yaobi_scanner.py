@@ -1210,7 +1210,8 @@ class YaobiScanner:
                         if "LONG" in (c.opportunity_action or "").upper():
                             try:
                                 from market_breadth_guard import should_degrade_long
-                                _bd = should_degrade_long(getattr(self, "_scalp_bot", None))
+                                import bot_state
+                                _bd = should_degrade_long(bot_state.scalp_bot)
                                 if _bd.get("degrade"):
                                     c.opportunity_action = "OBSERVE"
                                     c.opportunity_permission = "OBSERVE"

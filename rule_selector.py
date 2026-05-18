@@ -49,19 +49,21 @@ def record_rapid_block(symbol: str, close_reason: str, pnl: float) -> None:
 
     rb = _RAPID_BLOCKS[symbol]
 
-    # 跨天重置
+    # 跨天重置（含 blocked_until，否则第二天不会重新 ban）
     if rb["date"] != today:
         rb["sl_count"] = 0
         rb["entry_bad_count"] = 0
+        rb["blocked_until"] = 0.0
         rb["date"] = today
 
-    # 统计 SL
-    if "SL" in (close_reason or "").upper():
+    # 统计 SL（只统计明确的止损，不统计 SL_保本/SL_软保本 等）
+    _sl_reason = (close_reason or "").upper().strip()
+    if _sl_reason in ("SL", "STOP_LOSS", "结构止损", "WATERFALL_STOP"):
         rb["sl_count"] += 1
 
     # 达到 2 笔 SL → ban 到次日 00:00
     RAPID_BLOCK_SL_MIN = 2
-    if rb["sl_count"] >= RAPID_BLOCK_SL_MIN and "blocked_until" not in rb:
+    if rb["sl_count"] >= RAPID_BLOCK_SL_MIN and not rb.get("blocked_until"):
         tomorrow = datetime.now().replace(hour=0, minute=0, second=0) + __import__('datetime').timedelta(days=1)
         rb["blocked_until"] = tomorrow.timestamp()
         logger.warning("⚡ [%s] 当日 %d 笔 SL，快速拦截至 %s", symbol, rb["sl_count"], tomorrow.strftime("%Y-%m-%d"))
