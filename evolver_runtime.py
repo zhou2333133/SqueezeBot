@@ -380,8 +380,9 @@ def maybe_schedule_evolver_job(cfg: dict | None = None) -> dict:
         # 启动恢复：内存计数器为 0 且持久化有值 → 从 evolver_state 恢复
         if _scheduled_count == 0:
             try:
-                _evo_state = _get_state()
-                _saved_trades = _evo_state.get("trades_since_last_policy", 0)
+                from strategy_evolver import get_evolver_state_snapshot
+                _evo_snap = get_evolver_state_snapshot()
+                _saved_trades = _evo_snap.get("trades_since_last_policy", 0)
                 if _saved_trades > 0:
                     logger.info("Evolver 从持久化状态恢复计数: %d 笔", _saved_trades)
                     _scheduled_count = _saved_trades

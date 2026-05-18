@@ -675,6 +675,17 @@ def _get_evolver_state():
     return defaults
 
 
+def get_evolver_state_snapshot() -> dict:
+    """公开快照，供 evolver_runtime 读取交易计数（不直接调私有函数）。"""
+    state = _get_evolver_state()
+    return {
+        "trades_since_last_policy": state.get("trades_since_last_policy", 0),
+        "closed_trades_since_last_policy": state.get("closed_trades_since_last_policy", 0),
+        "current_policy_version": state.get("current_policy_version", ""),
+        "last_evolver_run_at": state.get("last_evolver_run_at", 0.0),
+    }
+
+
 def _save_evolver_state(state):
     from persistence import atomic_write_json
     try:
