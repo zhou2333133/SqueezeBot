@@ -2906,6 +2906,25 @@ class BinanceScalpBot:
         except Exception as e:
             logger.debug("⚡ [%s] Rule Selector 异常 (不拦截): %s", symbol, e)
 
+        # ── 市场宽度守卫（弱势市场降级 rule_fallback LONG）────────────
+        try:
+            if direction == "LONG":
+                _meta = self.candidate_meta.get(symbol, {})
+                _provider = str(_meta.get("yaobi_ai_provider", ""))
+                if _provider == "rule_fallback":
+                    from market_breadth_guard import should_degrade_long
+                    _bd = should_degrade_long(self)
+                    if _bd.get("degrade"):
+                        _reason = f"弱势市场降级 LONG (rule_fallback): {_bd.get('reason', '')}"
+                        add_scalp_signal({**base_signal, "auto_traded": False,
+                                          "rejected_reason": _reason})
+                        logger.info("⚡ [%s] ❌ %s", symbol, _reason)
+                        _log_blocked_signal(symbol, direction, strategy_tag, _reason, _bd, cfg, base_signal)
+                        _release_pending()
+                        return
+        except Exception as e:
+            logger.debug("⚡ [%s] 市场宽度守卫异常 (不拦截): %s", symbol, e)
+
         # ── Risk Guard 硬风控检查 ────────────────────────────────────────
         try:
             from risk_guard import check_open_order

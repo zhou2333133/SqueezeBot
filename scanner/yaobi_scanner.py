@@ -1206,6 +1206,19 @@ class YaobiScanner:
                     if key in reviewed or c.opportunity_permission == "BLOCK":
                         continue
                     if failure_fallback and self._is_watch_action(c.opportunity_action) and c.opportunity_score >= fallback_min_score:
+                        # 市场宽度守卫：弱势市场降级 rule_fallback 的 LONG
+                        if "LONG" in (c.opportunity_action or "").upper():
+                            try:
+                                from market_breadth_guard import should_degrade_long
+                                _bd = should_degrade_long(getattr(self, "_scalp_bot", None))
+                                if _bd.get("degrade"):
+                                    c.opportunity_action = "OBSERVE"
+                                    c.opportunity_permission = "OBSERVE"
+                                    logger.info("市场宽度守卫降级 rule_fallback LONG: %s (%s)",
+                                                c.symbol, _bd.get("reason", ""))
+                                    continue
+                            except Exception:
+                                pass
                         c.ai_provider = c.ai_provider or "rule_fallback"
                         c.ai_updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         reasons = list(c.opportunity_reasons or [])
