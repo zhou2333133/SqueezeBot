@@ -30,14 +30,14 @@ def should_degrade_long(bot=None) -> dict:
     返回：
       {"degrade": bool, "reason": str, "btc_drop_5m": float, "decline_ratio": float}
     """
+    if not bot:
+        return {"degrade": False, "reason": "", "btc_drop_5m": 0.0, "decline_ratio": 0.0}
+
     now = time.time()
     if now - _cache.get("cached_at", 0) < _cache.get("ttl", 5):
         return _cache["verdict"]
 
     result = {"degrade": False, "reason": "", "btc_drop_5m": 0.0, "decline_ratio": 0.0}
-
-    if not bot:
-        return {"degrade": False, "reason": "", "btc_drop_5m": 0.0, "decline_ratio": 0.0}
 
     # 1. BTC 短周期跌幅
     btc_buf = bot.kline_buffer.get("BTCUSDT", []) if hasattr(bot, "kline_buffer") else []

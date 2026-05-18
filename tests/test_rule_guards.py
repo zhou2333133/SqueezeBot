@@ -102,10 +102,27 @@ class TestMarketBreadthGuard(unittest.TestCase):
         """验证 bot=None 的结果不缓存，不影响后续真实调用。"""
         from market_breadth_guard import should_degrade_long, _cache
         _cache.clear()
-        r1 = should_degrade_long(None)
-        self.assertFalse(r1["degrade"])
-        # None 的结果不应被缓存
-        self.assertNotEqual(_cache.get("cached_at", 0), r1)
+        should_degrade_long(None)
+        # None 不应写入缓存
+        self.assertNotIn("verdict", _cache, "None 调用后缓存应为空")
+        self.assertNotIn("cached_at", _cache)
+
+    def test_none_after_real_bot_returns_false(self):
+        """真实 bot 触发缓存后，None 调用仍返回 False。"""
+        from market_breadth_guard import should_degrade_long, _cache
+        from unittest.mock import MagicMock
+        _cache.clear()
+        # 先真实 bot 触发 degrade（最后 5 根 K 线从 100 跌到 90）
+        bot = MagicMock()
+        bot.candidate_symbols = []
+        bot.kline_buffer = {"BTCUSDT": [{"c": 100}] * 10}
+        for i in range(5, 10):  # 索引 5-9：逐步下跌
+            bot.kline_buffer["BTCUSDT"][i] = {"c": 100 - (i - 4) * 2}
+        r1 = should_degrade_long(bot)
+        self.assertTrue(r1["degrade"], "真实 bot 应触发 degrade")
+        # 然后 None 调用应返回 False，不读缓存
+        r2 = should_degrade_long(None)
+        self.assertFalse(r2["degrade"], "None 不应返回缓存的结果")
 
     def test_btc_drop_triggers_degrade(self):
         from market_breadth_guard import should_degrade_long, _cache
