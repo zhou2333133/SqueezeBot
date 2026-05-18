@@ -33,6 +33,14 @@ def should_degrade_long(bot=None) -> dict:
     if not bot:
         return {"degrade": False, "reason": "", "btc_drop_5m": 0.0, "decline_ratio": 0.0}
 
+    # 开关检查
+    try:
+        from config import config_manager
+        if not config_manager.settings.get("MARKET_BREADTH_GUARD_ENABLED", True):
+            return {"degrade": False, "reason": "guard_disabled", "btc_drop_5m": 0.0, "decline_ratio": 0.0}
+    except Exception:
+        pass
+
     now = time.time()
     if now - _cache.get("cached_at", 0) < _cache.get("ttl", 5):
         return _cache["verdict"]

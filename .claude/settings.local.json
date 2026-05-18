@@ -124,7 +124,8 @@
       "Bash(python -m py_compile rule_selector.py bot_scalp.py)",
       "Bash(python -m pytest tests/test_rule_guards.py -v)",
       "Bash(python -m pytest tests/test_rule_guards.py tests/ -q --ignore=tests/test_decision_tier.py -k \"not test_scalp_guard_blocks_market_structure_block and not test_stale_candidate_requires_armed_or_hot_setup\")",
-      "Bash(python -m pytest tests/test_rule_guards.py::TestMarketBreadthGuard::test_none_after_real_bot_returns_false -v)"
+      "Bash(python -m pytest tests/test_rule_guards.py::TestMarketBreadthGuard::test_none_after_real_bot_returns_false -v)",
+      "Bash(python -m py_compile rule_selector.py market_breadth_guard.py web.py)"
     ]
   }
 }

@@ -37,8 +37,18 @@ BLOCK_SCORE = 0.3          # score < 0.3 视为明显亏损组合
 _RAPID_BLOCKS: dict[str, dict] = {}  # symbol → {sl_count, blocked_until, date}
 
 
+def _is_enabled(key: str, default: bool = True) -> bool:
+    try:
+        from config import config_manager
+        return bool(config_manager.settings.get(key, default))
+    except Exception:
+        return default
+
+
 def record_rapid_block(symbol: str, close_reason: str, pnl: float) -> None:
     """平仓时调用：记录 SL 次数，达到阈值时标记当日 ban。"""
+    if not _is_enabled("RAPID_BLOCK_ENABLED", True):
+        return
     import time
     from datetime import datetime
     today = datetime.now().strftime("%Y-%m-%d")
@@ -92,6 +102,8 @@ _LONG_PAUSE: dict[str, dict] = {}  # symbol → {streak, pause_until}
 
 def record_direction_result(symbol: str, direction: str, pnl: float) -> None:
     """平仓时调用：记录方向盈亏，2 笔 LONG 亏损后暂停 LONG 60 分钟。"""
+    if not _is_enabled("LONG_PAUSE_ENABLED", True):
+        return
     import time
     symbol = str(symbol or "").upper()
     direction = str(direction or "").upper()

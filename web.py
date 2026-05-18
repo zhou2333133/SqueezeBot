@@ -1592,18 +1592,21 @@ async def evolver_dry_run():
     """只读模拟 Evolver 运行，不写任何配置。"""
     try:
         from strategy_evolver import load_trade_data, compute_strategy_metrics, \
-            detect_failure_patterns, propose_param_updates, run_evolution_once
-        from evolver_runtime import maybe_schedule_evolver_job, get_evolver_state_snapshot
-        from risk_guard import get_evolver_status
+            detect_failure_patterns, propose_param_updates
 
         result = {}
 
-        # 1. 调度检查
-        sched = maybe_schedule_evolver_job()
-        result["调度检查"] = {
-            "可以运行": sched.get("scheduled", False),
-            "原因": sched.get("reason", ""),
-            "下次触发还需交易数": max(0, sched.get("trades_needed", 0)),
+        # 1. 只读指标（不调 maybe_schedule_evolver_job，避免副作用）
+        from config import config_manager
+        cfg = config_manager.settings
+        from strategy_evolver import _get_evolver_state
+        evo_state = _get_evolver_state()
+        result["当前状态"] = {
+            "trades_since_last_policy": evo_state.get("trades_since_last_policy", 0),
+            "current_policy_version": evo_state.get("current_policy_version", ""),
+            "last_evolver_run_at": evo_state.get("last_evolver_run_at", 0.0),
+            "min_trades_required": int(cfg.get("EVOLVER_RUN_AFTER_CLOSED_TRADES", 30) or 30),
+            "trades_needed": max(0, int(cfg.get("EVOLVER_RUN_AFTER_CLOSED_TRADES", 30) or 30) - evo_state.get("trades_since_last_policy", 0)),
         }
 
         # 2. 数据与指标
@@ -1616,9 +1619,8 @@ async def evolver_dry_run():
             patterns = detect_failure_patterns(metrics, trades)
             result["失败模式"] = patterns[:10]
 
-            # 3. 模拟 proposal
-            from config import config_manager
-            proposals = propose_param_updates(metrics, patterns, config_manager.settings)
+            # 3. 模拟 proposal（只读，不 apply）
+            proposals = propose_param_updates(metrics, patterns, cfg)
             result["生成的 Proposal"] = [{"key": p["key"], "old": p.get("old"), "new": p.get("new"),
                                            "reason": p.get("reason", "")} for p in proposals]
 
