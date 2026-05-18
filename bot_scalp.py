@@ -3465,6 +3465,12 @@ class BinanceScalpBot:
             feed_trade(trade)
         except Exception as e:
             logger.debug("param_attribution feed_trade error: %s", e)
+        # ── 当日快速拦截（rapid block）────────────────────────────────────
+        try:
+            from rule_selector import record_rapid_block
+            record_rapid_block(pos.symbol, close_reason, total_pnl)
+        except Exception as e:
+            logger.debug("rapid_block error: %s", e)
         # failure_tags 从 diagnosis_tags 提取
         diag_tags = trade.get("diagnosis_tags") or trade.get("failure_tags") or []
         if not trade.get("failure_tags"):

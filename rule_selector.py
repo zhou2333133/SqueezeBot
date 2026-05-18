@@ -32,6 +32,53 @@ COLD_START_MIN = 10        # < 10 笔：不拦截
 WARM_START_MIN = 30        # 10-30 笔：仅 weak block
 BLOCK_SCORE = 0.3          # score < 0.3 视为明显亏损组合
 
+# ── 当日快速拦截（rapid block）─────────────────────────────────────────
+# 同币当天 2 笔 SL 后自动 ban 到次日 00:00
+_RAPID_BLOCKS: dict[str, dict] = {}  # symbol → {sl_count, blocked_until, date}
+
+
+def record_rapid_block(symbol: str, close_reason: str, pnl: float) -> None:
+    """平仓时调用：记录 SL 次数，达到阈值时标记当日 ban。"""
+    import time
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    symbol = str(symbol or "").upper()
+
+    if symbol not in _RAPID_BLOCKS:
+        _RAPID_BLOCKS[symbol] = {"sl_count": 0, "entry_bad_count": 0, "date": today}
+
+    rb = _RAPID_BLOCKS[symbol]
+
+    # 跨天重置
+    if rb["date"] != today:
+        rb["sl_count"] = 0
+        rb["entry_bad_count"] = 0
+        rb["date"] = today
+
+    # 统计 SL
+    if "SL" in (close_reason or "").upper():
+        rb["sl_count"] += 1
+
+    # 达到 2 笔 SL → ban 到次日 00:00
+    RAPID_BLOCK_SL_MIN = 2
+    if rb["sl_count"] >= RAPID_BLOCK_SL_MIN and "blocked_until" not in rb:
+        tomorrow = datetime.now().replace(hour=0, minute=0, second=0) + __import__('datetime').timedelta(days=1)
+        rb["blocked_until"] = tomorrow.timestamp()
+        logger.warning("⚡ [%s] 当日 %d 笔 SL，快速拦截至 %s", symbol, rb["sl_count"], tomorrow.strftime("%Y-%m-%d"))
+
+
+def is_rapid_blocked(symbol: str) -> dict:
+    """开仓前调用：返回 {blocked, reason}。"""
+    import time
+    symbol = str(symbol or "").upper()
+    rb = _RAPID_BLOCKS.get(symbol)
+    if not rb:
+        return {"blocked": False, "reason": ""}
+    blocked_until = rb.get("blocked_until", 0)
+    if blocked_until and time.time() < blocked_until:
+        return {"blocked": True, "reason": f"当日 {rb.get('sl_count',0)} 笔 SL，快速拦截中"}
+    return {"blocked": False, "reason": ""}
+
 
 def should_trade(symbol: str, strategy_tag: str, signal_type: str,
                  state_key: str,
@@ -65,6 +112,18 @@ def should_trade(symbol: str, strategy_tag: str, signal_type: str,
         "sample_count": 0,
         "suggested_action": "allow",
     }
+
+    # ── 当日快速拦截检查 ──────────────────────────────────────────────
+    try:
+        _rb = is_rapid_blocked(symbol)
+        if _rb.get("blocked"):
+            result["allow"] = False
+            result["reason"] = _rb.get("reason", "rapid_block")
+            result["suggested_action"] = "block"
+            _log_event(symbol, strategy_tag, state_key, 0, 0.0, "block", result["reason"])
+            return result
+    except Exception:
+        pass
 
     try:
         rule_id = f"{strategy_tag}__{signal_type}" if strategy_tag and signal_type else (strategy_tag or signal_type)
